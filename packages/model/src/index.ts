@@ -12,6 +12,16 @@ export type StaffRole = "HEAD_COACH" | "OFFENSIVE_COORDINATOR" | "DEFENSIVE_COOR
 export type StaffAssignment = "GAME_PREP" | "PLAYER_DEVELOPMENT" | "RECRUITING" | "RECOVERY";
 export type FacilityType = "TRAINING" | "STADIUM" | "ACADEMICS" | "RECRUITING";
 export type DivisionId = "ATLANTIC" | "GREAT_LAKES" | "HEARTLAND" | "GULF" | "MOUNTAIN" | "PACIFIC";
+export type PlayerRating = "technique" | "strength" | "conditioning" | "injuryPrevention" | "armStrength";
+
+export interface PlayerRatings {
+  technique: number;
+  strength: number;
+  conditioning: number;
+  injuryPrevention: number;
+  /** Arm strength affects quarterbacks directly and represents throwing/power skill for other positions. */
+  armStrength: number;
+}
 
 export interface Eligibility {
   cohortYear: number;
@@ -32,6 +42,8 @@ export interface Player {
   potential: number;
   workEthic: number;
   fatigue: number;
+  ratings: PlayerRatings;
+  injuryWeeksRemaining: number;
   developmentFocus: DevelopmentFocus;
   eligibility: Eligibility;
 }
@@ -131,9 +143,24 @@ export type GameCommand =
   | { type: "UPGRADE_FACILITY"; programId: ProgramId; facility: FacilityType };
 
 export type GameEvent =
-  | { type: "PLAYER_DEVELOPED"; season: Season; week: number; playerId: PlayerId; previousOverall: number; newOverall: number; factors: { workEthic: number; fatigueModifier: number } }
+  | {
+      type: "PLAYER_DEVELOPED";
+      season: Season;
+      week: number;
+      playerId: PlayerId;
+      previousOverall: number;
+      newOverall: number;
+      factors: {
+        workEthic: number;
+        fatigueModifier: number;
+        focus: DevelopmentFocus;
+        ratingChanges: Partial<Record<PlayerRating, number>>;
+      };
+    }
+  | { type: "PLAYER_INJURED"; season: Season; week: number; playerId: PlayerId; weeks: number; risk: number }
+  | { type: "PLAYER_RECOVERED"; season: Season; week: number; playerId: PlayerId }
   | { type: "GAME_COMPLETED"; season: Season; week: number; gameId: string; homeProgramId: ProgramId; awayProgramId: ProgramId; homeScore: number; awayScore: number }
-  | { type: "PLAYER_DEPARTED"; season: Season; playerId: PlayerId; reason: "GRADUATED" | "ELIGIBILITY_EXHAUSTED" }
+  | { type: "PLAYER_DEPARTED"; season: Season; playerId: PlayerId; reason: "GRADUATED" | "ELIGIBILITY_EXHAUSTED" | "TRANSFER_PORTAL" }
   | {
       type: "RECRUITING_CONTEST_RESOLVED";
       season: Season;

@@ -12,6 +12,7 @@ import type {
   StaffAssignment
 } from "@college-legends/model";
 import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
+import { developmentPayoff, facilityPayoff, staffAssignmentPayoff } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 
 type GameView = { state: GameState; playerProgramId: ProgramId; events: GameEvent[] };
@@ -207,12 +208,22 @@ function DepthChart({ roster }: { roster: Player[] }): ReactElement {
 }
 
 function Development({ roster, programId, pending, onQueue }: { roster: Player[]; programId: string; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
-  return <section className="panel table-panel"><SectionHeading eyebrow="Player development" title="Individual training priorities" detail="Focused plans improve faster but create tradeoffs. Changes resolve when the week advances." />
-    <div className="data-table development-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>OVR</span><span>Potential</span><span>Fatigue</span><span>Training focus</span></div>
+  return <section className="panel table-panel"><SectionHeading eyebrow="Player development" title="Choose the payoff—not just a label" detail="Every focus permanently changes attributes, affects game performance, and carries a fatigue or development tradeoff when the week advances." />
+    <div className="decision-legend">
+      {developmentFocuses.map((focus) => {
+        const sample = developmentPayoff(focus, "QB");
+        return <article key={focus}><strong>{label(focus)}</strong><span>{formatRatingChanges(sample.ratingChanges)}</span><small>{sample.tradeoff}</small></article>;
+      })}
+    </div>
+    <div className="data-table development-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>OVR/POT</span><span>Core ratings</span><span>Fatigue</span><span>Training decision</span></div>
       {roster.map((player) => {
         const queued = pending.find((item): item is Extract<GameCommand, { type: "SET_DEVELOPMENT_FOCUS" }> => item.type === "SET_DEVELOPMENT_FOCUS" && item.playerId === player.id);
-        return <div className="data-row" key={player.id}><strong data-label="Player">{player.name}</strong><span data-label="Position">{player.position}</span><span data-label="Overall">{Math.round(player.overall)}</span><span data-label="Potential">{Math.round(player.potential)}</span><span data-label="Fatigue">{Math.round(player.fatigue)}%</span>
-          <select aria-label={`Training focus for ${player.name}`} value={queued?.focus ?? player.developmentFocus} onChange={(event) => onQueue({ type: "SET_DEVELOPMENT_FOCUS", programId, playerId: player.id, focus: event.target.value as DevelopmentFocus })}>{developmentFocuses.map((focus) => <option key={focus} value={focus}>{label(focus)}</option>)}</select>
+        const focus = queued?.focus ?? player.developmentFocus;
+        const payoff = developmentPayoff(focus, player.position);
+        return <div className="data-row decision-row" key={player.id}><strong data-label="Player">{player.name}<small>{player.injuryWeeksRemaining > 0 ? `Out ${player.injuryWeeksRemaining} week${player.injuryWeeksRemaining === 1 ? "" : "s"}` : "Available"}</small></strong><span data-label="Position">{player.position}</span><span data-label="Overall / potential">{Math.round(player.overall)} / {Math.round(player.potential)}</span><span data-label="Core ratings"><small>TEC {Math.round(player.ratings.technique)} · STR {Math.round(player.ratings.strength)} · CON {Math.round(player.ratings.conditioning)}{player.position === "QB" ? ` · ARM ${Math.round(player.ratings.armStrength)}` : ""}<br />INJ {Math.round(player.ratings.injuryPrevention)}</small></span><span data-label="Fatigue">{Math.round(player.fatigue)}%</span>
+          <div className="decision-control"><select aria-label={`Training focus for ${player.name}`} value={focus} onChange={(event) => onQueue({ type: "SET_DEVELOPMENT_FOCUS", programId, playerId: player.id, focus: event.target.value as DevelopmentFocus })}>{developmentFocuses.map((option) => <option key={option} value={option}>{label(option)}</option>)}</select>
+            <div className="payoff-strip"><b>Weekly payoff</b><span>{formatRatingChanges(payoff.ratingChanges)}</span><span>{signed(payoff.fatigueChange)} fatigue</span><small>{payoff.gameEffect}. Tradeoff: {payoff.tradeoff}.</small></div>
+          </div>
         </div>;
       })}</div></section>;
 }
@@ -247,10 +258,12 @@ function Divisions({ game }: { game: GameView }): ReactElement {
 
 function Staff({ game, pending, onQueue }: { game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
   const staff = Object.values(game.state.staff).filter((item) => item.programId === game.playerProgramId);
-  return <section className="panel table-panel"><SectionHeading eyebrow="Coaching staff" title="Weekly assignments" detail="Your staff cannot maximize every area at once. Assign each coach to the priority that matters now." />
+  return <section className="panel table-panel"><SectionHeading eyebrow="Coaching staff" title="Weekly assignment decision tree" detail="Coach rating and role determine the exact payoff. Moving a coach creates an opportunity cost because they stop contributing to their previous assignment." />
     <div className="data-table staff-table"><div className="data-row data-header"><span>Coach</span><span>Role</span><span>Rating</span><span>Salary</span><span>Assignment</span></div>{staff.map((member) => {
       const queued = pending.find((item): item is Extract<GameCommand, { type: "ASSIGN_STAFF" }> => item.type === "ASSIGN_STAFF" && item.staffId === member.id);
-      return <div className="data-row" key={member.id}><strong data-label="Coach">{member.name}</strong><span data-label="Role">{label(member.role)}</span><span data-label="Rating">{member.rating}</span><span data-label="Salary">{money(member.salary)}</span><select aria-label={`Assignment for ${member.name}`} value={queued?.assignment ?? member.assignment} onChange={(event) => onQueue({ type: "ASSIGN_STAFF", programId: game.playerProgramId, staffId: member.id, assignment: event.target.value as StaffAssignment })}>{staffAssignments.map((assignment) => <option value={assignment} key={assignment}>{label(assignment)}</option>)}</select></div>;
+      const assignment = queued?.assignment ?? member.assignment;
+      return <div className="data-row decision-row" key={member.id}><strong data-label="Coach">{member.name}</strong><span data-label="Role">{label(member.role)}</span><span data-label="Rating">{member.rating}</span><span data-label="Salary">{money(member.salary)}</span><div className="decision-control"><select aria-label={`Assignment for ${member.name}`} value={assignment} onChange={(event) => onQueue({ type: "ASSIGN_STAFF", programId: game.playerProgramId, staffId: member.id, assignment: event.target.value as StaffAssignment })}>{staffAssignments.map((option) => <option value={option} key={option}>{label(option)}</option>)}</select>
+        <div className="payoff-strip"><b>Weekly payoff</b><span>{staffAssignmentPayoff(member, assignment)}</span><small>Choosing this removes this coach’s contribution from every other area.</small></div></div></div>;
     })}</div></section>;
 }
 
@@ -264,7 +277,9 @@ function Finances({ game, pending, onQueue }: { game: GameView; pending: GameCom
       const level = program.facilities[facility];
       const queued = pending.some((item) => item.type === "UPGRADE_FACILITY" && item.facility === facility);
       const cost = level >= 5 ? null : [0, 350_000, 750_000, 1_500_000, 3_000_000][level];
-      return <article className="panel" key={facility}><p className="eyebrow">{label(facility)}</p><h2>Level {level}/5</h2><div className="level-track"><span style={{ width: `${level * 20}%` }} /></div><p className="muted">{facilityBenefit(facility)}</p><button disabled={queued || !cost || program.budget < cost} onClick={() => onQueue({ type: "UPGRADE_FACILITY", programId: program.id, facility })}>{level >= 5 ? "Maximum level" : queued ? "Upgrade queued" : `Queue upgrade · ${money(cost!)}`}</button></article>;
+      return <article className="panel business-decision" key={facility}><p className="eyebrow">{label(facility)}</p><h2>Level {level}/5</h2><div className="level-track"><span style={{ width: `${level * 20}%` }} /></div><p className="muted">{facilityBenefit(facility)}</p>
+        <div className="choice-compare"><p><span>Current payoff</span><strong>{facilityPayoff(facility, level)}</strong></p><p><span>After upgrade</span><strong>{level >= 5 ? "Maximum reached" : facilityPayoff(facility, level + 1)}</strong></p>{cost && <p><span>Decision cost</span><strong>{money(cost)} now</strong></p>}</div>
+        <button disabled={queued || !cost || program.budget < cost} onClick={() => onQueue({ type: "UPGRADE_FACILITY", programId: program.id, facility })}>{level >= 5 ? "Maximum level" : queued ? "Upgrade queued" : `Queue upgrade · ${money(cost!)}`}</button></article>;
     })}</div>
   </section>;
 }
@@ -292,6 +307,8 @@ function EventList({ events, game }: { events: GameEvent[]; game: GameView }): R
 
 function eventIcon(event: GameEvent): string {
   if (event.type === "GAME_COMPLETED") return "🏈";
+  if (event.type === "PLAYER_INJURED") return "✚";
+  if (event.type === "PLAYER_RECOVERED") return "✓";
   if (event.type === "WEEKLY_FINANCES") return "＄";
   if (event.type === "FACILITY_UPGRADED") return "▲";
   if (event.type === "PROSPECT_SIGNED") return "★";
@@ -309,6 +326,8 @@ function eventText(event: GameEvent, game: GameView): string {
   if (event.type === "FACILITY_UPGRADED") return `${label(event.facility)} reached Level ${event.newLevel} for ${money(event.cost)}.`;
   if (event.type === "STAFF_ASSIGNED") return `${game.state.staff[event.staffId]?.name ?? "Coach"} assigned to ${label(event.assignment)}.`;
   if (event.type === "DEVELOPMENT_FOCUS_SET") return `${game.state.players[event.playerId]?.name ?? "Player"} changed to ${label(event.focus)} training.`;
+  if (event.type === "PLAYER_INJURED") return `${game.state.players[event.playerId]?.name ?? "Player"} will miss approximately ${event.weeks} week${event.weeks === 1 ? "" : "s"} (${event.risk}% risk).`;
+  if (event.type === "PLAYER_RECOVERED") return `${game.state.players[event.playerId]?.name ?? "Player"} has returned to full availability.`;
   if (event.type === "PROSPECT_SIGNED") return `${game.state.prospects[event.prospectId]?.name ?? "Prospect"} signed with ${game.state.programs[event.programId]?.name}.`;
   if (event.type === "COMMAND_REJECTED") return event.reason;
   if (event.type === "PLAYER_DEPARTED") return `${game.state.players[event.playerId]?.name ?? "Player"} left the program.`;
@@ -327,7 +346,12 @@ function money(value: number): string {
   const amount = absolute >= 1_000_000 ? `$${(absolute / 1_000_000).toFixed(1)}M` : `$${Math.round(absolute / 1_000)}K`;
   return value < 0 ? `-${amount}` : amount;
 }
+function signed(value: number): string { return `${value > 0 ? "+" : ""}${value}`; }
+function formatRatingChanges(changes: Partial<Record<keyof Player["ratings"], number>>): string {
+  const names: Record<keyof Player["ratings"], string> = { technique: "TEC", strength: "STR", conditioning: "CON", injuryPrevention: "INJ", armStrength: "ARM" };
+  return (Object.entries(changes) as [keyof Player["ratings"], number][]).map(([rating, value]) => `${names[rating]} +${value}`).join(" · ");
+}
 function facilityBenefit(facility: FacilityType): string {
-  return { TRAINING: "Improves weekly player development.", STADIUM: "Raises home-game revenue potential.", ACADEMICS: "Supports eligibility and player retention.", RECRUITING: "Improves prospect evaluation and interest." }[facility];
+  return { TRAINING: "Compounds every player’s weekly attribute and overall growth.", STADIUM: "Multiplies ticket and game-day income whenever you host.", ACADEMICS: "Protects returning players from entering the transfer portal.", RECRUITING: "Adds directly to your score in every contested commitment." }[facility];
 }
 function Metric({ label: metricLabel, value }: { label: string; value: string }): ReactElement { return <article><p>{metricLabel}</p><strong>{value}</strong></article>; }

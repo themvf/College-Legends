@@ -169,3 +169,52 @@ test("played games retain scores for the schedule and inbox", () => {
   assert.ok(played.every((game) => Number.isInteger(game.homeScore) && Number.isInteger(game.awayScore)));
   assert.ok(result.state.eventHistory.some((event) => event.type === "GAME_COMPLETED"));
 });
+
+test("training choices create distinct permanent attributes and injury-prevention payoffs", () => {
+  const strengthState = activeLeague("training-payoffs", 4);
+  const conditioningState = structuredClone(strengthState);
+  const player = Object.values(strengthState.players).find((candidate) => candidate.programId === "program-1" && candidate.position === "QB");
+  assert.ok(player);
+  const before = structuredClone(player.ratings);
+  const strength = advanceWeek(strengthState, [{ type: "SET_DEVELOPMENT_FOCUS", programId: "program-1", playerId: player.id, focus: "STRENGTH" }]);
+  const conditioning = advanceWeek(conditioningState, [{ type: "SET_DEVELOPMENT_FOCUS", programId: "program-1", playerId: player.id, focus: "CONDITIONING" }]);
+  assert.ok(strength.state.players[player.id].ratings.armStrength > before.armStrength);
+  assert.ok(strength.state.players[player.id].ratings.strength > conditioning.state.players[player.id].ratings.strength);
+  assert.ok(conditioning.state.players[player.id].ratings.injuryPrevention > strength.state.players[player.id].ratings.injuryPrevention);
+  assert.ok(conditioning.state.players[player.id].fatigue < strength.state.players[player.id].fatigue);
+});
+
+test("recovery assignments lower fatigue and recruiting investments raise contest scores", () => {
+  const base = activeLeague("staff-facility-payoffs", 4);
+  const player = Object.values(base.players).find((candidate) => candidate.programId === "program-1");
+  const coach = Object.values(base.staff).find((candidate) => candidate.programId === "program-1");
+  assert.ok(player && coach);
+  player.fatigue = 20;
+  const noRecovery = advanceWeek(base);
+  const recovery = advanceWeek(base, [{ type: "ASSIGN_STAFF", programId: "program-1", staffId: coach.id, assignment: "RECOVERY" }]);
+  assert.ok(recovery.state.players[player.id].fatigue < noRecovery.state.players[player.id].fatigue);
+
+  const basicRecruiting = activeLeague("recruiting-investment", 4);
+  const investedRecruiting = structuredClone(basicRecruiting);
+  openScholarship(basicRecruiting, "program-1");
+  openScholarship(investedRecruiting, "program-1");
+  basicRecruiting.programs["program-1"].facilities.RECRUITING = 1;
+  investedRecruiting.programs["program-1"].facilities.RECRUITING = 5;
+  const offer = [{ type: "OFFER_PROSPECT", programId: "program-1", prospectId: "prospect-initial-1" }];
+  const basicContest = advanceWeek(basicRecruiting, offer).events.find((event) => event.type === "RECRUITING_CONTEST_RESOLVED");
+  const investedContest = advanceWeek(investedRecruiting, offer).events.find((event) => event.type === "RECRUITING_CONTEST_RESOLVED");
+  assert.ok(basicContest && investedContest);
+  assert.equal(investedContest.scores["program-1"] - basicContest.scores["program-1"], 8);
+});
+
+test("stadium levels directly increase home-game revenue", () => {
+  const levelOne = activeLeague("stadium-payoff", 4);
+  const homeProgramId = levelOne.schedule.find((game) => game.week === 1).homeProgramId;
+  const levelFive = structuredClone(levelOne);
+  levelOne.programs[homeProgramId].facilities.STADIUM = 1;
+  levelFive.programs[homeProgramId].facilities.STADIUM = 5;
+  const lowFinance = advanceWeek(levelOne).events.find((event) => event.type === "WEEKLY_FINANCES" && event.programId === homeProgramId);
+  const highFinance = advanceWeek(levelFive).events.find((event) => event.type === "WEEKLY_FINANCES" && event.programId === homeProgramId);
+  assert.ok(lowFinance && highFinance);
+  assert.ok(highFinance.revenue > lowFinance.revenue);
+});
