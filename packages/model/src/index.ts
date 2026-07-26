@@ -13,6 +13,7 @@ export type StaffAssignment = "GAME_PREP" | "PLAYER_DEVELOPMENT" | "RECRUITING" 
 export type FacilityType = "TRAINING" | "STADIUM" | "ACADEMICS" | "RECRUITING";
 export type DivisionId = "ATLANTIC" | "GREAT_LAKES" | "HEARTLAND" | "GULF" | "MOUNTAIN" | "PACIFIC";
 export type PlayerRating = "technique" | "strength" | "conditioning" | "injuryPrevention" | "armStrength";
+export type PlayerMediaAction = "FOOTBALL_FOCUS" | "MEDIA_DAY" | "SOCIAL_MEDIA" | "COMMUNITY_APPEARANCE";
 
 export interface PlayerRatings {
   technique: number;
@@ -44,6 +45,13 @@ export interface Player {
   fatigue: number;
   ratings: PlayerRatings;
   injuryWeeksRemaining: number;
+  /** A persistent 0-100 measure of how recognizable the player is nationally. */
+  stardom: number;
+  /** Fans who primarily follow this player; weekly gains can convert into program fans. */
+  personalFans: number;
+  mediaAction: PlayerMediaAction;
+  lastGameRating: number | null;
+  lastGameSummary: string | null;
   developmentFocus: DevelopmentFocus;
   eligibility: Eligibility;
 }
@@ -149,6 +157,7 @@ export type GameCommand =
   | { type: "SET_DEVELOPMENT_FOCUS"; programId: ProgramId; playerId: PlayerId; focus: DevelopmentFocus }
   | { type: "ASSIGN_STAFF"; programId: ProgramId; staffId: string; assignment: StaffAssignment }
   | { type: "UPGRADE_FACILITY"; programId: ProgramId; facility: FacilityType }
+  | { type: "SET_PLAYER_MEDIA_ACTION"; programId: ProgramId; playerId: PlayerId; action: PlayerMediaAction }
   | { type: "SCHEDULE_MARQUEE_HOME_GAME"; programId: ProgramId; opponentProgramId: ProgramId };
 
 export type GameEvent =
@@ -184,6 +193,24 @@ export type GameEvent =
   | { type: "STAFF_ASSIGNED"; season: Season; week: number; programId: ProgramId; staffId: string; assignment: StaffAssignment }
   | { type: "FACILITY_UPGRADED"; season: Season; week: number; programId: ProgramId; facility: FacilityType; newLevel: number; cost: number }
   | { type: "MARQUEE_GAME_SCHEDULED"; season: Season; programId: ProgramId; opponentProgramId: ProgramId; week: number; guarantee: number; opponentRank: number }
+  | { type: "PLAYER_MEDIA_ACTION_SET"; season: Season; week: number; programId: ProgramId; playerId: PlayerId; action: PlayerMediaAction }
+  | {
+      type: "PLAYER_BRAND_UPDATED";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      playerId: PlayerId;
+      gameRating: number | null;
+      performanceSummary: string;
+      mediaAction: PlayerMediaAction;
+      stardomBefore: number;
+      stardomAfter: number;
+      stardomChange: number;
+      personalFansBefore: number;
+      personalFansAfter: number;
+      personalFanChange: number;
+      schoolFanLift: number;
+    }
   | { type: "WEEKLY_FINANCES"; season: Season; week: number; programId: ProgramId; revenue: number; expenses: number; net: number }
   | {
       type: "WEEKLY_RECAP";
@@ -200,6 +227,10 @@ export type GameEvent =
       fansBefore: number;
       fansAfter: number;
       fanChange: number;
+      teamResultFanChange: number;
+      playerFanLift: number;
+      featuredPlayerId: PlayerId | null;
+      featuredPlayerRating: number | null;
       attendance: number;
       capacity: number;
       ticketRevenue: number;

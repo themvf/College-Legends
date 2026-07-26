@@ -8,20 +8,22 @@ import type {
   GameEvent,
   GameState,
   Player,
+  PlayerMediaAction,
   ProgramId,
   StaffAssignment
 } from "@college-legends/model";
 import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
-import { developmentPayoff, facilityPayoff, marqueeGameOptions, projectedDevelopmentPayoff, staffAssignmentPayoff, stadiumCapacity } from "@college-legends/simulation";
+import { developmentPayoff, facilityPayoff, marqueeGameOptions, playerMediaPayoff, projectedDevelopmentPayoff, staffAssignmentPayoff, stadiumCapacity } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 
 type GameView = { state: GameState; playerProgramId: ProgramId; events: GameEvent[] };
-type Screen = "DASHBOARD" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CHART" | "DEVELOPMENT" | "SCHEDULE" | "DIVISIONS" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
+type Screen = "DASHBOARD" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CHART" | "DEVELOPMENT" | "PLAYER_MEDIA" | "SCHEDULE" | "DIVISIONS" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
 
 const careerOrder: CareerPath[] = ["DYNASTY_BUILDER", "PROGRAM_RISER", "CHAMPIONSHIP_MANDATE"];
 const positionOrder: Player["position"][] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
-const screens: Screen[] = ["DASHBOARD", "WEEKLY_RECAPS", "ROSTER", "DEPTH_CHART", "DEVELOPMENT", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
+const screens: Screen[] = ["DASHBOARD", "WEEKLY_RECAPS", "ROSTER", "DEPTH_CHART", "DEVELOPMENT", "PLAYER_MEDIA", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
 const developmentFocuses: DevelopmentFocus[] = ["BALANCED", "TECHNIQUE", "STRENGTH", "CONDITIONING"];
+const playerMediaActions: PlayerMediaAction[] = ["FOOTBALL_FOCUS", "MEDIA_DAY", "SOCIAL_MEDIA", "COMMUNITY_APPEARANCE"];
 const staffAssignments: StaffAssignment[] = ["GAME_PREP", "PLAYER_DEVELOPMENT", "RECRUITING", "RECOVERY"];
 const facilities: FacilityType[] = ["TRAINING", "STADIUM", "ACADEMICS", "RECRUITING"];
 const starterCounts: Record<Player["position"], number> = { QB: 1, RB: 1, WR: 3, TE: 1, OL: 5, DL: 4, LB: 3, DB: 4, K: 1, P: 1 };
@@ -75,6 +77,7 @@ export function App(): ReactElement {
   };
   const queue = (command: GameCommand): void => {
     const key = command.type === "SET_DEVELOPMENT_FOCUS" ? `player:${command.playerId}`
+      : command.type === "SET_PLAYER_MEDIA_ACTION" ? `media:${command.playerId}`
       : command.type === "ASSIGN_STAFF" ? `staff:${command.staffId}`
       : command.type === "UPGRADE_FACILITY" ? `facility:${command.facility}`
       : command.type === "SCHEDULE_MARQUEE_HOME_GAME" ? "marquee-game"
@@ -104,6 +107,7 @@ export function App(): ReactElement {
 
 function commandKey(command: GameCommand): string {
   if (command.type === "SET_DEVELOPMENT_FOCUS") return `player:${command.playerId}`;
+  if (command.type === "SET_PLAYER_MEDIA_ACTION") return `media:${command.playerId}`;
   if (command.type === "ASSIGN_STAFF") return `staff:${command.staffId}`;
   if (command.type === "UPGRADE_FACILITY") return `facility:${command.facility}`;
   if (command.type === "SCHEDULE_MARQUEE_HOME_GAME") return "marquee-game";
@@ -168,6 +172,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQ
     {screen === "ROSTER" && <Roster roster={roster} />}
     {screen === "DEPTH_CHART" && <DepthChart roster={roster} />}
     {screen === "DEVELOPMENT" && <Development state={game.state} roster={roster} programId={program.id} pending={pendingCommands} onQueue={onQueue} />}
+    {screen === "PLAYER_MEDIA" && <PlayerMedia game={game} roster={roster} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "SCHEDULE" && <Schedule game={game} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "DIVISIONS" && <Divisions game={game} />}
     {screen === "STAFF" && <Staff game={game} pending={pendingCommands} onQueue={onQueue} />}
@@ -202,8 +207,8 @@ function ProgramDashboard({ game, roster }: { game: GameView; roster: Player[] }
 function Roster({ roster }: { roster: Player[] }): ReactElement {
   const average = roster.reduce((sum, player) => sum + player.overall, 0) / Math.max(roster.length, 1);
   return <section className="panel table-panel"><SectionHeading eyebrow="Team management" title={`${roster.length} scholarship players`} detail={`Average rating ${average.toFixed(1)} · complete positional roster`} />
-    <div className="data-table roster-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>OVR</span><span>POT</span><span>Year</span><span>Eligibility</span></div>
-      {roster.map((player) => <div className="data-row" key={player.id}><strong data-label="Player">{player.name}</strong><span data-label="Position">{player.position}</span><span data-label="Overall">{Math.round(player.overall)}</span><span data-label="Potential">{Math.round(player.potential)}</span><span data-label="Year">{className(player.eligibility.seasonsEnrolled)}</span><span data-label="Eligibility">{player.eligibility.seasonsRemaining} seasons</span></div>)}
+    <div className="data-table roster-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>OVR</span><span>POT</span><span>Stardom</span><span>Fans</span><span>Year</span></div>
+      {roster.map((player) => <div className="data-row" key={player.id}><strong data-label="Player">{player.name}</strong><span data-label="Position">{player.position}</span><span data-label="Overall">{Math.round(player.overall)}</span><span data-label="Potential">{Math.round(player.potential)}</span><span data-label="Stardom">{player.stardom}/100</span><span data-label="Personal fans">{compactNumber(player.personalFans)}</span><span data-label="Year">{className(player.eligibility.seasonsEnrolled)}</span></div>)}
     </div></section>;
 }
 
@@ -238,6 +243,34 @@ function Development({ state, roster, programId, pending, onQueue }: { state: Ga
       })}</div></section>;
 }
 
+function PlayerMedia({ game, roster, pending, onQueue }: { game: GameView; roster: Player[]; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
+  const mediaDay = pending.find((command): command is Extract<GameCommand, { type: "SET_PLAYER_MEDIA_ACTION" }> =>
+    command.type === "SET_PLAYER_MEDIA_ACTION" && command.action === "MEDIA_DAY"
+  );
+  const players = [...roster].sort((left, right) => right.stardom - left.stardom || right.personalFans - left.personalFans || right.overall - left.overall);
+  return <section className="panel table-panel"><SectionHeading eyebrow="Player brands" title="Performance, stardom, and audience" detail="Game performance grows each player’s personal following. New player fans then convert into school fans, which increases future attendance and game-day revenue." />
+    <div className="decision-legend media-legend">{playerMediaActions.map((action) => {
+      const payoff = playerMediaPayoff(action);
+      return <article key={action}><strong>{label(action)}</strong><span>{payoff.personalFans}</span><small>{payoff.stardom} · {payoff.schoolConversion}. {payoff.tradeoff}.</small></article>;
+    })}</div>
+    <div className="data-table player-media-table"><div className="data-row data-header"><span>Player</span><span>Brand</span><span>Last performance</span><span>Weekly media decision</span></div>{players.map((player) => {
+      const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_PLAYER_MEDIA_ACTION" }> =>
+        command.type === "SET_PLAYER_MEDIA_ACTION" && command.playerId === player.id
+      );
+      const action = queued?.action ?? player.mediaAction;
+      const payoff = playerMediaPayoff(action);
+      return <div className="data-row decision-row" key={player.id}>
+        <strong data-label="Player">{player.name}<small>{player.position} · OVR {Math.round(player.overall)}</small></strong>
+        <span data-label="Brand"><b>{player.stardom}/100 stardom</b><small>{compactNumber(player.personalFans)} personal fans</small></span>
+        <span data-label="Last performance">{player.lastGameRating == null ? "No game yet" : `${player.lastGameRating}/99`}<small>{player.lastGameSummary ?? "No report"}</small></span>
+        <div className="decision-control"><select aria-label={`Media action for ${player.name}`} value={action} onChange={(event) => onQueue({ type: "SET_PLAYER_MEDIA_ACTION", programId: game.playerProgramId, playerId: player.id, action: event.target.value as PlayerMediaAction })}>
+          {playerMediaActions.map((option) => <option key={option} value={option} disabled={option === "MEDIA_DAY" && Boolean(mediaDay && mediaDay.playerId !== player.id)}>{label(option)}</option>)}
+        </select><div className="payoff-strip"><b>Weekly brand payoff</b><span>{payoff.personalFans} · {payoff.stardom}</span><small>{payoff.schoolConversion}. Tradeoff: {payoff.tradeoff}.</small></div></div>
+      </div>;
+    })}</div>
+  </section>;
+}
+
 function Schedule({ game, pending, onQueue }: { game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
   const program = game.state.programs[game.playerProgramId]!;
   const schedule = game.state.schedule.filter((item) => item.homeProgramId === program.id || item.awayProgramId === program.id);
@@ -269,7 +302,7 @@ function WeeklyRecaps({ game }: { game: GameView }): ReactElement {
   const recaps = [...game.state.eventHistory]
     .filter((event): event is Extract<GameEvent, { type: "WEEKLY_RECAP" }> => event.type === "WEEKLY_RECAP" && event.programId === game.playerProgramId)
     .reverse();
-  return <section><SectionHeading eyebrow="Cause and effect" title="Weekly program recaps" detail="Every result flows into audience, attendance, game-day sales, media reach, and the budget." />
+  return <section><SectionHeading eyebrow="Cause and effect" title="Weekly program recaps" detail="Team results and individual performances grow separate audiences that flow into attendance, game-day sales, media reach, and the budget." />
     {recaps.length ? <div className="recap-grid">{recaps.map((recap) => <article className="panel recap-card" key={`${recap.season}-${recap.week}`}>
       <div className="recap-heading"><div><p className="eyebrow">Week {recap.week}</p><h2>{recap.result === "BYE" ? "Bye week" : `${recap.result} · ${recap.scoreFor}–${recap.scoreAgainst}`}</h2></div><strong className={recap.result.toLowerCase()}>{recap.result}</strong></div>
       <RecapCascade recap={recap} game={game} />
@@ -279,9 +312,13 @@ function WeeklyRecaps({ game }: { game: GameView }): ReactElement {
 
 function RecapCascade({ recap, game }: { recap: Extract<GameEvent, { type: "WEEKLY_RECAP" }>; game: GameView }): ReactElement {
   const opponent = recap.opponentProgramId ? game.state.programs[recap.opponentProgramId] : null;
+  const featured = recap.featuredPlayerId ? game.state.players[recap.featuredPlayerId] : null;
   return <div className="recap-cascade">
     <p><span>Result</span><strong>{opponent ? `${recap.homeGame ? "vs." : "at"} ${recap.opponentRank && recap.opponentRank <= 25 ? `#${recap.opponentRank} ` : ""}${opponent.name}` : "No game"}</strong></p>
-    <p><span>Fans</span><strong>{signedNumber(recap.fanChange)} → {compactNumber(recap.fansAfter)}</strong></p>
+    <p><span>Team-result fans</span><strong>{signedNumber(recap.teamResultFanChange)}</strong></p>
+    <p><span>Player-to-school fans</span><strong>{signedNumber(recap.playerFanLift)}</strong></p>
+    <p><span>Total school fans</span><strong>{signedNumber(recap.fanChange)} → {compactNumber(recap.fansAfter)}</strong></p>
+    <p><span>Featured player</span><strong>{featured ? `${featured.name} · ${recap.featuredPlayerRating ?? "—"} rating` : "No game standout"}</strong></p>
     <p><span>Stadium</span><strong>{recap.homeGame ? `${compactNumber(recap.attendance)} / ${compactNumber(recap.capacity)}` : "Away / bye"}</strong></p>
     <p><span>Tickets</span><strong>{money(recap.ticketRevenue)}</strong></p>
     <p><span>Concessions</span><strong>{money(recap.concessionRevenue)}</strong></p>
@@ -366,6 +403,7 @@ function eventIcon(event: GameEvent): string {
   if (event.type === "WEEKLY_FINANCES") return "＄";
   if (event.type === "FACILITY_UPGRADED") return "▲";
   if (event.type === "PROSPECT_SIGNED") return "★";
+  if (event.type === "PLAYER_BRAND_UPDATED" || event.type === "PLAYER_MEDIA_ACTION_SET") return "✦";
   if (event.type === "COMMAND_REJECTED") return "!";
   return "✓";
 }
@@ -378,6 +416,8 @@ function eventText(event: GameEvent, game: GameView): string {
   if (event.type === "GAME_COMPLETED") return `${game.state.programs[event.homeProgramId]?.name} ${event.homeScore}, ${game.state.programs[event.awayProgramId]?.name} ${event.awayScore}`;
   if (event.type === "WEEKLY_FINANCES") return `${money(event.revenue)} revenue · ${money(event.expenses)} expenses · ${event.net >= 0 ? "+" : ""}${money(event.net)} net`;
   if (event.type === "WEEKLY_RECAP") return `${event.result} · ${signedNumber(event.fanChange)} fans · ${signedNumber(event.localPressChange)} local press · ${signedNumber(event.nationalPressChange)} national press · ${signedMoney(event.weeklyNet)} net`;
+  if (event.type === "PLAYER_BRAND_UPDATED") return `${game.state.players[event.playerId]?.name ?? "Player"}: ${event.performanceSummary} · ${signedNumber(event.personalFanChange)} personal fans · ${signedNumber(event.schoolFanLift)} school fans · ${signed(event.stardomChange)} stardom.`;
+  if (event.type === "PLAYER_MEDIA_ACTION_SET") return `${game.state.players[event.playerId]?.name ?? "Player"} scheduled for ${label(event.action)}.`;
   if (event.type === "MARQUEE_GAME_SCHEDULED") return `#${event.opponentRank} ${game.state.programs[event.opponentProgramId]?.name} will visit in Week ${event.week}. Guarantee: ${money(event.guarantee)}.`;
   if (event.type === "FACILITY_UPGRADED") return `${label(event.facility)} reached Level ${event.newLevel} for ${money(event.cost)}.`;
   if (event.type === "STAFF_ASSIGNED") return `${game.state.staff[event.staffId]?.name ?? "Coach"} assigned to ${label(event.assignment)}.`;

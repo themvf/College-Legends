@@ -1,4 +1,4 @@
-import type { DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerRating, PlayerRatings, Position, Program, Prospect, SimulationResult, StaffAssignment, StaffMember, StaffRole } from "@college-legends/model";
+import type { DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerMediaAction, PlayerRating, PlayerRatings, Position, Program, Prospect, SimulationResult, StaffAssignment, StaffMember, StaffRole } from "@college-legends/model";
 import { FICTIONAL_PROGRAMS, fictionalPersonName } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
 
@@ -32,6 +32,7 @@ const STAFF_ROLES: readonly StaffRole[] = ["HEAD_COACH", "OFFENSIVE_COORDINATOR"
 const REGULAR_SEASON_WEEKS = [1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14] as const;
 const DIVISION_GAME_COUNT = 8;
 const STADIUM_CAPACITY_BY_LEVEL: Readonly<Record<number, number>> = { 1: 25_000, 2: 36_000, 3: 50_000, 4: 68_000, 5: 88_000 };
+const STARTER_COUNTS: Readonly<Record<Position, number>> = { QB: 1, RB: 1, WR: 3, TE: 1, OL: 5, DL: 4, LB: 3, DB: 4, K: 1, P: 1 };
 
 export interface DevelopmentPayoff {
   ratingChanges: Partial<Record<PlayerRating, number>>;
@@ -109,6 +110,44 @@ export function facilityPayoff(facility: FacilityType, level: number): string {
 
 export function stadiumCapacity(level: number): number {
   return STADIUM_CAPACITY_BY_LEVEL[clamp(Math.round(level), 1, 5)]!;
+}
+
+export interface PlayerMediaPayoff {
+  personalFans: string;
+  stardom: string;
+  schoolConversion: string;
+  tradeoff: string;
+}
+
+const PLAYER_MEDIA_PAYOFFS: Readonly<Record<PlayerMediaAction, PlayerMediaPayoff>> = {
+  FOOTBALL_FOCUS: {
+    personalFans: "No guaranteed audience growth",
+    stardom: "+2 game-rating boost",
+    schoolConversion: "Performance gains convert 20% to school fans",
+    tradeoff: "-1 fatigue; safest football choice"
+  },
+  MEDIA_DAY: {
+    personalFans: "+900 personal fans",
+    stardom: "+2 stardom",
+    schoolConversion: "30% of new fans join the school fan base",
+    tradeoff: "+1 fatigue; only one Media Day slot per program"
+  },
+  SOCIAL_MEDIA: {
+    personalFans: "+1,400 plus 2% of current personal fans",
+    stardom: "+3 stardom",
+    schoolConversion: "15% of new fans join the school fan base",
+    tradeoff: "+2 fatigue; builds the player brand more than the school"
+  },
+  COMMUNITY_APPEARANCE: {
+    personalFans: "+650 personal fans",
+    stardom: "+1 stardom",
+    schoolConversion: "45% of new fans join the school fan base",
+    tradeoff: "+1 fatigue; strongest school-fan conversion"
+  }
+};
+
+export function playerMediaPayoff(action: PlayerMediaAction): PlayerMediaPayoff {
+  return PLAYER_MEDIA_PAYOFFS[action];
 }
 
 export function marqueeGuarantee(rank: number): number {
@@ -190,6 +229,11 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
         fatigue: 0,
         ratings: createPlayerRatings(overall, position, rng, playerId),
         injuryWeeksRemaining: 0,
+        stardom: clamp(Math.round((overall - 55) * 1.15 + rng.between(`${playerId}:stardom`, -4, 4)), 5, 75),
+        personalFans: Math.max(100, Math.round((overall - 50) ** 2 * (tier === "POWER" ? 12 : tier === "MID" ? 7 : 4) + rng.between(`${playerId}:fans`, 0, 750))),
+        mediaAction: "FOOTBALL_FOCUS",
+        lastGameRating: null,
+        lastGameSummary: null,
         developmentFocus: "BALANCED",
         eligibility: { cohortYear: 2027 - (rosterIndex % 4), seasonsEnrolled: rosterIndex % 4, seasonsParticipated: rosterIndex % 4, seasonsRemaining: 4 - (rosterIndex % 4), redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" }
       };
@@ -431,8 +475,9 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   recoverPlayers(state, rng.fork("recovery"), events);
   developPlayers(state, rng.fork("development"), events);
   resolveScheduledGames(state, rng.fork("games"), events);
+  const playerBrandImpact = processPlayerBrands(state, rng.fork("player-brands"), events);
   processInjuries(state, rng.fork("injuries"), events);
-  processWeeklyRecapsAndFinances(state, events);
+  processWeeklyRecapsAndFinances(state, playerBrandImpact, events);
   updateNationalRankings(state);
   state.week += 1;
   if (state.week > 14) rolloverSeason(state, events);
@@ -443,6 +488,12 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
 
 function resolveCommands(state: GameState, commands: readonly GameCommand[], rng: AddressableRng, events: GameEvent[]): void {
   const offers = new Map<string, Set<string>>();
+  const mediaDayWinnerByProgram = new Map<string, string>();
+  for (const command of commands) {
+    if (command.type !== "SET_PLAYER_MEDIA_ACTION" || command.action !== "MEDIA_DAY") continue;
+    const current = mediaDayWinnerByProgram.get(command.programId);
+    if (!current || command.playerId < current) mediaDayWinnerByProgram.set(command.programId, command.playerId);
+  }
   for (const command of commands) {
     const program = state.programs[command.programId];
     if (!program) {
@@ -508,6 +559,15 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       events.push({ type: "DEVELOPMENT_FOCUS_SET", season: state.season, week: state.week, programId: program.id, playerId: player.id, focus: command.focus });
       continue;
     }
+    if (command.type === "SET_PLAYER_MEDIA_ACTION") {
+      if (command.action === "MEDIA_DAY" && mediaDayWinnerByProgram.get(program.id) !== player.id) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Each program has only one player Media Day slot per week." });
+        continue;
+      }
+      player.mediaAction = command.action;
+      events.push({ type: "PLAYER_MEDIA_ACTION_SET", season: state.season, week: state.week, programId: program.id, playerId: player.id, action: command.action });
+      continue;
+    }
     if (player.eligibility.redshirtStatus !== "AVAILABLE") {
       events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Player cannot redshirt." });
       continue;
@@ -566,7 +626,25 @@ function prospectToPlayer(prospect: Prospect, id: string, programId: string, sea
     injuryPrevention: prospect.overall,
     armStrength: clamp(prospect.overall + (prospect.position === "QB" ? 3 : -3), 40, 99)
   };
-  return { id, name: prospect.name, programId, position: prospect.position, overall: prospect.overall, potential: prospect.potential, workEthic: prospect.workEthic, fatigue: 0, ratings: baselineRatings, injuryWeeksRemaining: 0, developmentFocus: "BALANCED", eligibility: { cohortYear: season, seasonsEnrolled: 0, seasonsParticipated: 0, seasonsRemaining: 4, redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" } };
+  return {
+    id,
+    name: prospect.name,
+    programId,
+    position: prospect.position,
+    overall: prospect.overall,
+    potential: prospect.potential,
+    workEthic: prospect.workEthic,
+    fatigue: 0,
+    ratings: baselineRatings,
+    injuryWeeksRemaining: 0,
+    stardom: clamp(Math.round((prospect.overall - 55) * 0.9), 3, 45),
+    personalFans: Math.max(100, Math.round((prospect.overall - 48) ** 2 * 2)),
+    mediaAction: "FOOTBALL_FOCUS",
+    lastGameRating: null,
+    lastGameSummary: null,
+    developmentFocus: "BALANCED",
+    eligibility: { cohortYear: season, seasonsEnrolled: 0, seasonsParticipated: 0, seasonsRemaining: 4, redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" }
+  };
 }
 
 function generateProspects(state: GameState, rng: AddressableRng, count: number, cohort: string, nameStart = 0, firstNameOffset = 0, lastNameOffset = 0): void {
@@ -679,7 +757,142 @@ function resolveScheduledGames(state: GameState, rng: AddressableRng, events: Ga
   }
 }
 
-function processWeeklyRecapsAndFinances(state: GameState, events: GameEvent[]): void {
+interface ProgramBrandImpact {
+  schoolFanLift: number;
+  localPressLift: number;
+  nationalPressLift: number;
+  featuredPlayerId: string | null;
+  featuredPlayerRating: number | null;
+}
+
+function processPlayerBrands(state: GameState, rng: AddressableRng, events: GameEvent[]): ReadonlyMap<string, ProgramBrandImpact> {
+  const impactByProgram = new Map<string, ProgramBrandImpact>();
+  for (const program of Object.values(state.programs)) {
+    const game = state.schedule.find((item) => item.week === state.week && item.played && (item.homeProgramId === program.id || item.awayProgramId === program.id));
+    const home = game?.homeProgramId === program.id;
+    const scoreFor = game ? (home ? game.homeScore! : game.awayScore!) : null;
+    const scoreAgainst = game ? (home ? game.awayScore! : game.homeScore!) : null;
+    const won = scoreFor !== null && scoreAgainst !== null && scoreFor > scoreAgainst;
+    const margin = scoreFor !== null && scoreAgainst !== null ? scoreFor - scoreAgainst : 0;
+    const roster = Object.values(state.players).filter((player) =>
+      player.programId === program.id && player.eligibility.rosterStatus === "SCHOLARSHIP"
+    );
+    const starters = new Set(positionStarters(roster).map((player) => player.id));
+    const brandEvents: Extract<GameEvent, { type: "PLAYER_BRAND_UPDATED" }>[] = [];
+    let schoolFanLift = 0;
+    let localPressLift = 0;
+    let nationalPressLift = 0;
+
+    for (const player of roster) {
+      const action = player.mediaAction;
+      const playing = Boolean(game) && starters.has(player.id) && player.injuryWeeksRemaining === 0;
+      const focusRatingBoost = action === "FOOTBALL_FOCUS" ? 2 : 0;
+      const gameRating = playing
+        ? Math.round(clamp(
+          52 + (player.overall - 70) * 0.55 + (won ? 7 : -4) + margin * 0.15
+            + focusRatingBoost + rng.between(`${player.id}:game-rating`, -12, 12),
+          25,
+          99
+        ))
+        : null;
+      const performanceSummary = gameRating === null
+        ? (game ? "Did not record a featured role" : "Bye week")
+        : playerPerformanceSummary(player, gameRating, scoreFor!, won, rng);
+      const stardomBefore = player.stardom;
+      const personalFansBefore = player.personalFans;
+      const performanceStardom = gameRating === null ? 0 : gameRating >= 92 ? 5 : gameRating >= 84 ? 3 : gameRating >= 74 ? 1 : gameRating < 40 ? -1 : 0;
+      const performanceFans = gameRating === null ? 0
+        : gameRating >= 92 ? Math.round(1_800 + personalFansBefore * 0.08)
+          : gameRating >= 84 ? Math.round(800 + personalFansBefore * 0.04)
+            : gameRating >= 74 ? Math.round(250 + personalFansBefore * 0.015)
+              : gameRating < 40 ? -Math.round(Math.max(50, personalFansBefore * 0.01))
+                : 0;
+      const mediaFans = action === "MEDIA_DAY" ? 900
+        : action === "SOCIAL_MEDIA" ? Math.round(1_400 + personalFansBefore * 0.02)
+          : action === "COMMUNITY_APPEARANCE" ? 650
+            : 0;
+      const mediaStardom = action === "MEDIA_DAY" ? 2 : action === "SOCIAL_MEDIA" ? 3 : action === "COMMUNITY_APPEARANCE" ? 1 : 0;
+      const mediaConversion = action === "MEDIA_DAY" ? 0.3 : action === "SOCIAL_MEDIA" ? 0.15 : action === "COMMUNITY_APPEARANCE" ? 0.45 : 0.2;
+      const performanceSchoolLift = Math.max(0, Math.round(performanceFans * 0.2));
+      const mediaSchoolLift = Math.round(mediaFans * mediaConversion);
+      const playerSchoolLift = performanceSchoolLift + mediaSchoolLift;
+      const personalFanChange = Math.max(50, personalFansBefore + performanceFans + mediaFans) - personalFansBefore;
+
+      player.stardom = clamp(stardomBefore + performanceStardom + mediaStardom, 0, 100);
+      player.personalFans = personalFansBefore + personalFanChange;
+      player.lastGameRating = gameRating;
+      player.lastGameSummary = performanceSummary;
+      player.fatigue = clamp(Number((player.fatigue + (action === "FOOTBALL_FOCUS" ? -1 : action === "SOCIAL_MEDIA" ? 2 : 1)).toFixed(1)), 0, 100);
+      player.mediaAction = "FOOTBALL_FOCUS";
+      schoolFanLift += playerSchoolLift;
+      if (action === "MEDIA_DAY" || action === "COMMUNITY_APPEARANCE") localPressLift += 1;
+      if (gameRating !== null && gameRating >= 95 && player.stardom >= 70) nationalPressLift += 2;
+
+      if (gameRating !== null || action !== "FOOTBALL_FOCUS") {
+        brandEvents.push({
+          type: "PLAYER_BRAND_UPDATED",
+          season: state.season,
+          week: state.week,
+          programId: program.id,
+          playerId: player.id,
+          gameRating,
+          performanceSummary,
+          mediaAction: action,
+          stardomBefore,
+          stardomAfter: player.stardom,
+          stardomChange: player.stardom - stardomBefore,
+          personalFansBefore,
+          personalFansAfter: player.personalFans,
+          personalFanChange,
+          schoolFanLift: playerSchoolLift
+        });
+      }
+    }
+
+    const featured = [...brandEvents].sort((left, right) =>
+      (right.gameRating ?? 0) - (left.gameRating ?? 0)
+      || right.personalFanChange - left.personalFanChange
+      || left.playerId.localeCompare(right.playerId)
+    )[0];
+    events.push(...brandEvents
+      .filter((event) => event.mediaAction !== "FOOTBALL_FOCUS" || event.playerId === featured?.playerId)
+      .sort((left, right) => right.personalFanChange - left.personalFanChange || left.playerId.localeCompare(right.playerId)));
+    impactByProgram.set(program.id, {
+      schoolFanLift,
+      localPressLift,
+      nationalPressLift,
+      featuredPlayerId: featured?.playerId ?? null,
+      featuredPlayerRating: featured?.gameRating ?? null
+    });
+  }
+  return impactByProgram;
+}
+
+function positionStarters(roster: readonly Player[]): Player[] {
+  const positions: Position[] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
+  return positions.flatMap((position) => roster
+    .filter((player) => player.position === position)
+    .sort((left, right) => right.overall - left.overall || left.id.localeCompare(right.id))
+    .slice(0, STARTER_COUNTS[position]));
+}
+
+function playerPerformanceSummary(player: Readonly<Player>, rating: number, teamScore: number, won: boolean, rng: AddressableRng): string {
+  const result = won ? "win" : "loss";
+  if (player.position === "QB") {
+    const yards = Math.round(90 + rating * 2.35 + rng.between(`${player.id}:pass-yards`, -25, 35));
+    const touchdowns = clamp(Math.round((teamScore / 7) * rating / 100), 0, 6);
+    return `${yards} passing yards · ${touchdowns} TD · ${rating} rating in ${result}`;
+  }
+  if (player.position === "RB") return `${Math.round(25 + rating * 1.15)} rushing yards · ${rating} rating in ${result}`;
+  if (player.position === "WR" || player.position === "TE") return `${Math.round(18 + rating * 0.95)} receiving yards · ${rating} rating in ${result}`;
+  if (player.position === "OL") return `${rating} blocking grade in ${result}`;
+  if (player.position === "DL" || player.position === "LB") return `${Math.max(2, Math.round(rating / 11))} tackles · ${rating} rating in ${result}`;
+  if (player.position === "DB") return `${Math.max(1, Math.round(rating / 28))} pass breakups · ${rating} rating in ${result}`;
+  if (player.position === "K") return `${Math.max(0, Math.round(teamScore / 10))} field goals · ${rating} rating in ${result}`;
+  return `${Math.round(32 + rating * 0.18)} net yards · ${rating} rating in ${result}`;
+}
+
+function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: ReadonlyMap<string, ProgramBrandImpact>, events: GameEvent[]): void {
   for (const program of Object.values(state.programs)) {
     const game = state.schedule.find((item) => item.week === state.week && (item.homeProgramId === program.id || item.awayProgramId === program.id));
     const homeGame = game?.homeProgramId === program.id;
@@ -694,25 +907,27 @@ function processWeeklyRecapsAndFinances(state: GameState, events: GameEvent[]): 
     const marqueeGame = game?.matchupType === "MARQUEE";
     const rankedOpponent = opponentRank !== null && opponentRank <= 25;
     const fansBefore = program.fanBase;
-    let fanChange = 0;
-    let localPressChange = 0;
-    let nationalPressChange = 0;
+    const brandImpact = playerBrandImpact.get(program.id) ?? { schoolFanLift: 0, localPressLift: 0, nationalPressLift: 0, featuredPlayerId: null, featuredPlayerRating: null };
+    let teamResultFanChange = 0;
+    let localPressChange = brandImpact.localPressLift;
+    let nationalPressChange = brandImpact.nationalPressLift;
     if (result === "WIN") {
-      fanChange = Math.round(Math.max(450, fansBefore * 0.018));
-      localPressChange = 6;
+      teamResultFanChange = Math.round(Math.max(450, fansBefore * 0.018));
+      localPressChange += 6;
       if (rankedOpponent) {
-        fanChange += Math.round(fansBefore * 0.025);
+        teamResultFanChange += Math.round(fansBefore * 0.025);
         nationalPressChange += 12;
       }
       if (marqueeGame) {
-        fanChange += Math.round(fansBefore * 0.03);
+        teamResultFanChange += Math.round(fansBefore * 0.03);
         nationalPressChange += 10;
       }
     } else if (result === "LOSS") {
-      fanChange = -Math.round(Math.max(125, fansBefore * (marqueeGame ? 0.003 : 0.006)));
-      localPressChange = -2;
-      nationalPressChange = marqueeGame ? -2 : rankedOpponent ? -1 : 0;
+      teamResultFanChange = -Math.round(Math.max(125, fansBefore * (marqueeGame ? 0.003 : 0.006)));
+      localPressChange += -2;
+      nationalPressChange += marqueeGame ? -2 : rankedOpponent ? -1 : 0;
     }
+    const fanChange = teamResultFanChange + brandImpact.schoolFanLift;
     program.fanBase = Math.max(5_000, program.fanBase + fanChange);
     program.fanSupport = clamp(Math.round(program.fanSupport + fanChange / Math.max(1, fansBefore) * 35), 1, 100);
     program.localPress = clamp(program.localPress + localPressChange, 0, 100);
@@ -747,6 +962,10 @@ function processWeeklyRecapsAndFinances(state: GameState, events: GameEvent[]): 
       fansBefore,
       fansAfter: program.fanBase,
       fanChange,
+      teamResultFanChange,
+      playerFanLift: brandImpact.schoolFanLift,
+      featuredPlayerId: brandImpact.featuredPlayerId,
+      featuredPlayerRating: brandImpact.featuredPlayerRating,
       attendance,
       capacity,
       ticketRevenue,

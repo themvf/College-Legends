@@ -43,9 +43,11 @@ dd { margin:0; font-weight:700; text-align:right; }
 .section-heading p:not(.eyebrow) { color:#a9bac9; text-align:right; font-size:.82rem; margin:0; max-width:28rem; }
 .data-table { overflow-x:auto; }
 .data-row { display:grid; align-items:center; gap:.65rem; padding:.72rem 1.25rem; border-top:1px solid #23435f; font-size:.88rem; }
-.roster-table .data-row { grid-template-columns:minmax(10rem,1fr) 3rem 3.5rem 3.5rem 5.5rem 6rem; }
+.roster-table .data-row { grid-template-columns:minmax(10rem,1fr) 3rem 3.5rem 3.5rem 5rem 5rem 5.5rem; }
 .recruit-table .data-row { grid-template-columns:minmax(10rem,1fr) 3rem 3.5rem 3.5rem 4.5rem 5.5rem; }
 .development-table .data-row { grid-template-columns:minmax(10rem,1fr) 3rem 5rem minmax(12rem,1.2fr) 4rem minmax(18rem,1.4fr); align-items:start; }
+.player-media-table .data-row { grid-template-columns:minmax(11rem,1fr) minmax(8rem,.7fr) minmax(13rem,1.1fr) minmax(18rem,1.35fr); align-items:start; }
+.player-media-table span small { display:block; color:#91a8b9; font-size:.7rem; line-height:1.4; margin-top:.3rem; }
 .schedule-table .data-row { grid-template-columns:5rem 6rem minmax(12rem,1fr) 8rem 7rem; }
 .schedule-table small,.division-card small { display:block; color:#91a8b9; font-weight:500; margin-top:.2rem; }
 .division-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
@@ -124,14 +126,14 @@ dd { margin:0; font-weight:700; text-align:right; }
   .section-heading { align-items:start; flex-direction:column; }
   .section-heading p:not(.eyebrow) { text-align:left; }
   .data-header { display:none; }
-  .data-row,.roster-table .data-row,.recruit-table .data-row,.development-table .data-row,.schedule-table .data-row,.staff-table .data-row { grid-template-columns:repeat(2,minmax(0,1fr)); gap:.65rem 1rem; padding:1rem; }
+  .data-row,.roster-table .data-row,.recruit-table .data-row,.development-table .data-row,.player-media-table .data-row,.schedule-table .data-row,.staff-table .data-row { grid-template-columns:repeat(2,minmax(0,1fr)); gap:.65rem 1rem; padding:1rem; }
   .division-grid { grid-template-columns:1fr; }
   .data-row strong { grid-column:1/-1; font-size:1rem; }
   .data-row [data-label] { display:grid; grid-template-columns:auto 1fr; align-items:baseline; gap:.45rem; }
   .data-row [data-label]::before { content:attr(data-label); color:#8ea7b9; font-size:.64rem; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
   .offer-toggle { min-height:2.25rem; }
   .game-nav { margin-inline:-.5rem; padding-inline:.5rem; }
-  .development-table select,.staff-table select { grid-column:1/-1; }
+  .development-table select,.player-media-table select,.staff-table select { grid-column:1/-1; }
   .decision-legend { grid-template-columns:1fr; padding-inline:1rem; }
   .decision-control { grid-column:1/-1; }
   .recap-grid { grid-template-columns:1fr; }

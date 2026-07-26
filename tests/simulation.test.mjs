@@ -235,6 +235,57 @@ test("weekly recaps connect results to fans, attendance, press, and game-day rev
   }
 });
 
+test("individual game performances grow player stardom and feed school fans", () => {
+  const state = activeLeague("player-stardom-loop", 12);
+  const programId = "program-1";
+  const game = state.schedule.find((item) => item.week === 1 && (item.homeProgramId === programId || item.awayProgramId === programId));
+  assert.ok(game);
+  const opponentId = game.homeProgramId === programId ? game.awayProgramId : game.homeProgramId;
+  for (const player of Object.values(state.players)) {
+    if (player.programId === programId) {
+      player.overall = 99;
+      for (const rating of Object.keys(player.ratings)) player.ratings[rating] = 99;
+    } else if (player.programId === opponentId) {
+      player.overall = 40;
+      for (const rating of Object.keys(player.ratings)) player.ratings[rating] = 40;
+    }
+  }
+  const result = advanceWeek(state);
+  const breakout = result.events.find((event) => event.type === "PLAYER_BRAND_UPDATED" && event.programId === programId);
+  const recap = result.events.find((event) => event.type === "WEEKLY_RECAP" && event.programId === programId);
+  assert.ok(breakout && recap);
+  assert.ok(breakout.gameRating >= 74);
+  assert.ok(breakout.personalFanChange > 0);
+  assert.ok(breakout.stardomAfter > breakout.stardomBefore);
+  assert.ok(breakout.schoolFanLift > 0);
+  assert.ok(recap.playerFanLift > 0);
+  assert.equal(recap.fanChange, recap.teamResultFanChange + recap.playerFanLift);
+  assert.equal(recap.featuredPlayerId, breakout.playerId);
+});
+
+test("social media builds a reserve player's brand and converts some fans to the school", () => {
+  const state = activeLeague("player-media-payoff", 12);
+  const programId = "program-1";
+  const reserve = Object.values(state.players)
+    .filter((player) => player.programId === programId && player.position === "QB")
+    .sort((left, right) => left.overall - right.overall)[0];
+  assert.ok(reserve);
+  const fansBefore = reserve.personalFans;
+  const stardomBefore = reserve.stardom;
+  const expectedPersonalFans = Math.round(1_400 + fansBefore * 0.02);
+  const result = advanceWeek(state, [{ type: "SET_PLAYER_MEDIA_ACTION", programId, playerId: reserve.id, action: "SOCIAL_MEDIA" }]);
+  const brand = result.events.find((event) => event.type === "PLAYER_BRAND_UPDATED" && event.playerId === reserve.id);
+  const recap = result.events.find((event) => event.type === "WEEKLY_RECAP" && event.programId === programId);
+  assert.ok(brand && recap);
+  assert.equal(brand.gameRating, null);
+  assert.equal(brand.mediaAction, "SOCIAL_MEDIA");
+  assert.equal(brand.personalFanChange, expectedPersonalFans);
+  assert.equal(brand.stardomAfter, stardomBefore + 3);
+  assert.equal(brand.schoolFanLift, Math.round(expectedPersonalFans * 0.15));
+  assert.ok(recap.playerFanLift >= brand.schoolFanLift);
+  assert.equal(result.state.players[reserve.id].mediaAction, "FOOTBALL_FOCUS");
+});
+
 test("a preseason guarantee buys a Top-25 home game with asymmetric recognition payoff", () => {
   const preseason = createFictionalLeague("marquee-upset");
   const host = Object.values(preseason.programs).find((program) => program.tier === "LOW");
