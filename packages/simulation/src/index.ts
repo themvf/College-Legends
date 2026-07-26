@@ -1,4 +1,4 @@
-import type { GameCommand, GameEvent, GameState, Player, Position, Program, Prospect, SimulationResult } from "@college-legends/model";
+import type { FacilityType, GameCommand, GameEvent, GameState, Player, Position, Program, Prospect, SimulationResult, StaffRole } from "@college-legends/model";
 import { AddressableRng } from "./rng.js";
 
 export { AddressableRng } from "./rng.js";
@@ -20,12 +20,20 @@ export const ROSTER_COMPOSITION: Readonly<Record<Position, number>> = {
 };
 
 export const STARTING_ROSTER_SIZE = Object.values(ROSTER_COMPOSITION).reduce((total, count) => total + count, 0);
+export const FACILITY_UPGRADE_COST: Readonly<Record<number, number>> = {
+  1: 350_000,
+  2: 750_000,
+  3: 1_500_000,
+  4: 3_000_000
+};
+
+const STAFF_ROLES: readonly StaffRole[] = ["HEAD_COACH", "OFFENSIVE_COORDINATOR", "DEFENSIVE_COORDINATOR", "STRENGTH_COACH"];
 
 export function createFictionalLeague(rootSeed: string, programCount = 12): GameState {
   const rng = new AddressableRng(rootSeed).fork("league-generation");
   const state: GameState = {
     identity: { rootSeed, balanceConfiguration: { version: "0.1.0", weeklyDevelopment: { base: 0.012, coachWeight: 0.018, workEthicWeight: 0.022, fatigueFloor: 0.62, maximum: 0.09 }, game: { possessions: 24, homeFieldAdvantage: 1.8, upsetNoise: 11 } }, simulationVersion: "0.1.0" },
-    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, schedule: []
+    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, staff: {}, schedule: [], eventHistory: []
   };
   const rosterPositions = Object.entries(ROSTER_COMPOSITION).flatMap(([position, count]) =>
     Array.from({ length: count }, () => position as Position)
@@ -33,12 +41,40 @@ export function createFictionalLeague(rootSeed: string, programCount = 12): Game
   for (let index = 0; index < programCount; index += 1) {
     const id = `program-${index + 1}`;
     const tier = index < 3 ? "POWER" : index < 8 ? "MID" : "LOW";
-    state.programs[id] = { id, name: `College ${index + 1}`, tier, budget: tier === "POWER" ? 20_000_000 : tier === "MID" ? 6_000_000 : 1_500_000, scholarshipLimit: 85, wins: 0, losses: 0, championships: 0, coachSecurity: tier === "POWER" ? 45 : tier === "MID" ? 65 : 92 };
+    const facilityLevel = tier === "POWER" ? 4 : tier === "MID" ? 3 : 2;
     const baseline = tier === "POWER" ? 83 : tier === "MID" ? 75 : 68;
+    state.programs[id] = {
+      id,
+      name: `College ${index + 1}`,
+      tier,
+      budget: tier === "POWER" ? 20_000_000 : tier === "MID" ? 6_000_000 : 1_500_000,
+      scholarshipLimit: 85,
+      wins: 0,
+      losses: 0,
+      championships: 0,
+      coachSecurity: tier === "POWER" ? 45 : tier === "MID" ? 65 : 92,
+      prestige: tier === "POWER" ? 88 : tier === "MID" ? 72 : 55,
+      fanSupport: tier === "POWER" ? 91 : tier === "MID" ? 70 : 48,
+      weeklyRevenue: tier === "POWER" ? 1_200_000 : tier === "MID" ? 520_000 : 210_000,
+      weeklyExpenses: tier === "POWER" ? 940_000 : tier === "MID" ? 430_000 : 185_000,
+      facilities: { TRAINING: facilityLevel, STADIUM: facilityLevel, ACADEMICS: facilityLevel, RECRUITING: facilityLevel }
+    };
+    for (const [staffIndex, role] of STAFF_ROLES.entries()) {
+      const staffId = `${id}-staff-${staffIndex + 1}`;
+      state.staff[staffId] = {
+        id: staffId,
+        programId: id,
+        name: `Coach ${index + 1}-${staffIndex + 1}`,
+        role,
+        rating: Math.round(rng.between(`${staffId}:rating`, baseline - 4, baseline + 7)),
+        salary: Math.round(rng.between(`${staffId}:salary`, 140_000, tier === "POWER" ? 1_400_000 : 650_000)),
+        assignment: role === "STRENGTH_COACH" ? "PLAYER_DEVELOPMENT" : "GAME_PREP"
+      };
+    }
     for (let rosterIndex = 0; rosterIndex < rosterPositions.length; rosterIndex += 1) {
       const playerId = `${id}-player-${rosterIndex + 1}`;
       const overall = Math.round(rng.between(`${playerId}:overall`, baseline - 5, baseline + 5));
-      state.players[playerId] = { id: playerId, name: `Player ${index + 1}-${rosterIndex + 1}`, programId: id, position: rosterPositions[rosterIndex]!, overall, potential: clamp(Math.round(overall + rng.between(`${playerId}:potential`, 2, 13)), overall, 99), workEthic: rng.between(`${playerId}:work-ethic`, 0.2, 1), fatigue: 0, eligibility: { cohortYear: 2027 - (rosterIndex % 4), seasonsEnrolled: rosterIndex % 4, seasonsParticipated: rosterIndex % 4, seasonsRemaining: 4 - (rosterIndex % 4), redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" } };
+      state.players[playerId] = { id: playerId, name: `Player ${index + 1}-${rosterIndex + 1}`, programId: id, position: rosterPositions[rosterIndex]!, overall, potential: clamp(Math.round(overall + rng.between(`${playerId}:potential`, 2, 13)), overall, 99), workEthic: rng.between(`${playerId}:work-ethic`, 0.2, 1), fatigue: 0, developmentFocus: "BALANCED", eligibility: { cohortYear: 2027 - (rosterIndex % 4), seasonsEnrolled: rosterIndex % 4, seasonsParticipated: rosterIndex % 4, seasonsRemaining: 4 - (rosterIndex % 4), redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" } };
     }
   }
   generateProspects(state, rng.fork("prospects"), programCount * 30, "initial");
@@ -64,7 +100,7 @@ export function buildSeasonSchedule(state: GameState): void {
       const homeProgramId = ids[(index + week) % ids.length]!;
       const awayProgramId = ids[(index + week + 1) % ids.length]!;
       if (homeProgramId === awayProgramId) continue;
-      state.schedule.push({ id: `game:${week}:${scheduleIndex++}`, homeProgramId, awayProgramId, played: false });
+      state.schedule.push({ id: `game:${week}:${scheduleIndex++}`, week, homeProgramId, awayProgramId, played: false, homeScore: null, awayScore: null });
     }
   }
 }
@@ -79,8 +115,11 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   resolveCommands(state, commands, rng.fork("commands"), events);
   developPlayers(state, rng.fork("development"), events);
   resolveScheduledGames(state, rng.fork("games"), events);
+  processWeeklyFinances(state, events);
   state.week += 1;
   if (state.week > 14) rolloverSeason(state, events);
+  state.eventHistory.push(...events);
+  if (state.eventHistory.length > 500) state.eventHistory = state.eventHistory.slice(-500);
   return { state, events };
 }
 
@@ -111,9 +150,40 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       }
       continue;
     }
+    if (command.type === "ASSIGN_STAFF") {
+      const staff = state.staff[command.staffId];
+      if (!staff || staff.programId !== program.id) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Staff assignment is not valid for this program." });
+        continue;
+      }
+      staff.assignment = command.assignment;
+      events.push({ type: "STAFF_ASSIGNED", season: state.season, week: state.week, programId: program.id, staffId: staff.id, assignment: staff.assignment });
+      continue;
+    }
+    if (command.type === "UPGRADE_FACILITY") {
+      const currentLevel = program.facilities[command.facility];
+      const cost = FACILITY_UPGRADE_COST[currentLevel];
+      if (!cost || currentLevel >= 5) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Facility is already at the maximum level." });
+        continue;
+      }
+      if (program.budget < cost) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The program cannot afford this facility upgrade." });
+        continue;
+      }
+      program.budget -= cost;
+      program.facilities[command.facility] = currentLevel + 1;
+      events.push({ type: "FACILITY_UPGRADED", season: state.season, week: state.week, programId: program.id, facility: command.facility, newLevel: currentLevel + 1, cost });
+      continue;
+    }
     const player = state.players[command.playerId];
     if (!player || player.programId !== program.id) {
       events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Command is not valid for this roster." });
+      continue;
+    }
+    if (command.type === "SET_DEVELOPMENT_FOCUS") {
+      player.developmentFocus = command.focus;
+      events.push({ type: "DEVELOPMENT_FOCUS_SET", season: state.season, week: state.week, programId: program.id, playerId: player.id, focus: command.focus });
       continue;
     }
     if (player.eligibility.redshirtStatus !== "AVAILABLE") {
@@ -161,7 +231,7 @@ function scholarshipCount(state: GameState, programId: string): number {
 }
 
 function prospectToPlayer(prospect: Prospect, id: string, programId: string, season: number): Player {
-  return { id, name: prospect.name, programId, position: prospect.position, overall: prospect.overall, potential: prospect.potential, workEthic: prospect.workEthic, fatigue: 0, eligibility: { cohortYear: season, seasonsEnrolled: 0, seasonsParticipated: 0, seasonsRemaining: 4, redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" } };
+  return { id, name: prospect.name, programId, position: prospect.position, overall: prospect.overall, potential: prospect.potential, workEthic: prospect.workEthic, fatigue: 0, developmentFocus: "BALANCED", eligibility: { cohortYear: season, seasonsEnrolled: 0, seasonsParticipated: 0, seasonsRemaining: 4, redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" } };
 }
 
 function generateProspects(state: GameState, rng: AddressableRng, count: number, cohort: string): void {
@@ -179,10 +249,15 @@ function developPlayers(state: GameState, rng: AddressableRng, events: GameEvent
   for (const player of Object.values(state.players)) {
     if (player.programId === null || player.eligibility.rosterStatus === "DEPARTED" || player.overall >= player.potential) continue;
     const fatigueModifier = clamp(1 - player.fatigue / 180, rules.fatigueFloor, 1);
-    const gain = clamp((rules.base + player.workEthic * rules.workEthicWeight + rng.between(player.id, -0.01, 0.01)) * fatigueModifier, 0, rules.maximum);
+    const program = state.programs[player.programId]!;
+    const trainingModifier = 0.9 + program.facilities.TRAINING * 0.04;
+    const developmentCoaches = Object.values(state.staff).filter((staff) => staff.programId === program.id && staff.assignment === "PLAYER_DEVELOPMENT");
+    const coachingModifier = 1 + developmentCoaches.reduce((sum, staff) => sum + staff.rating, 0) / Math.max(4_000, developmentCoaches.length * 4_000);
+    const focusModifier = player.developmentFocus === "BALANCED" ? 1 : 1.08;
+    const gain = clamp((rules.base + player.workEthic * rules.workEthicWeight + rng.between(player.id, -0.01, 0.01)) * fatigueModifier * trainingModifier * coachingModifier * focusModifier, 0, rules.maximum);
     const previousOverall = player.overall;
     player.overall = clamp(Number((player.overall + gain).toFixed(3)), 40, player.potential);
-    player.fatigue = clamp(player.fatigue + 1.5, 0, 100);
+    player.fatigue = clamp(player.fatigue + (player.developmentFocus === "CONDITIONING" ? 0.75 : 1.5), 0, 100);
     if (player.overall !== previousOverall) events.push({ type: "PLAYER_DEVELOPED", season: state.season, week: state.week, playerId: player.id, previousOverall, newOverall: player.overall, factors: { workEthic: player.workEthic, fatigueModifier } });
   }
 }
@@ -209,8 +284,23 @@ function resolveScheduledGames(state: GameState, rng: AddressableRng, events: Ga
     let homeScore = score(homeStrength, awayStrength, "home"); let awayScore = score(awayStrength, homeStrength, "away");
     if (homeScore === awayScore) homeScore += rng.at(`${game.id}:overtime`) < 0.5 ? 3 : 0, awayScore += homeScore === awayScore ? 3 : 0;
     game.played = true;
+    game.homeScore = homeScore;
+    game.awayScore = awayScore;
     if (homeScore > awayScore) { home.wins += 1; away.losses += 1; } else { away.wins += 1; home.losses += 1; }
     events.push({ type: "GAME_COMPLETED", season: state.season, week: state.week, gameId: game.id, homeProgramId: home.id, awayProgramId: away.id, homeScore, awayScore });
+  }
+}
+
+function processWeeklyFinances(state: GameState, events: GameEvent[]): void {
+  for (const program of Object.values(state.programs)) {
+    const homeGame = state.schedule.find((game) => game.week === state.week && game.homeProgramId === program.id);
+    const gameDayRevenue = homeGame?.played ? Math.round(program.weeklyRevenue * (0.55 + program.fanSupport / 100)) : 0;
+    const revenue = program.weeklyRevenue + gameDayRevenue;
+    const staffPayroll = Object.values(state.staff).filter((staff) => staff.programId === program.id).reduce((sum, staff) => sum + staff.salary / 52, 0);
+    const expenses = Math.round(program.weeklyExpenses + staffPayroll);
+    const net = Math.round(revenue - expenses);
+    program.budget += net;
+    events.push({ type: "WEEKLY_FINANCES", season: state.season, week: state.week, programId: program.id, revenue: Math.round(revenue), expenses, net });
   }
 }
 

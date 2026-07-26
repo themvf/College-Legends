@@ -92,3 +92,39 @@ test("AI recruiting respects scholarship limits and receives a new annual cohort
   }
   assert.ok(Object.keys(state.prospects).length > startingProspectCount);
 });
+
+test("development and staff decisions resolve through the shared command boundary", () => {
+  const state = activeLeague("management-commands", 4);
+  const player = Object.values(state.players).find((candidate) => candidate.programId === "program-1");
+  const staff = Object.values(state.staff).find((candidate) => candidate.programId === "program-1");
+  assert.ok(player && staff);
+  const result = advanceWeek(state, [
+    { type: "SET_DEVELOPMENT_FOCUS", programId: "program-1", playerId: player.id, focus: "STRENGTH" },
+    { type: "ASSIGN_STAFF", programId: "program-1", staffId: staff.id, assignment: "PLAYER_DEVELOPMENT" }
+  ]);
+  assert.equal(result.state.players[player.id].developmentFocus, "STRENGTH");
+  assert.equal(result.state.staff[staff.id].assignment, "PLAYER_DEVELOPMENT");
+  assert.ok(result.events.some((event) => event.type === "DEVELOPMENT_FOCUS_SET"));
+  assert.ok(result.events.some((event) => event.type === "STAFF_ASSIGNED"));
+});
+
+test("facility upgrades spend budget and weekly finances are recorded", () => {
+  const state = activeLeague("program-finances", 4);
+  const openingBudget = state.programs["program-1"].budget;
+  const openingLevel = state.programs["program-1"].facilities.TRAINING;
+  const result = advanceWeek(state, [{ type: "UPGRADE_FACILITY", programId: "program-1", facility: "TRAINING" }]);
+  const finance = result.events.find((event) => event.type === "WEEKLY_FINANCES" && event.programId === "program-1");
+  assert.ok(finance);
+  assert.equal(result.state.programs["program-1"].facilities.TRAINING, openingLevel + 1);
+  assert.equal(result.state.programs["program-1"].budget, openingBudget - 3_000_000 + finance.net);
+  assert.ok(result.state.eventHistory.some((event) => event.type === "FACILITY_UPGRADED"));
+});
+
+test("played games retain scores for the schedule and inbox", () => {
+  const state = activeLeague("schedule-results", 4);
+  const result = advanceWeek(state);
+  const played = result.state.schedule.filter((game) => game.week === 1 && game.played);
+  assert.ok(played.length > 0);
+  assert.ok(played.every((game) => Number.isInteger(game.homeScore) && Number.isInteger(game.awayScore)));
+  assert.ok(result.state.eventHistory.some((event) => event.type === "GAME_COMPLETED"));
+});

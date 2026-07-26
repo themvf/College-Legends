@@ -7,6 +7,10 @@ export type CareerPath = "DYNASTY_BUILDER" | "PROGRAM_RISER" | "CHAMPIONSHIP_MAN
 export type RosterStatus = "SCHOLARSHIP" | "WALK_ON" | "PORTAL" | "DEPARTED" | "GRADUATED";
 export type GamePhase = "ROSTER_REVIEW" | "REGULAR_SEASON";
 export type Position = "QB" | "RB" | "WR" | "TE" | "OL" | "DL" | "LB" | "DB" | "K" | "P";
+export type DevelopmentFocus = "BALANCED" | "TECHNIQUE" | "STRENGTH" | "CONDITIONING";
+export type StaffRole = "HEAD_COACH" | "OFFENSIVE_COORDINATOR" | "DEFENSIVE_COORDINATOR" | "STRENGTH_COACH";
+export type StaffAssignment = "GAME_PREP" | "PLAYER_DEVELOPMENT" | "RECRUITING" | "RECOVERY";
+export type FacilityType = "TRAINING" | "STADIUM" | "ACADEMICS" | "RECRUITING";
 
 export interface Eligibility {
   cohortYear: number;
@@ -27,6 +31,7 @@ export interface Player {
   potential: number;
   workEthic: number;
   fatigue: number;
+  developmentFocus: DevelopmentFocus;
   eligibility: Eligibility;
 }
 
@@ -54,13 +59,31 @@ export interface Program {
   losses: number;
   championships: number;
   coachSecurity: number;
+  prestige: number;
+  fanSupport: number;
+  weeklyRevenue: number;
+  weeklyExpenses: number;
+  facilities: Record<FacilityType, number>;
 }
 
 export interface ScheduledGame {
   id: string;
+  week: number;
   homeProgramId: ProgramId;
   awayProgramId: ProgramId;
   played: boolean;
+  homeScore: number | null;
+  awayScore: number | null;
+}
+
+export interface StaffMember {
+  id: string;
+  programId: ProgramId;
+  name: string;
+  role: StaffRole;
+  rating: number;
+  salary: number;
+  assignment: StaffAssignment;
 }
 
 export interface GameState {
@@ -75,7 +98,9 @@ export interface GameState {
   programs: Record<ProgramId, Program>;
   players: Record<PlayerId, Player>;
   prospects: Record<ProspectId, Prospect>;
+  staff: Record<string, StaffMember>;
   schedule: ScheduledGame[];
+  eventHistory: GameEvent[];
 }
 
 export interface BalanceConfiguration {
@@ -92,7 +117,10 @@ export interface BalanceConfiguration {
 
 export type GameCommand =
   | { type: "OFFER_PROSPECT"; programId: ProgramId; prospectId: ProspectId }
-  | { type: "RED_SHIRT"; programId: ProgramId; playerId: PlayerId };
+  | { type: "RED_SHIRT"; programId: ProgramId; playerId: PlayerId }
+  | { type: "SET_DEVELOPMENT_FOCUS"; programId: ProgramId; playerId: PlayerId; focus: DevelopmentFocus }
+  | { type: "ASSIGN_STAFF"; programId: ProgramId; staffId: string; assignment: StaffAssignment }
+  | { type: "UPGRADE_FACILITY"; programId: ProgramId; facility: FacilityType };
 
 export type GameEvent =
   | { type: "PLAYER_DEVELOPED"; season: Season; week: number; playerId: PlayerId; previousOverall: number; newOverall: number; factors: { workEthic: number; fatigueModifier: number } }
@@ -108,6 +136,10 @@ export type GameEvent =
       scores: Record<ProgramId, number>;
     }
   | { type: "PROSPECT_SIGNED"; season: Season; week: number; prospectId: ProspectId; playerId: PlayerId; programId: ProgramId }
+  | { type: "DEVELOPMENT_FOCUS_SET"; season: Season; week: number; programId: ProgramId; playerId: PlayerId; focus: DevelopmentFocus }
+  | { type: "STAFF_ASSIGNED"; season: Season; week: number; programId: ProgramId; staffId: string; assignment: StaffAssignment }
+  | { type: "FACILITY_UPGRADED"; season: Season; week: number; programId: ProgramId; facility: FacilityType; newLevel: number; cost: number }
+  | { type: "WEEKLY_FINANCES"; season: Season; week: number; programId: ProgramId; revenue: number; expenses: number; net: number }
   | { type: "COMMAND_REJECTED"; programId: ProgramId; command: GameCommand; reason: string };
 
 export interface SimulationResult { state: GameState; events: GameEvent[]; }
