@@ -36,6 +36,20 @@ test("every program starts with a complete position-balanced 85-player roster", 
   }
 });
 
+test("players, coaches, and prospects receive stable unique fictional names", () => {
+  const state = createFictionalLeague("fictional-identities", 12);
+  const repeated = createFictionalLeague("fictional-identities", 12);
+  const people = [...Object.values(state.players), ...Object.values(state.staff), ...Object.values(state.prospects)];
+  const names = people.map((person) => person.name);
+  assert.equal(new Set(names).size, names.length);
+  assert.ok(names.every((name) => /^[A-Z][A-Za-z]+ [A-Z][A-Za-z]+$/.test(name)));
+  assert.ok(names.every((name) => !/^(Player|Coach|Prospect)\b/.test(name)));
+  assert.deepEqual(
+    names,
+    [...Object.values(repeated.players), ...Object.values(repeated.staff), ...Object.values(repeated.prospects)].map((person) => person.name)
+  );
+});
+
 test("low-tier programs begin with average players and no recruiting actions", () => {
   const state = createFictionalLeague("low-tier-foundation", 12);
   const lowProgram = Object.values(state.programs).find((program) => program.tier === "LOW");

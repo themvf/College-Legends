@@ -1,4 +1,5 @@
 import type { FacilityType, GameCommand, GameEvent, GameState, Player, Position, Program, Prospect, SimulationResult, StaffRole } from "@college-legends/model";
+import { fictionalPersonName } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
 
 export { AddressableRng } from "./rng.js";
@@ -31,6 +32,10 @@ const STAFF_ROLES: readonly StaffRole[] = ["HEAD_COACH", "OFFENSIVE_COORDINATOR"
 
 export function createFictionalLeague(rootSeed: string, programCount = 12): GameState {
   const rng = new AddressableRng(rootSeed).fork("league-generation");
+  const nameRng = rng.fork("fictional-names");
+  const firstNameOffset = Math.floor(nameRng.between("first-offset", 0, 96));
+  const lastNameOffset = Math.floor(nameRng.between("last-offset", 0, 160));
+  const nameFor = (ordinal: number): string => fictionalPersonName(ordinal, firstNameOffset, lastNameOffset);
   const state: GameState = {
     identity: { rootSeed, balanceConfiguration: { version: "0.1.0", weeklyDevelopment: { base: 0.012, coachWeight: 0.018, workEthicWeight: 0.022, fatigueFloor: 0.62, maximum: 0.09 }, game: { possessions: 24, homeFieldAdvantage: 1.8, upsetNoise: 11 } }, simulationVersion: "0.1.0" },
     season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, staff: {}, schedule: [], eventHistory: []
@@ -61,10 +66,11 @@ export function createFictionalLeague(rootSeed: string, programCount = 12): Game
     };
     for (const [staffIndex, role] of STAFF_ROLES.entries()) {
       const staffId = `${id}-staff-${staffIndex + 1}`;
+      const personOrdinal = index * (STARTING_ROSTER_SIZE + STAFF_ROLES.length) + staffIndex;
       state.staff[staffId] = {
         id: staffId,
         programId: id,
-        name: `Coach ${index + 1}-${staffIndex + 1}`,
+        name: nameFor(personOrdinal),
         role,
         rating: Math.round(rng.between(`${staffId}:rating`, baseline - 4, baseline + 7)),
         salary: Math.round(rng.between(`${staffId}:salary`, 140_000, tier === "POWER" ? 1_400_000 : 650_000)),
@@ -73,11 +79,12 @@ export function createFictionalLeague(rootSeed: string, programCount = 12): Game
     }
     for (let rosterIndex = 0; rosterIndex < rosterPositions.length; rosterIndex += 1) {
       const playerId = `${id}-player-${rosterIndex + 1}`;
+      const personOrdinal = index * (STARTING_ROSTER_SIZE + STAFF_ROLES.length) + STAFF_ROLES.length + rosterIndex;
       const overall = Math.round(rng.between(`${playerId}:overall`, baseline - 5, baseline + 5));
-      state.players[playerId] = { id: playerId, name: `Player ${index + 1}-${rosterIndex + 1}`, programId: id, position: rosterPositions[rosterIndex]!, overall, potential: clamp(Math.round(overall + rng.between(`${playerId}:potential`, 2, 13)), overall, 99), workEthic: rng.between(`${playerId}:work-ethic`, 0.2, 1), fatigue: 0, developmentFocus: "BALANCED", eligibility: { cohortYear: 2027 - (rosterIndex % 4), seasonsEnrolled: rosterIndex % 4, seasonsParticipated: rosterIndex % 4, seasonsRemaining: 4 - (rosterIndex % 4), redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" } };
+      state.players[playerId] = { id: playerId, name: nameFor(personOrdinal), programId: id, position: rosterPositions[rosterIndex]!, overall, potential: clamp(Math.round(overall + rng.between(`${playerId}:potential`, 2, 13)), overall, 99), workEthic: rng.between(`${playerId}:work-ethic`, 0.2, 1), fatigue: 0, developmentFocus: "BALANCED", eligibility: { cohortYear: 2027 - (rosterIndex % 4), seasonsEnrolled: rosterIndex % 4, seasonsParticipated: rosterIndex % 4, seasonsRemaining: 4 - (rosterIndex % 4), redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" } };
     }
   }
-  generateProspects(state, rng.fork("prospects"), programCount * 30, "initial");
+  generateProspects(state, rng.fork("prospects"), programCount * 30, "initial", programCount * (STARTING_ROSTER_SIZE + STAFF_ROLES.length), firstNameOffset, lastNameOffset);
   buildSeasonSchedule(state);
   return state;
 }
@@ -234,13 +241,13 @@ function prospectToPlayer(prospect: Prospect, id: string, programId: string, sea
   return { id, name: prospect.name, programId, position: prospect.position, overall: prospect.overall, potential: prospect.potential, workEthic: prospect.workEthic, fatigue: 0, developmentFocus: "BALANCED", eligibility: { cohortYear: season, seasonsEnrolled: 0, seasonsParticipated: 0, seasonsRemaining: 4, redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" } };
 }
 
-function generateProspects(state: GameState, rng: AddressableRng, count: number, cohort: string): void {
+function generateProspects(state: GameState, rng: AddressableRng, count: number, cohort: string, nameStart = 0, firstNameOffset = 0, lastNameOffset = 0): void {
   const positions: Player["position"][] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
   for (let index = 0; index < count; index += 1) {
     const id = `prospect-${cohort}-${index + 1}`;
     const overall = Math.round(rng.between(`${id}:overall`, 52, 79));
     const interestByProgram = Object.fromEntries(Object.keys(state.programs).map((programId) => [programId, Number(rng.between(`${id}:${programId}:interest`, 35, 88).toFixed(3))]));
-    state.prospects[id] = { id, name: `Prospect ${index + 1}`, position: positions[index % positions.length]!, overall, potential: clamp(overall + rng.between(`${id}:potential`, 4, 20), overall, 99), workEthic: rng.between(`${id}:work-ethic`, 0.2, 1), interestByProgram, status: "AVAILABLE", signedProgramId: null };
+    state.prospects[id] = { id, name: fictionalPersonName(nameStart + index, firstNameOffset, lastNameOffset), position: positions[index % positions.length]!, overall, potential: clamp(overall + rng.between(`${id}:potential`, 4, 20), overall, 99), workEthic: rng.between(`${id}:work-ethic`, 0.2, 1), interestByProgram, status: "AVAILABLE", signedProgramId: null };
   }
 }
 
@@ -319,6 +326,12 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
   }
   state.season += 1; state.week = 1;
   for (const program of Object.values(state.programs)) { program.wins = 0; program.losses = 0; }
-  generateProspects(state, new AddressableRng(state.identity.rootSeed).fork("recruiting-cohort", String(state.season)), Object.keys(state.programs).length * 15, String(state.season));
+  const programCount = Object.keys(state.programs).length;
+  const nameRng = new AddressableRng(state.identity.rootSeed).fork("league-generation", "fictional-names");
+  const firstNameOffset = Math.floor(nameRng.between("first-offset", 0, 96));
+  const lastNameOffset = Math.floor(nameRng.between("last-offset", 0, 160));
+  const initialPeople = programCount * (STARTING_ROSTER_SIZE + STAFF_ROLES.length + 30);
+  const seasonOffset = Math.max(0, state.season - 2028) * programCount * 15;
+  generateProspects(state, new AddressableRng(state.identity.rootSeed).fork("recruiting-cohort", String(state.season)), programCount * 15, String(state.season), initialPeople + seasonOffset, firstNameOffset, lastNameOffset);
   buildSeasonSchedule(state);
 }
