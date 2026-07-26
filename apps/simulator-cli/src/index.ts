@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import type { GameEvent } from "@college-legends/model";
 import { summarize } from "@college-legends/analytics";
 import { planWeeklyCommands } from "@college-legends/ai";
-import { advanceWeek, createFictionalLeague } from "@college-legends/simulation";
+import { advanceWeek, beginSeason, createFictionalLeague } from "@college-legends/simulation";
 
 const args = new Map<string, string>();
 for (let index = 0; index < process.argv.length; index += 1) {
@@ -13,7 +13,7 @@ for (let index = 0; index < process.argv.length; index += 1) {
 const seasons = Number(args.get("seasons") ?? 50);
 const seed = String(args.get("seed") ?? "college-legends-baseline");
 const output = resolve(String(args.get("output") ?? "reports/latest"));
-let state = createFictionalLeague(seed);
+let state = beginSeason(createFictionalLeague(seed));
 const events: GameEvent[] = [];
 const initialSeason = state.season;
 while (state.season < initialSeason + seasons) { const result = advanceWeek(state, planWeeklyCommands(state)); state = result.state; events.push(...result.events); }

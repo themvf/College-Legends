@@ -5,6 +5,8 @@ export type Season = number;
 
 export type CareerPath = "DYNASTY_BUILDER" | "PROGRAM_RISER" | "CHAMPIONSHIP_MANDATE";
 export type RosterStatus = "SCHOLARSHIP" | "WALK_ON" | "PORTAL" | "DEPARTED" | "GRADUATED";
+export type GamePhase = "ROSTER_REVIEW" | "REGULAR_SEASON";
+export type Position = "QB" | "RB" | "WR" | "TE" | "OL" | "DL" | "LB" | "DB" | "K" | "P";
 
 export interface Eligibility {
   cohortYear: number;
@@ -20,7 +22,7 @@ export interface Player {
   id: PlayerId;
   name: string;
   programId: ProgramId | null;
-  position: "QB" | "RB" | "WR" | "OL" | "DL" | "LB" | "DB";
+  position: Position;
   overall: number;
   potential: number;
   workEthic: number;
@@ -69,6 +71,7 @@ export interface GameState {
   };
   season: Season;
   week: number;
+  phase: GamePhase;
   programs: Record<ProgramId, Program>;
   players: Record<PlayerId, Player>;
   prospects: Record<ProspectId, Prospect>;

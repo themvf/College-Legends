@@ -2,7 +2,7 @@ import type { GameCommand, GameState, Prospect } from "@college-legends/model";
 
 /** AI emits the same command objects as a human controller; resolution remains in simulation. */
 export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId?: string): GameCommand[] {
-  if (state.week > 12) return [];
+  if (state.phase !== "REGULAR_SEASON" || state.week > 12) return [];
   const available = Object.values(state.prospects).filter((prospect) => prospect.status === "AVAILABLE");
   return Object.values(state.programs).flatMap((program) => {
     if (program.id === excludedProgramId) return [];

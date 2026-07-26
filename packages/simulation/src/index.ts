@@ -1,4 +1,4 @@
-import type { GameCommand, GameEvent, GameState, Player, Program, Prospect, SimulationResult } from "@college-legends/model";
+import type { GameCommand, GameEvent, GameState, Player, Position, Program, Prospect, SimulationResult } from "@college-legends/model";
 import { AddressableRng } from "./rng.js";
 
 export { AddressableRng } from "./rng.js";
@@ -6,26 +6,52 @@ export { AddressableRng } from "./rng.js";
 const clamp = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value));
 const clone = <T>(value: T): T => structuredClone(value);
 
+export const ROSTER_COMPOSITION: Readonly<Record<Position, number>> = {
+  QB: 4,
+  RB: 7,
+  WR: 12,
+  TE: 6,
+  OL: 17,
+  DL: 14,
+  LB: 10,
+  DB: 11,
+  K: 2,
+  P: 2
+};
+
+export const STARTING_ROSTER_SIZE = Object.values(ROSTER_COMPOSITION).reduce((total, count) => total + count, 0);
+
 export function createFictionalLeague(rootSeed: string, programCount = 12): GameState {
   const rng = new AddressableRng(rootSeed).fork("league-generation");
   const state: GameState = {
     identity: { rootSeed, balanceConfiguration: { version: "0.1.0", weeklyDevelopment: { base: 0.012, coachWeight: 0.018, workEthicWeight: 0.022, fatigueFloor: 0.62, maximum: 0.09 }, game: { possessions: 24, homeFieldAdvantage: 1.8, upsetNoise: 11 } }, simulationVersion: "0.1.0" },
-    season: 2027, week: 1, programs: {}, players: {}, prospects: {}, schedule: []
+    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, schedule: []
   };
-  const positions: Player["position"][] = ["QB", "RB", "WR", "OL", "DL", "LB", "DB"];
+  const rosterPositions = Object.entries(ROSTER_COMPOSITION).flatMap(([position, count]) =>
+    Array.from({ length: count }, () => position as Position)
+  );
   for (let index = 0; index < programCount; index += 1) {
     const id = `program-${index + 1}`;
     const tier = index < 3 ? "POWER" : index < 8 ? "MID" : "LOW";
     state.programs[id] = { id, name: `College ${index + 1}`, tier, budget: tier === "POWER" ? 20_000_000 : tier === "MID" ? 6_000_000 : 1_500_000, scholarshipLimit: 85, wins: 0, losses: 0, championships: 0, coachSecurity: tier === "POWER" ? 45 : tier === "MID" ? 65 : 92 };
-    const baseline = tier === "POWER" ? 78 : tier === "MID" ? 69 : 61;
-    for (let rosterIndex = 0; rosterIndex < 55; rosterIndex += 1) {
+    const baseline = tier === "POWER" ? 83 : tier === "MID" ? 75 : 68;
+    for (let rosterIndex = 0; rosterIndex < rosterPositions.length; rosterIndex += 1) {
       const playerId = `${id}-player-${rosterIndex + 1}`;
-      const overall = Math.round(rng.between(`${playerId}:overall`, baseline - 9, baseline + 9));
-      state.players[playerId] = { id: playerId, name: `Player ${index + 1}-${rosterIndex + 1}`, programId: id, position: positions[rosterIndex % positions.length]!, overall, potential: clamp(overall + rng.between(`${playerId}:potential`, 2, 16), overall, 99), workEthic: rng.between(`${playerId}:work-ethic`, 0.2, 1), fatigue: 0, eligibility: { cohortYear: 2027 - (rosterIndex % 4), seasonsEnrolled: rosterIndex % 4, seasonsParticipated: rosterIndex % 4, seasonsRemaining: 4 - (rosterIndex % 4), redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" } };
+      const overall = Math.round(rng.between(`${playerId}:overall`, baseline - 5, baseline + 5));
+      state.players[playerId] = { id: playerId, name: `Player ${index + 1}-${rosterIndex + 1}`, programId: id, position: rosterPositions[rosterIndex]!, overall, potential: clamp(Math.round(overall + rng.between(`${playerId}:potential`, 2, 13)), overall, 99), workEthic: rng.between(`${playerId}:work-ethic`, 0.2, 1), fatigue: 0, eligibility: { cohortYear: 2027 - (rosterIndex % 4), seasonsEnrolled: rosterIndex % 4, seasonsParticipated: rosterIndex % 4, seasonsRemaining: 4 - (rosterIndex % 4), redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" } };
     }
   }
   generateProspects(state, rng.fork("prospects"), programCount * 30, "initial");
   buildSeasonSchedule(state);
+  return state;
+}
+
+export function beginSeason(input: Readonly<GameState>): GameState {
+  const state = clone<GameState>(input);
+  if (state.phase === "ROSTER_REVIEW") {
+    state.phase = "REGULAR_SEASON";
+    state.week = 1;
+  }
   return state;
 }
 
@@ -45,6 +71,9 @@ export function buildSeasonSchedule(state: GameState): void {
 
 export function advanceWeek(input: Readonly<GameState>, commands: readonly GameCommand[] = []): SimulationResult {
   const state = clone<GameState>(input);
+  if (state.phase !== "REGULAR_SEASON") {
+    throw new Error("Review the opening roster and begin the season before advancing a week.");
+  }
   const events: GameEvent[] = [];
   const rng = new AddressableRng(state.identity.rootSeed).fork(String(state.season), String(state.week));
   resolveCommands(state, commands, rng.fork("commands"), events);
@@ -136,7 +165,7 @@ function prospectToPlayer(prospect: Prospect, id: string, programId: string, sea
 }
 
 function generateProspects(state: GameState, rng: AddressableRng, count: number, cohort: string): void {
-  const positions: Player["position"][] = ["QB", "RB", "WR", "OL", "DL", "LB", "DB"];
+  const positions: Player["position"][] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
   for (let index = 0; index < count; index += 1) {
     const id = `prospect-${cohort}-${index + 1}`;
     const overall = Math.round(rng.between(`${id}:overall`, 52, 79));
