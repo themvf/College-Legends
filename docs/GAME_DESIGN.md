@@ -4,6 +4,32 @@
 
 The player runs a fictional college-football institution across weeks, seasons, and decades. Every major system competes for the same finite resources: cash, staff capacity, time, scholarships, attention, facilities, and reputation.
 
+## New-game career paths
+
+Every new game begins with a choice among three program tiers. This is not a conventional Easy/Normal/Hard selector. Each path changes starting resources, institutional expectations, patience, and the definition of success.
+
+| Career path | Starting position | Resources | Expectations | Job security |
+|---|---|---|---|---|
+| **Dynasty Builder** | Low-tier program with a weak roster and limited recognition | Low budget, modest facilities, smaller staff, limited recruiting reach | Establish stability, improve recruiting, reach postseason play, and build toward contention | Longest leash and most forgiving evaluations; steady progress can protect the player's job even without championships |
+| **Program Riser** | Mid-tier program capable of winning but not nationally dominant | Competitive budget, average-to-good facilities, credible recruiting reach | Produce winning seasons, compete for conference honors, and show a believable path toward national contention | Standard leash; stagnation or repeated regression creates pressure, while clear progress earns more time |
+| **Championship Mandate** | Powerhouse with an elite roster, major recognition, and top-tier infrastructure | Large budget, strong staff, premier facilities, and national recruiting access | Win a national championship within the first two seasons | Hard deadline: failure to win the championship by the end of Year 2 results in dismissal |
+
+The paths should create different stories rather than merely changing numeric difficulty. Dynasty Builder asks the player to manufacture advantages under constraint. Program Riser asks the player to turn an imperfect contender into an elite institution. Championship Mandate gives the player immediate power but almost no tolerance for failure.
+
+### Institutional expectations
+
+At the start of each season, the institution issues a small set of explicit objectives based on program tier, recent results, roster trajectory, finances, and prior promises. Evaluations should consider both outcomes and direction:
+
+- wins, postseason results, conference performance, and championships;
+- recruiting and roster health;
+- financial stability and responsible investment;
+- program recognition and fan or donor confidence;
+- progress against stated multi-year objectives.
+
+The player must always be able to see the current evaluation, the reasons behind it, and the likely consequence of missing an objective. Firing risk must never be a hidden roll.
+
+Expectations can evolve after the opening window. A successful low-tier dynasty will eventually face higher standards, while a fallen powerhouse may enter a rebuilding period. The initial career path determines the opening contract—not a permanent exemption from accountability.
+
 ## Weekly rhythm
 
 A normal week contains:
