@@ -1,14 +1,36 @@
-import type { GameCommand, GameState, Prospect } from "@college-legends/model";
+import type { DevelopmentFocus, GameCommand, GameState, Position, Prospect } from "@college-legends/model";
 
-/** AI uses the same scouting, evaluation, and pursuit commands as the human player. */
+/** AI programs use the same limited development, media, and recruiting decisions as the human player. */
 export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId?: string): GameCommand[] {
   if (state.phase !== "REGULAR_SEASON" || state.week > 14) return [];
   return Object.values(state.programs).flatMap((program) => {
-    if (program.id === excludedProgramId || projectedOpenings(state, program.id) <= 0) return [];
-    const recruiting = state.recruiting[program.id];
-    if (!recruiting || recruiting.points <= 0) return [];
-    let points = recruiting.points;
+    if (program.id === excludedProgramId) return [];
     const commands: GameCommand[] = [];
+    const position = weakestPosition(state, program.id);
+    const developmentFocus: Exclude<DevelopmentFocus, "BALANCED"> = state.week % 3 === 1 ? "TECHNIQUE" : state.week % 3 === 2 ? "STRENGTH" : "CONDITIONING";
+    commands.push({ type: "SET_DEVELOPMENT_SPOTLIGHT", programId: program.id, target: { type: "POSITION", position }, focus: developmentFocus });
+
+    const featuredPlayer = Object.values(state.players)
+      .filter((player) =>
+        player.programId === program.id
+        && player.eligibility.rosterStatus === "SCHOLARSHIP"
+        && player.eligibility.redshirtStatus !== "REDSHIRTING"
+      )
+      .sort((left, right) =>
+        (right.lastGameRating ?? 0) - (left.lastGameRating ?? 0)
+        || right.stardom - left.stardom
+        || right.overall - left.overall
+        || left.id.localeCompare(right.id)
+      )[0];
+    if (featuredPlayer) {
+      const action = state.week % 3 === 1 ? "MEDIA_DAY" : state.week % 3 === 2 ? "SOCIAL_MEDIA" : "COMMUNITY_APPEARANCE";
+      commands.push({ type: "SET_PLAYER_MEDIA_ACTION", programId: program.id, playerId: featuredPlayer.id, action });
+    }
+
+    if (projectedOpenings(state, program.id) <= 0) return commands;
+    const recruiting = state.recruiting[program.id];
+    if (!recruiting || recruiting.points <= 0) return commands;
+    let points = recruiting.points;
     const discovered = recruiting.discoveredProspectIds
       .map((prospectId) => state.prospects[prospectId])
       .filter((prospect): prospect is Prospect => Boolean(prospect && prospect.status === "AVAILABLE"))
@@ -42,6 +64,18 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
     }
     return commands;
   });
+}
+
+function weakestPosition(state: Readonly<GameState>, programId: string): Position {
+  const positions: Position[] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
+  return positions.map((position) => {
+    const players = Object.values(state.players).filter((player) =>
+      player.programId === programId
+      && player.position === position
+      && player.eligibility.rosterStatus === "SCHOLARSHIP"
+    );
+    return { position, average: players.reduce((sum, player) => sum + player.overall, 0) / Math.max(1, players.length) };
+  }).sort((left, right) => left.average - right.average || left.position.localeCompare(right.position))[0]!.position;
 }
 
 function projectedOpenings(state: Readonly<GameState>, programId: string): number {

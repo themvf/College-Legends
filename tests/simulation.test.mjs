@@ -171,6 +171,11 @@ test("AI recruiting respects scholarship limits and receives a new annual cohort
   let state = activeLeague("recruiting-cycle", 4);
   const startingProspectCount = Object.keys(state.prospects).length;
   const firstSeason = state.season;
+  const openingPlan = planWeeklyCommands(state);
+  for (const program of Object.values(state.programs)) {
+    assert.equal(openingPlan.filter((command) => command.programId === program.id && command.type === "SET_DEVELOPMENT_SPOTLIGHT").length, 1);
+    assert.equal(openingPlan.filter((command) => command.programId === program.id && command.type === "SET_PLAYER_MEDIA_ACTION").length, 1);
+  }
   while (state.season < firstSeason + 2) {
     const result = advanceWeek(state, planWeeklyCommands(state));
     state = result.state;
@@ -188,12 +193,12 @@ test("development and staff decisions resolve through the shared command boundar
   const staff = Object.values(state.staff).find((candidate) => candidate.programId === "program-1");
   assert.ok(player && staff);
   const result = advanceWeek(state, [
-    { type: "SET_DEVELOPMENT_FOCUS", programId: "program-1", playerId: player.id, focus: "STRENGTH" },
+    { type: "SET_DEVELOPMENT_SPOTLIGHT", programId: "program-1", target: { type: "PLAYER", playerId: player.id }, focus: "STRENGTH" },
     { type: "ASSIGN_STAFF", programId: "program-1", staffId: staff.id, assignment: "PLAYER_DEVELOPMENT" }
   ]);
   assert.equal(result.state.players[player.id].developmentFocus, "STRENGTH");
   assert.equal(result.state.staff[staff.id].assignment, "PLAYER_DEVELOPMENT");
-  assert.ok(result.events.some((event) => event.type === "DEVELOPMENT_FOCUS_SET"));
+  assert.ok(result.events.some((event) => event.type === "DEVELOPMENT_SPOTLIGHT_SET"));
   assert.ok(result.events.some((event) => event.type === "STAFF_ASSIGNED"));
 });
 
@@ -340,12 +345,41 @@ test("training choices create distinct permanent attributes and injury-preventio
   const player = Object.values(strengthState.players).find((candidate) => candidate.programId === "program-1" && candidate.position === "QB");
   assert.ok(player);
   const before = structuredClone(player.ratings);
-  const strength = advanceWeek(strengthState, [{ type: "SET_DEVELOPMENT_FOCUS", programId: "program-1", playerId: player.id, focus: "STRENGTH" }]);
-  const conditioning = advanceWeek(conditioningState, [{ type: "SET_DEVELOPMENT_FOCUS", programId: "program-1", playerId: player.id, focus: "CONDITIONING" }]);
+  const strength = advanceWeek(strengthState, [{ type: "SET_DEVELOPMENT_SPOTLIGHT", programId: "program-1", target: { type: "PLAYER", playerId: player.id }, focus: "STRENGTH" }]);
+  const conditioning = advanceWeek(conditioningState, [{ type: "SET_DEVELOPMENT_SPOTLIGHT", programId: "program-1", target: { type: "PLAYER", playerId: player.id }, focus: "CONDITIONING" }]);
   assert.ok(strength.state.players[player.id].ratings.armStrength > before.armStrength);
   assert.ok(strength.state.players[player.id].ratings.strength > conditioning.state.players[player.id].ratings.strength);
   assert.ok(conditioning.state.players[player.id].ratings.injuryPrevention > strength.state.players[player.id].ratings.injuryPrevention);
   assert.ok(conditioning.state.players[player.id].fatigue < strength.state.players[player.id].fatigue);
+});
+
+test("one weekly development spotlight supports a full-intensity player or diluted position room", () => {
+  const individualState = activeLeague("development-spotlight-scope", 4);
+  const groupState = structuredClone(individualState);
+  const quarterbacks = Object.values(individualState.players).filter((player) => player.programId === "program-1" && player.position === "QB");
+  const target = quarterbacks[0];
+  assert.ok(target && quarterbacks.length > 1);
+  const before = target.ratings.technique;
+  const individual = advanceWeek(individualState, [{
+    type: "SET_DEVELOPMENT_SPOTLIGHT",
+    programId: "program-1",
+    target: { type: "PLAYER", playerId: target.id },
+    focus: "TECHNIQUE"
+  }]);
+  const group = advanceWeek(groupState, [{
+    type: "SET_DEVELOPMENT_SPOTLIGHT",
+    programId: "program-1",
+    target: { type: "POSITION", position: "QB" },
+    focus: "TECHNIQUE"
+  }]);
+  const individualGain = individual.state.players[target.id].ratings.technique - before;
+  const groupGain = group.state.players[target.id].ratings.technique - before;
+  assert.ok(individualGain > groupGain);
+  assert.ok(group.state.players[quarterbacks[1].id].ratings.technique > quarterbacks[1].ratings.technique);
+  const spotlight = group.events.find((event) => event.type === "DEVELOPMENT_SPOTLIGHT_SET");
+  assert.ok(spotlight);
+  assert.equal(spotlight.intensity, 0.55);
+  assert.equal(spotlight.playerIds.length, quarterbacks.length);
 });
 
 test("recovery assignments lower fatigue and recruiting staff and facilities generate more points", () => {
@@ -394,6 +428,13 @@ test("weekly recaps connect results to fans, attendance, press, and game-day rev
   assert.ok(homeRecap.attendance > 0 && homeRecap.attendance <= homeRecap.capacity);
   assert.ok(homeRecap.ticketRevenue > 0);
   assert.ok(homeRecap.concessionRevenue > 0);
+  const matchupPlayerStats = result.state.playerGameStats.filter((line) =>
+    line.season === homeRecap.season
+    && line.week === homeRecap.week
+    && [homeRecap.programId, homeRecap.opponentProgramId].includes(line.programId)
+  );
+  assert.ok(matchupPlayerStats.some((line) => line.programId === homeRecap.programId));
+  assert.ok(matchupPlayerStats.some((line) => line.programId === homeRecap.opponentProgramId));
   for (const recap of recaps.filter((item) => item.result !== "BYE")) {
     assert.equal(Math.sign(recap.teamResultFanChange), recap.result === "WIN" ? 1 : -1);
     assert.equal(Math.sign(recap.localPressChange), recap.result === "WIN" ? 1 : -1);
@@ -449,6 +490,23 @@ test("social media builds a reserve player's brand and converts some fans to the
   assert.equal(brand.schoolFanLift, Math.round(expectedPersonalFans * 0.15));
   assert.ok(recap.playerFanLift >= brand.schoolFanLift);
   assert.equal(result.state.players[reserve.id].mediaAction, "FOOTBALL_FOCUS");
+});
+
+test("a program can feature only one player in the media each week", () => {
+  const state = activeLeague("single-featured-player", 12);
+  const players = Object.values(state.players).filter((player) => player.programId === "program-1").slice(0, 2);
+  assert.equal(players.length, 2);
+  const result = advanceWeek(state, [
+    { type: "SET_PLAYER_MEDIA_ACTION", programId: "program-1", playerId: players[0].id, action: "SOCIAL_MEDIA" },
+    { type: "SET_PLAYER_MEDIA_ACTION", programId: "program-1", playerId: players[1].id, action: "COMMUNITY_APPEARANCE" }
+  ]);
+  const campaigns = result.events.filter((event) =>
+    event.type === "PLAYER_BRAND_UPDATED"
+    && event.programId === "program-1"
+    && event.mediaAction !== "FOOTBALL_FOCUS"
+  );
+  assert.equal(campaigns.length, 1);
+  assert.ok(result.events.some((event) => event.type === "COMMAND_REJECTED" && /only one player/i.test(event.reason)));
 });
 
 test("a preseason guarantee buys a Top-25 home game with asymmetric recognition payoff", () => {

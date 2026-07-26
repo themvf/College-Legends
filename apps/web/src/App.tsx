@@ -44,6 +44,7 @@ const careerOrder: CareerPath[] = ["DYNASTY_BUILDER", "PROGRAM_RISER", "CHAMPION
 const positionOrder: Player["position"][] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
 const screens: Screen[] = ["DASHBOARD", "WEEKLY_RECAPS", "ROSTER", "DEPTH_CHART", "PLAYER_STATS", "HONORS", "DEVELOPMENT", "PLAYER_MEDIA", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
 const developmentFocuses: DevelopmentFocus[] = ["BALANCED", "TECHNIQUE", "STRENGTH", "CONDITIONING"];
+const spotlightFocuses: Exclude<DevelopmentFocus, "BALANCED">[] = ["TECHNIQUE", "STRENGTH", "CONDITIONING"];
 const playerMediaActions: PlayerMediaAction[] = ["FOOTBALL_FOCUS", "MEDIA_DAY", "SOCIAL_MEDIA", "COMMUNITY_APPEARANCE"];
 const recruitingEvaluations: RecruitingEvaluation[] = ["BASIC", "ATHLETIC", "POSITION", "CHARACTER", "MEDICAL", "PROJECTION"];
 const staffAssignments: StaffAssignment[] = ["GAME_PREP", "PLAYER_DEVELOPMENT", "RECRUITING", "RECOVERY"];
@@ -98,8 +99,8 @@ export function App(): ReactElement {
     send({ type: "BEGIN_SEASON", requestId: nextRequestId(), playerProgramId: game.playerProgramId, commands: pendingCommands });
   };
   const queue = (command: GameCommand): void => {
-    const key = command.type === "SET_DEVELOPMENT_FOCUS" ? `player:${command.playerId}`
-      : command.type === "SET_PLAYER_MEDIA_ACTION" ? `media:${command.playerId}`
+    const key = command.type === "SET_DEVELOPMENT_SPOTLIGHT" ? "development-spotlight"
+      : command.type === "SET_PLAYER_MEDIA_ACTION" ? "featured-media"
       : command.type === "ASSIGN_STAFF" ? `staff:${command.staffId}`
       : command.type === "UPGRADE_FACILITY" ? `facility:${command.facility}`
       : command.type === "SCHEDULE_MARQUEE_HOME_GAME" ? "marquee-game"
@@ -140,8 +141,8 @@ export function App(): ReactElement {
 }
 
 function commandKey(command: GameCommand): string {
-  if (command.type === "SET_DEVELOPMENT_FOCUS") return `player:${command.playerId}`;
-  if (command.type === "SET_PLAYER_MEDIA_ACTION") return `media:${command.playerId}`;
+  if (command.type === "SET_DEVELOPMENT_SPOTLIGHT") return "development-spotlight";
+  if (command.type === "SET_PLAYER_MEDIA_ACTION") return "featured-media";
   if (command.type === "ASSIGN_STAFF") return `staff:${command.staffId}`;
   if (command.type === "UPGRADE_FACILITY") return `facility:${command.facility}`;
   if (command.type === "SCHEDULE_MARQUEE_HOME_GAME") return "marquee-game";
@@ -384,49 +385,74 @@ function candidateName(game: GameView, candidate: AwardCandidate): string {
 }
 
 function Development({ state, roster, programId, pending, onQueue }: { state: GameState; roster: Player[]; programId: string; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
-  return <section className="panel table-panel"><SectionHeading eyebrow="Player development" title="Choose the payoff—not just a label" detail="Every focus permanently changes attributes, affects game performance, and carries a fatigue or development tradeoff when the week advances." />
+  const queued = pending.find((item): item is Extract<GameCommand, { type: "SET_DEVELOPMENT_SPOTLIGHT" }> => item.type === "SET_DEVELOPMENT_SPOTLIGHT");
+  const selectedFocus = queued?.focus ?? "TECHNIQUE";
+  const selectedTarget = queued?.target ?? { type: "POSITION" as const, position: "QB" as Position };
+  const targetValue = selectedTarget.type === "PLAYER" ? `PLAYER:${selectedTarget.playerId}` : `POSITION:${selectedTarget.position}`;
+  const selectedPlayers = roster.filter((player) =>
+    selectedTarget.type === "PLAYER" ? player.id === selectedTarget.playerId : player.position === selectedTarget.position
+  );
+  const intensity = selectedTarget.type === "PLAYER" ? 1 : 0.55;
+  const queueSpotlight = (value: string, focus: Exclude<DevelopmentFocus, "BALANCED">): void => {
+    const [type, id] = value.split(":") as ["PLAYER" | "POSITION", string];
+    onQueue({
+      type: "SET_DEVELOPMENT_SPOTLIGHT",
+      programId,
+      focus,
+      target: type === "PLAYER" ? { type, playerId: id } : { type, position: id as Position }
+    });
+  };
+  return <section className="panel table-panel"><SectionHeading eyebrow="Player development" title="One weekly development spotlight" detail="Choose one player for full-intensity work or one position room for a 55%-intensity group session. Everyone else follows the balanced team plan automatically." />
     <div className="decision-legend">
       {developmentFocuses.map((focus) => {
         const sample = developmentPayoff(focus, "QB");
         return <article key={focus}><strong>{label(focus)}</strong><span>Base: {formatRatingChanges(sample.ratingChanges)}</span><small>{sample.tradeoff}</small></article>;
       })}
     </div>
-    <div className="data-table development-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>OVR/POT</span><span>Core ratings</span><span>Fatigue</span><span>Training decision</span></div>
-      {roster.map((player) => {
-        const queued = pending.find((item): item is Extract<GameCommand, { type: "SET_DEVELOPMENT_FOCUS" }> => item.type === "SET_DEVELOPMENT_FOCUS" && item.playerId === player.id);
-        const focus = queued?.focus ?? player.developmentFocus;
-        const payoff = projectedDevelopmentPayoff(state, player, focus);
-        return <div className="data-row decision-row" key={player.id}><strong data-label="Player">{player.name}<small>{player.injuryWeeksRemaining > 0 ? `Out ${player.injuryWeeksRemaining} week${player.injuryWeeksRemaining === 1 ? "" : "s"}` : "Available"}</small></strong><span data-label="Position">{player.position}</span><span data-label="Overall / potential">{Math.round(player.overall)} / {Math.round(player.potential)}</span><span data-label="Core ratings"><small>TEC {Math.round(player.ratings.technique)} · STR {Math.round(player.ratings.strength)} · CON {Math.round(player.ratings.conditioning)}{player.position === "QB" ? ` · ARM ${Math.round(player.ratings.armStrength)}` : ""}<br />INJ {Math.round(player.ratings.injuryPrevention)}</small></span><span data-label="Fatigue">{Math.round(player.fatigue)}%</span>
-          <div className="decision-control"><select aria-label={`Training focus for ${player.name}`} value={focus} onChange={(event) => onQueue({ type: "SET_DEVELOPMENT_FOCUS", programId, playerId: player.id, focus: event.target.value as DevelopmentFocus })}>{developmentFocuses.map((option) => <option key={option} value={option}>{label(option)}</option>)}</select>
-            <div className="payoff-strip"><b>Your projected weekly payoff</b><span>{formatRatingChanges(payoff.ratingChanges)}</span><span>{signed(payoff.fatigueChange)} fatigue</span><small>Includes this player’s work ethic, fatigue, coaches, and Training facility. {payoff.gameEffect}. Tradeoff: {payoff.tradeoff}.</small></div>
-          </div>
-        </div>;
-      })}</div></section>;
+    <div className="spotlight-planner">
+      <label><span>Spotlight target</span><select aria-label="Development spotlight target" value={targetValue} onChange={(event) => queueSpotlight(event.target.value, selectedFocus)}>
+        <optgroup label="Position rooms">{positionOrder.map((position) => <option key={position} value={`POSITION:${position}`}>{position} room · {roster.filter((player) => player.position === position).length} players</option>)}</optgroup>
+        <optgroup label="Individual players">{[...roster].sort((left, right) => right.overall - left.overall).map((player) => <option key={player.id} value={`PLAYER:${player.id}`}>{player.name} · {player.position} · {Math.round(player.overall)} OVR</option>)}</optgroup>
+      </select></label>
+      <div><span>Training payoff</span><div className="spotlight-focuses">{spotlightFocuses.map((focus) => <button className={selectedFocus === focus && queued ? "selected" : ""} key={focus} onClick={() => queueSpotlight(targetValue, focus)}>{label(focus)}</button>)}</div></div>
+      <article><p className="eyebrow">{selectedTarget.type === "PLAYER" ? "Full intensity" : "Group intensity"}</p><h2>{Math.round(intensity * 100)}% payoff · {selectedPlayers.length} player{selectedPlayers.length === 1 ? "" : "s"}</h2><p className="muted">{queued ? "This is the program's only special development investment this week." : "Choose a payoff to queue this week's spotlight."}</p></article>
+    </div>
+    <div className="data-table spotlight-table"><div className="data-row data-header"><span>Affected player</span><span>OVR/POT</span><span>Core ratings</span><span>Projected payoff</span></div>
+      {selectedPlayers.map((player) => {
+        const payoff = projectedDevelopmentPayoff(state, player, selectedFocus, intensity);
+        return <div className="data-row" key={player.id}><strong>{player.name}<small>{player.position} · {player.injuryWeeksRemaining > 0 ? `Out ${player.injuryWeeksRemaining} week${player.injuryWeeksRemaining === 1 ? "" : "s"}` : `${Math.round(player.fatigue)}% fatigue`}</small></strong><span>{Math.round(player.overall)} / {Math.round(player.potential)}</span><span><small>TEC {Math.round(player.ratings.technique)} · STR {Math.round(player.ratings.strength)} · CON {Math.round(player.ratings.conditioning)}{player.position === "QB" ? ` · ARM ${Math.round(player.ratings.armStrength)}` : ""} · INJ {Math.round(player.ratings.injuryPrevention)}</small></span><span><b>{formatRatingChanges(payoff.ratingChanges)}</b><small>{signed(payoff.fatigueChange)} fatigue</small></span></div>;
+      })}
+    </div>
+  </section>;
 }
 
 function PlayerMedia({ game, roster, pending, onQueue }: { game: GameView; roster: Player[]; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
-  const mediaDay = pending.find((command): command is Extract<GameCommand, { type: "SET_PLAYER_MEDIA_ACTION" }> =>
-    command.type === "SET_PLAYER_MEDIA_ACTION" && command.action === "MEDIA_DAY"
-  );
   const players = [...roster].sort((left, right) => right.stardom - left.stardom || right.personalFans - left.personalFans || right.overall - left.overall);
-  return <section className="panel table-panel"><SectionHeading eyebrow="Player brands" title="Performance, stardom, and audience" detail="Game performance grows each player’s personal following. New player fans then convert into school fans, which increases future attendance and game-day revenue." />
+  const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_PLAYER_MEDIA_ACTION" }> => command.type === "SET_PLAYER_MEDIA_ACTION");
+  const selectedPlayerId = queued?.playerId ?? players[0]?.id ?? "";
+  const selectedAction = queued?.action ?? "SOCIAL_MEDIA";
+  const selectedPlayer = game.state.players[selectedPlayerId];
+  const queueCampaign = (playerId: string, action: PlayerMediaAction): void =>
+    onQueue({ type: "SET_PLAYER_MEDIA_ACTION", programId: game.playerProgramId, playerId, action });
+  return <section className="panel table-panel"><SectionHeading eyebrow="Player brands" title="One featured player per week" detail="Like choosing one artist or band to promote, the program gives one player a media campaign. Everyone else stays on Football Focus and grows through performance." />
     <div className="decision-legend media-legend">{playerMediaActions.map((action) => {
       const payoff = playerMediaPayoff(action);
       return <article key={action}><strong>{label(action)}</strong><span>{payoff.personalFans}</span><small>{payoff.stardom} · {payoff.schoolConversion}. {payoff.tradeoff}.</small></article>;
     })}</div>
-    <div className="data-table player-media-table"><div className="data-row data-header"><span>Player</span><span>Brand</span><span>Last performance</span><span>Weekly media decision</span></div>{players.map((player) => {
-      const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_PLAYER_MEDIA_ACTION" }> =>
-        command.type === "SET_PLAYER_MEDIA_ACTION" && command.playerId === player.id
-      );
-      const action = queued?.action ?? player.mediaAction;
-      const payoff = playerMediaPayoff(action);
-      return <div className="data-row decision-row" key={player.id}>
+    <div className="spotlight-planner media-planner">
+      <label><span>Featured player</span><select aria-label="Featured media player" value={selectedPlayerId} onChange={(event) => queueCampaign(event.target.value, selectedAction)}>
+        {players.map((player) => <option key={player.id} value={player.id}>{player.name} · {player.position} · {player.stardom} stardom · {compactNumber(player.personalFans)} fans</option>)}
+      </select></label>
+      <div><span>Campaign</span><div className="spotlight-focuses">{playerMediaActions.map((action) => <button className={selectedAction === action && queued ? "selected" : ""} key={action} onClick={() => queueCampaign(selectedPlayerId, action)}>{action === "FOOTBALL_FOCUS" ? "No campaign" : label(action)}</button>)}</div></div>
+      <article><p className="eyebrow">{queued && queued.action !== "FOOTBALL_FOCUS" ? "Campaign queued" : "Football first"}</p><h2>{selectedPlayer?.name ?? "Choose a player"}</h2><p className="muted">{playerMediaPayoff(selectedAction).personalFans} · {playerMediaPayoff(selectedAction).schoolConversion}</p></article>
+    </div>
+    <div className="data-table player-media-table"><div className="data-row data-header"><span>Player</span><span>Brand</span><span>Last performance</span><span>Weekly role</span></div>{players.map((player) => {
+      const isFeatured = queued?.playerId === player.id && queued.action !== "FOOTBALL_FOCUS";
+      return <div className={`data-row ${isFeatured ? "featured-row" : ""}`} key={player.id}>
         <strong data-label="Player">{player.name}<small>{player.position} · OVR {Math.round(player.overall)}</small></strong>
         <span data-label="Brand"><b>{player.stardom}/100 stardom</b><small>{compactNumber(player.personalFans)} personal fans</small></span>
         <span data-label="Last performance">{player.lastGameRating == null ? "No game yet" : `${player.lastGameRating}/99`}<small>{player.lastGameSummary ?? "No report"}</small></span>
-        <div className="decision-control"><select aria-label={`Media action for ${player.name}`} value={action} onChange={(event) => onQueue({ type: "SET_PLAYER_MEDIA_ACTION", programId: game.playerProgramId, playerId: player.id, action: event.target.value as PlayerMediaAction })}>
-          {playerMediaActions.map((option) => <option key={option} value={option} disabled={option === "MEDIA_DAY" && Boolean(mediaDay && mediaDay.playerId !== player.id)}>{label(option)}</option>)}
-        </select><div className="payoff-strip"><b>Weekly brand payoff</b><span>{payoff.personalFans} · {payoff.stardom}</span><small>{payoff.schoolConversion}. Tradeoff: {payoff.tradeoff}.</small></div></div>
+        <span data-label="Weekly role"><b>{isFeatured ? label(queued.action) : "Football Focus"}</b><small>{isFeatured ? "Program's featured player" : "Performance-driven growth only"}</small></span>
       </div>;
     })}</div>
   </section>;
@@ -467,6 +493,7 @@ function WeeklyRecaps({ game }: { game: GameView }): ReactElement {
     {recaps.length ? <div className="recap-grid">{recaps.map((recap) => <article className="panel recap-card" key={`${recap.season}-${recap.week}`}>
       <div className="recap-heading"><div><p className="eyebrow">Week {recap.week}</p><h2>{recap.result === "BYE" ? "Bye week" : `${recap.result} · ${recap.scoreFor}–${recap.scoreAgainst}`}</h2></div><strong className={recap.result.toLowerCase()}>{recap.result}</strong></div>
       <RecapCascade recap={recap} game={game} />
+      <WeeklyBoxScore recap={recap} game={game} />
     </article>)}</div> : <article className="panel"><p className="muted">Advance the first week to generate the first connected recap.</p></article>}
   </section>;
 }
@@ -488,6 +515,59 @@ function RecapCascade({ recap, game }: { recap: Extract<GameEvent, { type: "WEEK
     <p><span>Weekly net</span><strong>{signedMoney(recap.weeklyNet)}</strong></p>
     {recap.marqueeGame && <p className="marquee-note"><span>Marquee payoff</span><strong>{recap.result === "WIN" ? "National breakthrough" : "Small recognition dip"} · guarantee {money(recap.guaranteePaid)}</strong></p>}
   </div>;
+}
+
+function WeeklyBoxScore({ recap, game }: { recap: Extract<GameEvent, { type: "WEEKLY_RECAP" }>; game: GameView }): ReactElement | null {
+  if (!recap.opponentProgramId) return null;
+  const programIds = [recap.programId, recap.opponentProgramId];
+  const lines = game.state.playerGameStats.filter((line) =>
+    line.season === recap.season && line.week === recap.week && programIds.includes(line.programId)
+  );
+  if (!lines.length) return null;
+  const totals = programIds.map((programId) => {
+    const teamLines = lines.filter((line) => line.programId === programId);
+    const passingYards = teamLines.reduce((sum, line) => sum + line.passingYards, 0);
+    const rushingYards = teamLines.reduce((sum, line) => sum + line.rushingYards, 0);
+    return {
+      programId,
+      passingYards,
+      rushingYards,
+      totalYards: passingYards + rushingYards,
+      turnovers: teamLines.reduce((sum, line) => sum + line.interceptionsThrown, 0),
+      sacks: teamLines.reduce((sum, line) => sum + line.sacks, 0),
+      rating: Math.round(teamLines.reduce((sum, line) => sum + line.gameRating, 0) / Math.max(1, teamLines.length))
+    };
+  });
+  return <section className="weekly-box-score">
+    <h3>Team statistics</h3>
+    <div className="team-stat-grid">
+      <span>Team</span><span>Total</span><span>Pass</span><span>Rush</span><span>TO</span><span>Sacks</span><span>Grade</span>
+      {totals.map((total) => <FragmentRow key={total.programId} values={[
+        game.state.programs[total.programId]?.abbreviation ?? total.programId,
+        total.totalYards,
+        total.passingYards,
+        total.rushingYards,
+        total.turnovers,
+        total.sacks,
+        total.rating
+      ]} />)}
+    </div>
+    <h3>Every player</h3>
+    {programIds.map((programId, index) => {
+      const teamLines = lines
+        .filter((line) => line.programId === programId)
+        .sort((left, right) => positionOrder.indexOf(left.position) - positionOrder.indexOf(right.position) || right.gameRating - left.gameRating);
+      const program = game.state.programs[programId];
+      return <details className="player-box-score" key={programId} open={index === 0}>
+        <summary>{program?.name ?? programId} · {teamLines.length} player lines</summary>
+        <div>{teamLines.map((line) => <p key={line.id}><span><b>{line.position}</b> {game.state.players[line.playerId]?.name ?? line.playerId}</span><strong>{statLineSummary(line)}</strong></p>)}</div>
+      </details>;
+    })}
+  </section>;
+}
+
+function FragmentRow({ values }: { values: Array<string | number> }): ReactElement {
+  return <>{values.map((value, index) => <span key={index}>{value}</span>)}</>;
 }
 
 function Divisions({ game }: { game: GameView }): ReactElement {
@@ -697,7 +777,12 @@ function eventText(event: GameEvent, game: GameView): string {
   if (event.type === "MARQUEE_GAME_SCHEDULED") return `#${event.opponentRank} ${game.state.programs[event.opponentProgramId]?.name} will visit in Week ${event.week}. Guarantee: ${money(event.guarantee)}.`;
   if (event.type === "FACILITY_UPGRADED") return `${label(event.facility)} reached Level ${event.newLevel} for ${money(event.cost)}.`;
   if (event.type === "STAFF_ASSIGNED") return `${game.state.staff[event.staffId]?.name ?? "Coach"} assigned to ${label(event.assignment)}.`;
-  if (event.type === "DEVELOPMENT_FOCUS_SET") return `${game.state.players[event.playerId]?.name ?? "Player"} changed to ${label(event.focus)} training.`;
+  if (event.type === "DEVELOPMENT_SPOTLIGHT_SET") {
+    const target = event.target.type === "PLAYER"
+      ? game.state.players[event.target.playerId]?.name ?? "one player"
+      : `${event.target.position} room`;
+    return `${target} received the ${label(event.focus)} development spotlight at ${Math.round(event.intensity * 100)}% intensity.`;
+  }
   if (event.type === "DEPTH_CHART_UPDATED") return `${event.position} depth chart updated.`;
   if (event.type === "REDSHIRT_STATUS_CHANGED") return `${game.state.players[event.playerId]?.name ?? "Player"} is now ${event.status === "REDSHIRTING" ? "redshirting" : label(event.status)}.`;
   if (event.type === "PLAYER_INJURED") return `${game.state.players[event.playerId]?.name ?? "Player"} will miss approximately ${event.weeks} week${event.weeks === 1 ? "" : "s"} (${event.risk}% risk).`;

@@ -8,6 +8,9 @@ export type RosterStatus = "SCHOLARSHIP" | "WALK_ON" | "PORTAL" | "DEPARTED" | "
 export type GamePhase = "ROSTER_REVIEW" | "REGULAR_SEASON";
 export type Position = "QB" | "RB" | "WR" | "TE" | "OL" | "DL" | "LB" | "DB" | "K" | "P";
 export type DevelopmentFocus = "BALANCED" | "TECHNIQUE" | "STRENGTH" | "CONDITIONING";
+export type DevelopmentSpotlightTarget =
+  | { type: "PLAYER"; playerId: PlayerId }
+  | { type: "POSITION"; position: Position };
 export type StaffRole = "HEAD_COACH" | "OFFENSIVE_COORDINATOR" | "DEFENSIVE_COORDINATOR" | "STRENGTH_COACH";
 export type StaffAssignment = "GAME_PREP" | "PLAYER_DEVELOPMENT" | "RECRUITING" | "RECOVERY";
 export type FacilityType = "TRAINING" | "STADIUM" | "ACADEMICS" | "RECRUITING";
@@ -194,6 +197,11 @@ export interface RecruitingProgramState {
   scoutingByProspect: Record<ProspectId, ProspectScoutingState>;
 }
 
+export interface DevelopmentSpotlight {
+  focus: Exclude<DevelopmentFocus, "BALANCED">;
+  target: DevelopmentSpotlightTarget;
+}
+
 export interface Program {
   id: ProgramId;
   name: string;
@@ -259,6 +267,8 @@ export interface GameState {
   players: Record<PlayerId, Player>;
   prospects: Record<ProspectId, Prospect>;
   recruiting: Record<ProgramId, RecruitingProgramState>;
+  /** One optional development investment per program and week. Position groups trade intensity for breadth. */
+  developmentSpotlights: Record<ProgramId, DevelopmentSpotlight | null>;
   staff: Record<string, StaffMember>;
   depthCharts: Record<ProgramId, DepthChart>;
   playerGameStats: PlayerGameStatLine[];
@@ -287,7 +297,7 @@ export type GameCommand =
   | { type: "RED_SHIRT"; programId: ProgramId; playerId: PlayerId }
   | { type: "SET_REDSHIRT"; programId: ProgramId; playerId: PlayerId; enabled: boolean }
   | { type: "SET_DEPTH_CHART"; programId: ProgramId; position: Position; playerIds: PlayerId[] }
-  | { type: "SET_DEVELOPMENT_FOCUS"; programId: ProgramId; playerId: PlayerId; focus: DevelopmentFocus }
+  | { type: "SET_DEVELOPMENT_SPOTLIGHT"; programId: ProgramId; focus: Exclude<DevelopmentFocus, "BALANCED">; target: DevelopmentSpotlightTarget }
   | { type: "ASSIGN_STAFF"; programId: ProgramId; staffId: string; assignment: StaffAssignment }
   | { type: "UPGRADE_FACILITY"; programId: ProgramId; facility: FacilityType }
   | { type: "SET_PLAYER_MEDIA_ACTION"; programId: ProgramId; playerId: PlayerId; action: PlayerMediaAction }
@@ -403,7 +413,16 @@ export type GameEvent =
       pointsAdded: number;
       pointsAvailable: number;
     }
-  | { type: "DEVELOPMENT_FOCUS_SET"; season: Season; week: number; programId: ProgramId; playerId: PlayerId; focus: DevelopmentFocus }
+  | {
+      type: "DEVELOPMENT_SPOTLIGHT_SET";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      focus: Exclude<DevelopmentFocus, "BALANCED">;
+      target: DevelopmentSpotlightTarget;
+      playerIds: PlayerId[];
+      intensity: number;
+    }
   | { type: "STAFF_ASSIGNED"; season: Season; week: number; programId: ProgramId; staffId: string; assignment: StaffAssignment }
   | { type: "FACILITY_UPGRADED"; season: Season; week: number; programId: ProgramId; facility: FacilityType; newLevel: number; cost: number }
   | { type: "MARQUEE_GAME_SCHEDULED"; season: Season; programId: ProgramId; opponentProgramId: ProgramId; week: number; guarantee: number; opponentRank: number }

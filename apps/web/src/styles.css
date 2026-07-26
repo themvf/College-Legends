@@ -81,9 +81,19 @@ dd { margin:0; font-weight:700; text-align:right; }
 .season-honors-grid small { display:block; color:#91a8b9; margin-top:.2rem; }
 .playoff-results { border-top:1px solid #294864; padding:1.1rem 1.25rem; }
 .recruit-table .data-row { grid-template-columns:minmax(10rem,1fr) 3rem 3.5rem 3.5rem 4.5rem 5.5rem; }
-.development-table .data-row { grid-template-columns:minmax(10rem,1fr) 3rem 5rem minmax(12rem,1.2fr) 4rem minmax(18rem,1.4fr); align-items:start; }
 .player-media-table .data-row { grid-template-columns:minmax(11rem,1fr) minmax(8rem,.7fr) minmax(13rem,1.1fr) minmax(18rem,1.35fr); align-items:start; }
 .player-media-table span small { display:block; color:#91a8b9; font-size:.7rem; line-height:1.4; margin-top:.3rem; }
+.player-media-table .featured-row { background:#123755; box-shadow:inset .25rem 0 #e0b057; }
+.spotlight-planner { display:grid; grid-template-columns:minmax(16rem,1.1fr) minmax(18rem,1.4fr) minmax(15rem,.8fr); gap:1rem; align-items:end; border-block:1px solid #315270; background:#0a223a; padding:1.1rem 1.25rem; }
+.spotlight-planner label,.spotlight-planner>div { display:grid; gap:.45rem; }
+.spotlight-planner label>span,.spotlight-planner>div>span { color:#91a8b9; font-size:.7rem; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
+.spotlight-planner article { border-left:1px solid #315270; padding-left:1rem; }
+.spotlight-planner article p:last-child { margin-bottom:0; }
+.spotlight-focuses { display:flex; flex-wrap:wrap; gap:.45rem; }
+.spotlight-focuses button { flex:1 1 auto; background:#102f4d; border:1px solid #315270; color:#b8c9d7; padding:.6rem .7rem; }
+.spotlight-focuses button.selected { background:#e0b057; border-color:#e0b057; color:#172638; }
+.spotlight-table .data-row { grid-template-columns:minmax(12rem,1fr) 5rem minmax(17rem,1.35fr) minmax(15rem,1fr); align-items:start; }
+.spotlight-table strong small,.spotlight-table span small { display:block; color:#91a8b9; font-size:.7rem; line-height:1.4; margin-top:.3rem; }
 .schedule-table .data-row { grid-template-columns:5rem 6rem minmax(12rem,1fr) 8rem 7rem; }
 .schedule-table small,.division-card small { display:block; color:#91a8b9; font-weight:500; margin-top:.2rem; }
 .division-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
@@ -160,7 +170,7 @@ dd { margin:0; font-weight:700; text-align:right; }
 .marquee-options button { display:grid; gap:.2rem; background:#143754; color:#eaf2f8; border:1px solid #315270; text-align:left; }
 .marquee-options button.selected { background:#e0b057; color:#172638; border-color:#e0b057; }
 .marquee-options small { opacity:.78; font-weight:600; }
-.recap-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
+.recap-grid { display:grid; grid-template-columns:1fr; gap:1rem; }
 .recap-heading { display:flex; justify-content:space-between; align-items:start; gap:1rem; }
 .recap-heading>strong { border-radius:2rem; padding:.35rem .65rem; font-size:.68rem; letter-spacing:.08em; }
 .recap-heading .win { background:#1d684e; }
@@ -172,6 +182,19 @@ dd { margin:0; font-weight:700; text-align:right; }
 .recap-cascade strong { text-align:right; }
 .recap-cascade .marquee-note { grid-column:1/-1; color:#e0b057; }
 .recap-feature { border-color:#436d8e; }
+.weekly-box-score { border-top:1px solid #315270; margin-top:1rem; padding-top:1rem; }
+.weekly-box-score h3 { color:#e0b057; font-size:.72rem; letter-spacing:.09em; margin:.85rem 0 .55rem; text-transform:uppercase; }
+.team-stat-grid { display:grid; grid-template-columns:minmax(5rem,1fr) repeat(6,minmax(3.5rem,.55fr)); overflow-x:auto; }
+.team-stat-grid>span { border-top:1px solid #294864; padding:.55rem .4rem; text-align:right; font-size:.76rem; }
+.team-stat-grid>span:nth-child(7n+1) { text-align:left; font-weight:800; }
+.team-stat-grid>span:nth-child(-n+7) { color:#91a8b9; font-size:.65rem; font-weight:800; letter-spacing:.05em; text-transform:uppercase; }
+.player-box-score { border:1px solid #315270; border-radius:.65rem; background:#0d2d49; margin-top:.55rem; overflow:hidden; }
+.player-box-score summary { cursor:pointer; color:#eaf2f8; font-size:.8rem; font-weight:800; padding:.75rem; }
+.player-box-score>div { border-top:1px solid #315270; padding:0 .75rem; }
+.player-box-score p { display:grid; grid-template-columns:minmax(11rem,.7fr) minmax(17rem,1.3fr); gap:1rem; border-top:1px solid #294864; margin:0; padding:.55rem 0; font-size:.72rem; }
+.player-box-score p:first-child { border-top:0; }
+.player-box-score p span b { color:#e0b057; display:inline-block; width:2rem; }
+.player-box-score p strong { text-align:right; }
 .decision-legend { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.65rem; padding:0 1.25rem 1.25rem; }
 .decision-legend article,.payoff-strip,.choice-compare { border:1px solid #315270; border-radius:.65rem; background:#0d2d49; padding:.75rem; }
 .decision-legend strong,.decision-legend span,.decision-legend small { display:block; }
@@ -208,6 +231,8 @@ dd { margin:0; font-weight:700; text-align:right; }
   .metrics { grid-template-columns:repeat(3,1fr); }
   .marquee-options { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .recruiting-command-center { grid-template-columns:1fr; }
+  .spotlight-planner { grid-template-columns:1fr; align-items:stretch; }
+  .spotlight-planner article { border-left:0; border-top:1px solid #315270; padding:1rem 0 0; }
   .scouting-actions { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .prospect-grid { grid-template-columns:1fr; }
 }
@@ -216,7 +241,7 @@ dd { margin:0; font-weight:700; text-align:right; }
   .section-heading { align-items:start; flex-direction:column; }
   .section-heading p:not(.eyebrow) { text-align:left; }
   .data-header { display:none; }
-  .data-row,.roster-table .data-row,.recruit-table .data-row,.development-table .data-row,.player-media-table .data-row,.schedule-table .data-row,.staff-table .data-row,.stats-table .data-row,.game-log-table .data-row { grid-template-columns:repeat(2,minmax(0,1fr)); gap:.65rem 1rem; padding:1rem; }
+  .data-row,.roster-table .data-row,.recruit-table .data-row,.spotlight-table .data-row,.player-media-table .data-row,.schedule-table .data-row,.staff-table .data-row,.stats-table .data-row,.game-log-table .data-row { grid-template-columns:repeat(2,minmax(0,1fr)); gap:.65rem 1rem; padding:1rem; }
   .division-grid { grid-template-columns:1fr; }
   .data-row strong { grid-column:1/-1; font-size:1rem; }
   .data-row [data-label] { display:grid; grid-template-columns:auto 1fr; align-items:baseline; gap:.45rem; }
@@ -231,6 +256,8 @@ dd { margin:0; font-weight:700; text-align:right; }
   .season-honors-grid { grid-template-columns:1fr; }
   .recap-cascade { grid-template-columns:1fr; }
   .recap-cascade .marquee-note { grid-column:auto; }
+  .player-box-score p { grid-template-columns:1fr; gap:.3rem; }
+  .player-box-score p strong { text-align:left; color:#b7c6d4; }
   .scouting-actions { grid-template-columns:1fr; padding-inline:1rem; }
   .recruiting-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .position-search { min-height:auto; }

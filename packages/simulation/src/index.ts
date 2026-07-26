@@ -236,7 +236,12 @@ export function developmentPayoff(focus: DevelopmentFocus, position: Position): 
   return { ...payoff, ratingChanges };
 }
 
-export function projectedDevelopmentPayoff(state: Readonly<GameState>, player: Readonly<Player>, focus: DevelopmentFocus = player.developmentFocus): DevelopmentPayoff {
+export function projectedDevelopmentPayoff(
+  state: Readonly<GameState>,
+  player: Readonly<Player>,
+  focus: DevelopmentFocus = player.developmentFocus,
+  intensity = 1
+): DevelopmentPayoff {
   if (!player.programId) return developmentPayoff(focus, player.position);
   const rules = state.identity.balanceConfiguration.weeklyDevelopment;
   const program = state.programs[player.programId]!;
@@ -250,8 +255,9 @@ export function projectedDevelopmentPayoff(state: Readonly<GameState>, player: R
   return {
     ...payoff,
     ratingChanges: Object.fromEntries(
-      (Object.entries(payoff.ratingChanges) as [PlayerRating, number][]).map(([rating, change]) => [rating, Number((change * scale).toFixed(2))])
-    )
+      (Object.entries(payoff.ratingChanges) as [PlayerRating, number][]).map(([rating, change]) => [rating, Number((change * scale * intensity).toFixed(2))])
+    ),
+    fatigueChange: Number((payoff.fatigueChange * intensity).toFixed(1))
   };
 }
 
@@ -291,19 +297,19 @@ const PLAYER_MEDIA_PAYOFFS: Readonly<Record<PlayerMediaAction, PlayerMediaPayoff
     personalFans: "+900 personal fans",
     stardom: "+2 stardom",
     schoolConversion: "30% of new fans join the school fan base",
-    tradeoff: "+1 fatigue; only one Media Day slot per program"
+    tradeoff: "+1 fatigue; uses the program's one featured-player slot"
   },
   SOCIAL_MEDIA: {
     personalFans: "+1,400 plus 2% of current personal fans",
     stardom: "+3 stardom",
     schoolConversion: "15% of new fans join the school fan base",
-    tradeoff: "+2 fatigue; builds the player brand more than the school"
+    tradeoff: "+2 fatigue; uses the featured-player slot and builds the player more than the school"
   },
   COMMUNITY_APPEARANCE: {
     personalFans: "+650 personal fans",
     stardom: "+1 stardom",
     schoolConversion: "45% of new fans join the school fan base",
-    tradeoff: "+1 fatigue; strongest school-fan conversion"
+    tradeoff: "+1 fatigue; uses the featured-player slot and gives the strongest school conversion"
   }
 };
 
@@ -324,7 +330,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
   const nameFor = (ordinal: number): string => fictionalPersonName(ordinal, firstNameOffset, lastNameOffset);
   const state: GameState = {
     identity: { rootSeed, balanceConfiguration: { version: "0.1.0", weeklyDevelopment: { base: 0.012, coachWeight: 0.018, workEthicWeight: 0.022, fatigueFloor: 0.62, maximum: 0.09 }, game: { possessions: 24, homeFieldAdvantage: 1.8, upsetNoise: 11 } }, simulationVersion: "0.1.0" },
-    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, staff: {}, depthCharts: {}, playerGameStats: [], schedule: [], seasonHistory: [], eventHistory: []
+    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, developmentSpotlights: {}, staff: {}, depthCharts: {}, playerGameStats: [], schedule: [], seasonHistory: [], eventHistory: []
   };
   const rosterPositions = Object.entries(ROSTER_COMPOSITION).flatMap(([position, count]) =>
     Array.from({ length: count }, () => position as Position)
@@ -367,6 +373,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       discoveredProspectIds: [],
       scoutingByProspect: {}
     };
+    state.developmentSpotlights[id] = null;
     for (const [staffIndex, role] of STAFF_ROLES.entries()) {
       const staffId = `${id}-staff-${staffIndex + 1}`;
       const personOrdinal = index * (STARTING_ROSTER_SIZE + STAFF_ROLES.length) + staffIndex;
@@ -647,6 +654,14 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   if (state.phase !== "REGULAR_SEASON") {
     throw new Error("Review the opening roster and begin the season before advancing a week.");
   }
+  state.developmentSpotlights ??= {};
+  for (const programId of Object.keys(state.programs)) state.developmentSpotlights[programId] = null;
+  for (const player of Object.values(state.players)) {
+    if (player.eligibility.rosterStatus === "SCHOLARSHIP") {
+      player.developmentFocus = "BALANCED";
+      player.mediaAction = "FOOTBALL_FOCUS";
+    }
+  }
   const events: GameEvent[] = [];
   const rng = new AddressableRng(state.identity.rootSeed).fork(String(state.season), String(state.week));
   resolveCommands(state, commands, rng.fork("commands"), events);
@@ -667,12 +682,16 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
 }
 
 function resolveCommands(state: GameState, commands: readonly GameCommand[], rng: AddressableRng, events: GameEvent[]): void {
-  const mediaDayWinnerByProgram = new Map<string, string>();
   const orderedCommands = [...commands].sort((left, right) => commandArbitrationKey(left).localeCompare(commandArbitrationKey(right)));
+  const developmentWinnerByProgram = new Map<string, string>();
+  const featuredMediaWinnerByProgram = new Map<string, string>();
   for (const command of orderedCommands) {
-    if (command.type !== "SET_PLAYER_MEDIA_ACTION" || command.action !== "MEDIA_DAY") continue;
-    const current = mediaDayWinnerByProgram.get(command.programId);
-    if (!current || command.playerId < current) mediaDayWinnerByProgram.set(command.programId, command.playerId);
+    if (command.type === "SET_DEVELOPMENT_SPOTLIGHT" && !developmentWinnerByProgram.has(command.programId)) {
+      developmentWinnerByProgram.set(command.programId, commandArbitrationKey(command));
+    }
+    if (command.type === "SET_PLAYER_MEDIA_ACTION" && command.action !== "FOOTBALL_FOCUS" && !featuredMediaWinnerByProgram.has(command.programId)) {
+      featuredMediaWinnerByProgram.set(command.programId, commandArbitrationKey(command));
+    }
   }
   for (const command of orderedCommands) {
     const program = state.programs[command.programId];
@@ -783,19 +802,45 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       events.push({ type: "FACILITY_UPGRADED", season: state.season, week: state.week, programId: program.id, facility: command.facility, newLevel: currentLevel + 1, cost });
       continue;
     }
-    const player = state.players[command.playerId];
-    if (!player || player.programId !== program.id) {
-      events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Command is not valid for this roster." });
-      continue;
-    }
-    if (command.type === "SET_DEVELOPMENT_FOCUS") {
-      player.developmentFocus = command.focus;
-      events.push({ type: "DEVELOPMENT_FOCUS_SET", season: state.season, week: state.week, programId: program.id, playerId: player.id, focus: command.focus });
+    if (command.type === "SET_DEVELOPMENT_SPOTLIGHT") {
+      if (developmentWinnerByProgram.get(program.id) !== commandArbitrationKey(command)) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Each program receives one development spotlight per week." });
+        continue;
+      }
+      const targetPlayers = Object.values(state.players).filter((player) =>
+        player.programId === program.id
+        && player.eligibility.rosterStatus === "SCHOLARSHIP"
+        && (command.target.type === "PLAYER"
+          ? player.id === command.target.playerId
+          : player.position === command.target.position)
+      );
+      if (!targetPlayers.length) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Choose a current scholarship player or position group." });
+        continue;
+      }
+      const intensity = command.target.type === "PLAYER" ? 1 : 0.55;
+      state.developmentSpotlights[program.id] = { focus: command.focus, target: clone(command.target) };
+      for (const player of targetPlayers) player.developmentFocus = command.focus;
+      events.push({
+        type: "DEVELOPMENT_SPOTLIGHT_SET",
+        season: state.season,
+        week: state.week,
+        programId: program.id,
+        focus: command.focus,
+        target: clone(command.target),
+        playerIds: targetPlayers.map((player) => player.id).sort(),
+        intensity
+      });
       continue;
     }
     if (command.type === "SET_PLAYER_MEDIA_ACTION") {
-      if (command.action === "MEDIA_DAY" && mediaDayWinnerByProgram.get(program.id) !== player.id) {
-        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Each program has only one player Media Day slot per week." });
+      const player = state.players[command.playerId];
+      if (!player || player.programId !== program.id || player.eligibility.rosterStatus !== "SCHOLARSHIP") {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Command is not valid for this roster." });
+        continue;
+      }
+      if (command.action !== "FOOTBALL_FOCUS" && featuredMediaWinnerByProgram.get(program.id) !== commandArbitrationKey(command)) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Each program can feature only one player in the media per week." });
         continue;
       }
       player.mediaAction = command.action;
@@ -1137,6 +1182,14 @@ function initializeRecruitingBoards(state: GameState, rng: AddressableRng): void
   }
 }
 
+function playerDevelopmentIntensity(state: Readonly<GameState>, player: Readonly<Player>): number {
+  if (!player.programId) return 1;
+  const spotlight = state.developmentSpotlights?.[player.programId];
+  if (!spotlight) return 1;
+  if (spotlight.target.type === "PLAYER") return 1;
+  return spotlight.target.position === player.position ? 0.55 : 1;
+}
+
 function developPlayers(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
   const rules = state.identity.balanceConfiguration.weeklyDevelopment;
   for (const player of Object.values(state.players)) {
@@ -1146,7 +1199,8 @@ function developPlayers(state: GameState, rng: AddressableRng, events: GameEvent
     const trainingModifier = 1 + Math.max(0, program.facilities.TRAINING - 1) * 0.04;
     const developmentCoaches = Object.values(state.staff).filter((staff) => staff.programId === program.id && staff.assignment === "PLAYER_DEVELOPMENT");
     const coachingModifier = 1 + developmentCoaches.reduce((sum, staff) => sum + staff.rating / 500, 0);
-    const focus = projectedDevelopmentPayoff(state, player);
+    const intensity = playerDevelopmentIntensity(state, player);
+    const focus = projectedDevelopmentPayoff(state, player, player.developmentFocus, intensity);
     const ratingChanges: Partial<Record<PlayerRating, number>> = {};
     for (const [rating, actualChange] of Object.entries(focus.ratingChanges) as [PlayerRating, number][]) {
       player.ratings[rating] = clamp(Number((player.ratings[rating] + actualChange).toFixed(2)), 40, 99);
