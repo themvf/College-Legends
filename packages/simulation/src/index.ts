@@ -73,6 +73,25 @@ export function developmentPayoff(focus: DevelopmentFocus, position: Position): 
   return { ...payoff, ratingChanges };
 }
 
+export function projectedDevelopmentPayoff(state: Readonly<GameState>, player: Readonly<Player>, focus: DevelopmentFocus = player.developmentFocus): DevelopmentPayoff {
+  if (!player.programId) return developmentPayoff(focus, player.position);
+  const rules = state.identity.balanceConfiguration.weeklyDevelopment;
+  const program = state.programs[player.programId]!;
+  const fatigueModifier = clamp(1 - player.fatigue / 180, rules.fatigueFloor, 1);
+  const trainingModifier = 1 + Math.max(0, program.facilities.TRAINING - 1) * 0.04;
+  const coachingModifier = 1 + Object.values(state.staff)
+    .filter((staff) => staff.programId === program.id && staff.assignment === "PLAYER_DEVELOPMENT")
+    .reduce((sum, staff) => sum + staff.rating / 500, 0);
+  const scale = clamp((0.72 + player.workEthic * 0.45) * fatigueModifier * trainingModifier * coachingModifier, 0.5, 1.8);
+  const payoff = developmentPayoff(focus, player.position);
+  return {
+    ...payoff,
+    ratingChanges: Object.fromEntries(
+      (Object.entries(payoff.ratingChanges) as [PlayerRating, number][]).map(([rating, change]) => [rating, Number((change * scale).toFixed(2))])
+    )
+  };
+}
+
 export function staffAssignmentPayoff(member: Pick<StaffMember, "rating" | "role">, assignment: StaffAssignment): string {
   if (assignment === "GAME_PREP") return `+${gamePrepContribution(member).toFixed(1)} team rating in the next game`;
   if (assignment === "PLAYER_DEVELOPMENT") return `+${Math.round(member.rating / 5)}% weekly player growth`;
@@ -459,11 +478,9 @@ function developPlayers(state: GameState, rng: AddressableRng, events: GameEvent
     const trainingModifier = 1 + Math.max(0, program.facilities.TRAINING - 1) * 0.04;
     const developmentCoaches = Object.values(state.staff).filter((staff) => staff.programId === program.id && staff.assignment === "PLAYER_DEVELOPMENT");
     const coachingModifier = 1 + developmentCoaches.reduce((sum, staff) => sum + staff.rating / 500, 0);
-    const focus = developmentPayoff(player.developmentFocus, player.position);
-    const developmentScale = clamp((0.72 + player.workEthic * 0.45) * fatigueModifier * trainingModifier * coachingModifier, 0.5, 1.8);
+    const focus = projectedDevelopmentPayoff(state, player);
     const ratingChanges: Partial<Record<PlayerRating, number>> = {};
-    for (const [rating, baseChange] of Object.entries(focus.ratingChanges) as [PlayerRating, number][]) {
-      const actualChange = Number((baseChange * developmentScale).toFixed(2));
+    for (const [rating, actualChange] of Object.entries(focus.ratingChanges) as [PlayerRating, number][]) {
       player.ratings[rating] = clamp(Number((player.ratings[rating] + actualChange).toFixed(2)), 40, 99);
       ratingChanges[rating] = actualChange;
     }

@@ -12,7 +12,7 @@ import type {
   StaffAssignment
 } from "@college-legends/model";
 import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
-import { developmentPayoff, facilityPayoff, staffAssignmentPayoff } from "@college-legends/simulation";
+import { developmentPayoff, facilityPayoff, projectedDevelopmentPayoff, staffAssignmentPayoff } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 
 type GameView = { state: GameState; playerProgramId: ProgramId; events: GameEvent[] };
@@ -162,7 +162,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQ
     {screen === "DASHBOARD" && <ProgramDashboard game={game} roster={roster} />}
     {screen === "ROSTER" && <Roster roster={roster} />}
     {screen === "DEPTH_CHART" && <DepthChart roster={roster} />}
-    {screen === "DEVELOPMENT" && <Development roster={roster} programId={program.id} pending={pendingCommands} onQueue={onQueue} />}
+    {screen === "DEVELOPMENT" && <Development state={game.state} roster={roster} programId={program.id} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "SCHEDULE" && <Schedule game={game} />}
     {screen === "DIVISIONS" && <Divisions game={game} />}
     {screen === "STAFF" && <Staff game={game} pending={pendingCommands} onQueue={onQueue} />}
@@ -207,22 +207,22 @@ function DepthChart({ roster }: { roster: Player[] }): ReactElement {
     })}</div></section>;
 }
 
-function Development({ roster, programId, pending, onQueue }: { roster: Player[]; programId: string; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
+function Development({ state, roster, programId, pending, onQueue }: { state: GameState; roster: Player[]; programId: string; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
   return <section className="panel table-panel"><SectionHeading eyebrow="Player development" title="Choose the payoff—not just a label" detail="Every focus permanently changes attributes, affects game performance, and carries a fatigue or development tradeoff when the week advances." />
     <div className="decision-legend">
       {developmentFocuses.map((focus) => {
         const sample = developmentPayoff(focus, "QB");
-        return <article key={focus}><strong>{label(focus)}</strong><span>{formatRatingChanges(sample.ratingChanges)}</span><small>{sample.tradeoff}</small></article>;
+        return <article key={focus}><strong>{label(focus)}</strong><span>Base: {formatRatingChanges(sample.ratingChanges)}</span><small>{sample.tradeoff}</small></article>;
       })}
     </div>
     <div className="data-table development-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>OVR/POT</span><span>Core ratings</span><span>Fatigue</span><span>Training decision</span></div>
       {roster.map((player) => {
         const queued = pending.find((item): item is Extract<GameCommand, { type: "SET_DEVELOPMENT_FOCUS" }> => item.type === "SET_DEVELOPMENT_FOCUS" && item.playerId === player.id);
         const focus = queued?.focus ?? player.developmentFocus;
-        const payoff = developmentPayoff(focus, player.position);
+        const payoff = projectedDevelopmentPayoff(state, player, focus);
         return <div className="data-row decision-row" key={player.id}><strong data-label="Player">{player.name}<small>{player.injuryWeeksRemaining > 0 ? `Out ${player.injuryWeeksRemaining} week${player.injuryWeeksRemaining === 1 ? "" : "s"}` : "Available"}</small></strong><span data-label="Position">{player.position}</span><span data-label="Overall / potential">{Math.round(player.overall)} / {Math.round(player.potential)}</span><span data-label="Core ratings"><small>TEC {Math.round(player.ratings.technique)} · STR {Math.round(player.ratings.strength)} · CON {Math.round(player.ratings.conditioning)}{player.position === "QB" ? ` · ARM ${Math.round(player.ratings.armStrength)}` : ""}<br />INJ {Math.round(player.ratings.injuryPrevention)}</small></span><span data-label="Fatigue">{Math.round(player.fatigue)}%</span>
           <div className="decision-control"><select aria-label={`Training focus for ${player.name}`} value={focus} onChange={(event) => onQueue({ type: "SET_DEVELOPMENT_FOCUS", programId, playerId: player.id, focus: event.target.value as DevelopmentFocus })}>{developmentFocuses.map((option) => <option key={option} value={option}>{label(option)}</option>)}</select>
-            <div className="payoff-strip"><b>Weekly payoff</b><span>{formatRatingChanges(payoff.ratingChanges)}</span><span>{signed(payoff.fatigueChange)} fatigue</span><small>{payoff.gameEffect}. Tradeoff: {payoff.tradeoff}.</small></div>
+            <div className="payoff-strip"><b>Your projected weekly payoff</b><span>{formatRatingChanges(payoff.ratingChanges)}</span><span>{signed(payoff.fatigueChange)} fatigue</span><small>Includes this player’s work ethic, fatigue, coaches, and Training facility. {payoff.gameEffect}. Tradeoff: {payoff.tradeoff}.</small></div>
           </div>
         </div>;
       })}</div></section>;
