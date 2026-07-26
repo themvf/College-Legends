@@ -17,6 +17,13 @@ export type PlayerMediaAction = "FOOTBALL_FOCUS" | "MEDIA_DAY" | "SOCIAL_MEDIA" 
 export type RecruitingEvaluation = "BASIC" | "ATHLETIC" | "POSITION" | "CHARACTER" | "MEDICAL" | "PROJECTION";
 export type RecruitingSearchType = "LOCAL_REGION" | "POSITION" | "SLEEPERS" | "NATIONAL_SHOWCASE";
 export type RedshirtStatus = "AVAILABLE" | "REDSHIRTING" | "USED" | "INELIGIBLE";
+export type SeasonAwardType =
+  | "PLAYER_OF_THE_YEAR"
+  | "OFFENSIVE_PLAYER_OF_THE_YEAR"
+  | "DEFENSIVE_PLAYER_OF_THE_YEAR"
+  | "FRESHMAN_OF_THE_YEAR"
+  | "COACH_OF_THE_YEAR";
+export type PostseasonRound = "FIRST_ROUND" | "QUARTERFINAL" | "SEMIFINAL" | "NATIONAL_CHAMPIONSHIP";
 export type RecruitPriority =
   | "EARLY_PLAYING_TIME"
   | "WINNING"
@@ -83,6 +90,54 @@ export interface PlayerGameStatLine {
   punts: number;
   puntYards: number;
   blockingGrade: number;
+}
+
+export interface AwardCandidate {
+  programId: ProgramId;
+  playerId: PlayerId | null;
+  staffId: string | null;
+  score: number;
+  performanceScore: number;
+  productionScore: number;
+  teamSuccessScore: number;
+  visibilityScore: number;
+  evidence: string[];
+}
+
+export interface SeasonAward {
+  type: SeasonAwardType;
+  winner: AwardCandidate;
+  finalists: AwardCandidate[];
+}
+
+export interface PlayoffSeed {
+  seed: number;
+  programId: ProgramId;
+  qualification: "DIVISION_CHAMPION" | "AT_LARGE";
+}
+
+export interface PostseasonGame {
+  id: string;
+  season: Season;
+  round: PostseasonRound;
+  homeProgramId: ProgramId;
+  awayProgramId: ProgramId;
+  homeSeed: number;
+  awaySeed: number;
+  homeScore: number;
+  awayScore: number;
+  winnerProgramId: ProgramId;
+}
+
+export interface SeasonHistory {
+  season: Season;
+  awards: SeasonAward[];
+  divisionChampions: Partial<Record<DivisionId, ProgramId>>;
+  playoffSeeds: PlayoffSeed[];
+  postseasonGames: PostseasonGame[];
+  nationalChampionProgramId: ProgramId;
+  nationalRunnerUpProgramId: ProgramId;
+  finalRecords: Record<ProgramId, { wins: number; losses: number; nationalRank: number }>;
 }
 
 export interface Player {
@@ -172,7 +227,7 @@ export interface ScheduledGame {
   week: number;
   homeProgramId: ProgramId;
   awayProgramId: ProgramId;
-  matchupType: "DIVISION" | "CROSS_DIVISION" | "MARQUEE";
+  matchupType: "DIVISION" | "CROSS_DIVISION" | "MARQUEE" | "PLAYOFF";
   /** Paid by the home program during preseason to bring a ranked visitor to campus. */
   guaranteePaid: number;
   marqueeOpponentRank: number | null;
@@ -208,6 +263,7 @@ export interface GameState {
   depthCharts: Record<ProgramId, DepthChart>;
   playerGameStats: PlayerGameStatLine[];
   schedule: ScheduledGame[];
+  seasonHistory: SeasonHistory[];
   eventHistory: GameEvent[];
 }
 
@@ -255,6 +311,41 @@ export type GameEvent =
   | { type: "PLAYER_INJURED"; season: Season; week: number; playerId: PlayerId; weeks: number; risk: number }
   | { type: "PLAYER_RECOVERED"; season: Season; week: number; playerId: PlayerId }
   | { type: "GAME_COMPLETED"; season: Season; week: number; gameId: string; homeProgramId: ProgramId; awayProgramId: ProgramId; homeScore: number; awayScore: number }
+  | {
+      type: "SEASON_AWARD_FINALIZED";
+      season: Season;
+      awardType: SeasonAwardType;
+      programId: ProgramId;
+      playerId: PlayerId | null;
+      staffId: string | null;
+      score: number;
+      playerFanGain: number;
+      programFanGain: number;
+      prestigeGain: number;
+      nationalPressGain: number;
+    }
+  | { type: "DIVISION_TITLE_WON"; season: Season; divisionId: DivisionId; programId: ProgramId }
+  | {
+      type: "PLAYOFF_GAME_COMPLETED";
+      season: Season;
+      round: PostseasonRound;
+      gameId: string;
+      homeProgramId: ProgramId;
+      awayProgramId: ProgramId;
+      homeScore: number;
+      awayScore: number;
+      winnerProgramId: ProgramId;
+    }
+  | {
+      type: "NATIONAL_CHAMPION_CROWNED";
+      season: Season;
+      championProgramId: ProgramId;
+      runnerUpProgramId: ProgramId;
+      fanGain: number;
+      prestigeGain: number;
+      nationalPressGain: number;
+      revenueGain: number;
+    }
   | { type: "PLAYER_DEPARTED"; season: Season; playerId: PlayerId; reason: "GRADUATED" | "ELIGIBILITY_EXHAUSTED" | "TRANSFER_PORTAL" }
   | {
       type: "RECRUITING_CONTEST_RESOLVED";

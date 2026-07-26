@@ -1,4 +1,4 @@
-import type { DepthChart, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, Position, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SimulationResult, StaffAssignment, StaffMember, StaffRole } from "@college-legends/model";
+import type { AwardCandidate, DepthChart, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffAssignment, StaffMember, StaffRole } from "@college-legends/model";
 import { FICTIONAL_PROGRAMS, fictionalPersonName } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
 
@@ -33,6 +33,16 @@ const REGULAR_SEASON_WEEKS = [1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14] as const;
 const DIVISION_GAME_COUNT = 8;
 const STADIUM_CAPACITY_BY_LEVEL: Readonly<Record<number, number>> = { 1: 25_000, 2: 36_000, 3: 50_000, 4: 68_000, 5: 88_000 };
 const STARTER_COUNTS: Readonly<Record<Position, number>> = { QB: 1, RB: 1, WR: 3, TE: 1, OL: 5, DL: 4, LB: 3, DB: 4, K: 1, P: 1 };
+const OFFENSIVE_POSITIONS = new Set<Position>(["QB", "RB", "WR", "TE", "OL"]);
+const DEFENSIVE_POSITIONS = new Set<Position>(["DL", "LB", "DB"]);
+export const SEASON_AWARD_LABELS: Readonly<Record<SeasonAwardType, string>> = {
+  PLAYER_OF_THE_YEAR: "Legends Player of the Year",
+  OFFENSIVE_PLAYER_OF_THE_YEAR: "Offensive Player of the Year",
+  DEFENSIVE_PLAYER_OF_THE_YEAR: "Defensive Player of the Year",
+  FRESHMAN_OF_THE_YEAR: "Freshman of the Year",
+  COACH_OF_THE_YEAR: "Coach of the Year"
+};
+export const SEASON_AWARD_TYPES = Object.keys(SEASON_AWARD_LABELS) as SeasonAwardType[];
 
 export interface StatisticalBand {
   mean: number;
@@ -314,7 +324,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
   const nameFor = (ordinal: number): string => fictionalPersonName(ordinal, firstNameOffset, lastNameOffset);
   const state: GameState = {
     identity: { rootSeed, balanceConfiguration: { version: "0.1.0", weeklyDevelopment: { base: 0.012, coachWeight: 0.018, workEthicWeight: 0.022, fatigueFloor: 0.62, maximum: 0.09 }, game: { possessions: 24, homeFieldAdvantage: 1.8, upsetNoise: 11 } }, simulationVersion: "0.1.0" },
-    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, staff: {}, depthCharts: {}, playerGameStats: [], schedule: [], eventHistory: []
+    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, staff: {}, depthCharts: {}, playerGameStats: [], schedule: [], seasonHistory: [], eventHistory: []
   };
   const rosterPositions = Object.entries(ROSTER_COMPOSITION).flatMap(([position, count]) =>
     Array.from({ length: count }, () => position as Position)
@@ -1416,18 +1426,7 @@ function resolveScheduledGames(state: GameState, rng: AddressableRng, events: Ga
   for (const game of state.schedule.filter((item) => !item.played && state.week === item.week)) {
     const home = state.programs[game.homeProgramId]; const away = state.programs[game.awayProgramId];
     if (!home || !away) continue;
-    const homeStrength = teamStrength(state, home) + state.identity.balanceConfiguration.game.homeFieldAdvantage;
-    const awayStrength = teamStrength(state, away);
-    const score = (strength: number, opponent: number, side: string): number => {
-      let points = 0;
-      for (let possession = 0; possession < state.identity.balanceConfiguration.game.possessions; possession += 1) {
-        const chance = clamp(0.23 + (strength - opponent) / 150 + rng.between(`${game.id}:${side}:${possession}`, -0.08, 0.08), 0.05, 0.55);
-        if (rng.at(`${game.id}:${side}:result:${possession}`) < chance) points += rng.at(`${game.id}:${side}:td:${possession}`) < 0.66 ? 7 : 3;
-      }
-      return points;
-    };
-    let homeScore = score(homeStrength, awayStrength, "home"); let awayScore = score(awayStrength, homeStrength, "away");
-    if (homeScore === awayScore) homeScore += rng.at(`${game.id}:overtime`) < 0.5 ? 3 : 0, awayScore += homeScore === awayScore ? 3 : 0;
+    const { homeScore, awayScore } = simulateGameScore(state, home.id, away.id, rng.fork(game.id), true);
     game.played = true;
     game.homeScore = homeScore;
     game.awayScore = awayScore;
@@ -1436,6 +1435,34 @@ function resolveScheduledGames(state: GameState, rng: AddressableRng, events: Ga
     recordPlayerGameStats(state, game, away.id, home.id, awayScore, homeScore, rng.fork(game.id, "away-stats"));
     events.push({ type: "GAME_COMPLETED", season: state.season, week: state.week, gameId: game.id, homeProgramId: home.id, awayProgramId: away.id, homeScore, awayScore });
   }
+}
+
+function simulateGameScore(
+  state: Readonly<GameState>,
+  homeProgramId: string,
+  awayProgramId: string,
+  rng: AddressableRng,
+  homeField: boolean
+): { homeScore: number; awayScore: number } {
+  const home = state.programs[homeProgramId]!;
+  const away = state.programs[awayProgramId]!;
+  const homeStrength = teamStrength(state, home) + (homeField ? state.identity.balanceConfiguration.game.homeFieldAdvantage : 0);
+  const awayStrength = teamStrength(state, away);
+  const score = (strength: number, opponent: number, side: string): number => {
+    let points = 0;
+    for (let possession = 0; possession < state.identity.balanceConfiguration.game.possessions; possession += 1) {
+      const chance = clamp(0.23 + (strength - opponent) / 150 + rng.between(`${side}:${possession}`, -0.08, 0.08), 0.05, 0.55);
+      if (rng.at(`${side}:result:${possession}`) < chance) points += rng.at(`${side}:td:${possession}`) < 0.66 ? 7 : 3;
+    }
+    return points;
+  };
+  let homeScore = score(homeStrength, awayStrength, "home");
+  let awayScore = score(awayStrength, homeStrength, "away");
+  if (homeScore === awayScore) {
+    if (rng.at("overtime") < 0.5) homeScore += 3;
+    else awayScore += 3;
+  }
+  return { homeScore, awayScore };
 }
 
 interface ProgramBrandImpact {
@@ -1696,6 +1723,369 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
   }
 }
 
+function statTotal(lines: readonly PlayerGameStatLine[], field: keyof PlayerGameStatLine): number {
+  return lines.reduce((total, line) => total + (typeof line[field] === "number" ? Number(line[field]) : 0), 0);
+}
+
+function playerProductionScore(position: Position, lines: readonly PlayerGameStatLine[]): number {
+  if (position === "QB") {
+    return clamp(statTotal(lines, "passingYards") / 38 + statTotal(lines, "passingTouchdowns") * 1.8 - statTotal(lines, "interceptionsThrown") * 1.8, 0, 100);
+  }
+  if (position === "RB") {
+    return clamp(statTotal(lines, "rushingYards") / 18 + statTotal(lines, "rushingTouchdowns") * 3.2, 0, 100);
+  }
+  if (position === "WR" || position === "TE") {
+    const yardDivisor = position === "TE" ? 12 : 16;
+    return clamp(statTotal(lines, "receivingYards") / yardDivisor + statTotal(lines, "receivingTouchdowns") * 4, 0, 100);
+  }
+  if (position === "OL") {
+    return clamp(statTotal(lines, "blockingGrade") / Math.max(1, lines.length), 0, 100);
+  }
+  if (position === "DL" || position === "LB" || position === "DB") {
+    return clamp(
+      statTotal(lines, "tackles") * 0.45
+        + statTotal(lines, "tacklesForLoss") * 1.3
+        + statTotal(lines, "sacks") * 4
+        + statTotal(lines, "defensiveInterceptions") * 8
+        + statTotal(lines, "passBreakups") * 1.2,
+      0,
+      100
+    );
+  }
+  return 0;
+}
+
+function playerAwardEvidence(player: Readonly<Player>, lines: readonly PlayerGameStatLine[], averageRating: number, program: Readonly<Program>): string[] {
+  let production: string;
+  if (player.position === "QB") {
+    production = `${statTotal(lines, "passingYards").toLocaleString()} pass YD · ${statTotal(lines, "passingTouchdowns")} TD · ${statTotal(lines, "interceptionsThrown")} INT`;
+  } else if (player.position === "RB") {
+    production = `${statTotal(lines, "rushingYards").toLocaleString()} rush YD · ${statTotal(lines, "rushingTouchdowns")} TD`;
+  } else if (player.position === "WR" || player.position === "TE") {
+    production = `${statTotal(lines, "receptions")} REC · ${statTotal(lines, "receivingYards").toLocaleString()} YD · ${statTotal(lines, "receivingTouchdowns")} TD`;
+  } else if (player.position === "OL") {
+    production = `${Math.round(statTotal(lines, "blockingGrade") / Math.max(1, lines.length))} average blocking grade`;
+  } else {
+    production = `${statTotal(lines, "tackles")} TKL · ${statTotal(lines, "tacklesForLoss")} TFL · ${statTotal(lines, "sacks")} SACK · ${statTotal(lines, "defensiveInterceptions")} INT`;
+  }
+  return [
+    production,
+    `${averageRating.toFixed(1)} average game rating across ${lines.length} games`,
+    `${program.wins}–${program.losses} team record · #${program.nationalRank} nationally`
+  ];
+}
+
+function playerAwardCandidate(state: Readonly<GameState>, player: Readonly<Player>): AwardCandidate | null {
+  const lines = state.playerGameStats.filter((line) =>
+    line.season === state.season && line.week <= 14 && line.playerId === player.id
+  );
+  const minimumGames = Math.min(6, Math.max(1, state.week - 1));
+  if (lines.length < minimumGames || !player.programId) return null;
+  const program = state.programs[player.programId];
+  if (!program) return null;
+  const performanceScore = lines.reduce((total, line) => total + line.gameRating, 0) / lines.length;
+  const productionScore = playerProductionScore(player.position, lines);
+  const teamSuccessScore = clamp(program.wins / 12 * 100, 0, 100);
+  const visibilityScore = clamp(player.stardom * 0.65 + program.nationalPress * 0.35, 0, 100);
+  const score = performanceScore * 0.38 + productionScore * 0.37 + teamSuccessScore * 0.17 + visibilityScore * 0.08;
+  return {
+    programId: program.id,
+    playerId: player.id,
+    staffId: null,
+    score: Number(score.toFixed(1)),
+    performanceScore: Number(performanceScore.toFixed(1)),
+    productionScore: Number(productionScore.toFixed(1)),
+    teamSuccessScore: Number(teamSuccessScore.toFixed(1)),
+    visibilityScore: Number(visibilityScore.toFixed(1)),
+    evidence: playerAwardEvidence(player, lines, performanceScore, program)
+  };
+}
+
+function coachAwardCandidate(state: Readonly<GameState>, coach: Readonly<StaffMember>): AwardCandidate | null {
+  const program = state.programs[coach.programId];
+  if (!program || coach.role !== "HEAD_COACH") return null;
+  const expectedWins = 3.5 + program.prestige * 0.07;
+  const overachievement = program.wins - expectedWins;
+  const performanceScore = clamp(program.wins / 12 * 100, 0, 100);
+  const productionScore = clamp(50 + overachievement * 12, 0, 100);
+  const teamSuccessScore = clamp(103 - program.nationalRank * 3, 0, 100);
+  const visibilityScore = clamp(coach.rating * 0.65 + program.nationalPress * 0.35, 0, 100);
+  const score = performanceScore * 0.4 + productionScore * 0.3 + teamSuccessScore * 0.2 + visibilityScore * 0.1;
+  return {
+    programId: program.id,
+    playerId: null,
+    staffId: coach.id,
+    score: Number(score.toFixed(1)),
+    performanceScore: Number(performanceScore.toFixed(1)),
+    productionScore: Number(productionScore.toFixed(1)),
+    teamSuccessScore: Number(teamSuccessScore.toFixed(1)),
+    visibilityScore: Number(visibilityScore.toFixed(1)),
+    evidence: [
+      `${program.wins}–${program.losses} regular-season record`,
+      `${overachievement >= 0 ? "+" : ""}${overachievement.toFixed(1)} wins versus program expectation`,
+      `#${program.nationalRank} final regular-season ranking`
+    ]
+  };
+}
+
+export function seasonAwardRace(state: Readonly<GameState>, awardType: SeasonAwardType): AwardCandidate[] {
+  const candidates = awardType === "COACH_OF_THE_YEAR"
+    ? Object.values(state.staff).map((coach) => coachAwardCandidate(state, coach)).filter((candidate): candidate is AwardCandidate => candidate !== null)
+    : Object.values(state.players)
+      .filter((player) => {
+        if (!player.programId || player.eligibility.rosterStatus !== "SCHOLARSHIP") return false;
+        if (awardType === "OFFENSIVE_PLAYER_OF_THE_YEAR") return OFFENSIVE_POSITIONS.has(player.position);
+        if (awardType === "DEFENSIVE_PLAYER_OF_THE_YEAR") return DEFENSIVE_POSITIONS.has(player.position);
+        if (awardType === "FRESHMAN_OF_THE_YEAR") {
+          return player.eligibility.seasonsParticipated === 0 && (OFFENSIVE_POSITIONS.has(player.position) || DEFENSIVE_POSITIONS.has(player.position));
+        }
+        return OFFENSIVE_POSITIONS.has(player.position) || DEFENSIVE_POSITIONS.has(player.position);
+      })
+      .map((player) => playerAwardCandidate(state, player))
+      .filter((candidate): candidate is AwardCandidate => candidate !== null);
+  return candidates.sort((left, right) => right.score - left.score || left.programId.localeCompare(right.programId));
+}
+
+function finalizeSeasonAwards(state: GameState, events: GameEvent[]): SeasonAward[] {
+  const awards: SeasonAward[] = [];
+  const finalistBoard = new Map(SEASON_AWARD_TYPES.map((awardType) => [
+    awardType,
+    seasonAwardRace(state, awardType).slice(0, 5)
+  ]));
+  for (const awardType of SEASON_AWARD_TYPES) {
+    const finalists = finalistBoard.get(awardType) ?? [];
+    const winner = finalists[0];
+    if (!winner) continue;
+    const effects = awardType === "PLAYER_OF_THE_YEAR"
+      ? { playerFans: 40_000, playerStardom: 12, programFans: 12_000, prestige: 3, nationalPress: 9 }
+      : awardType === "COACH_OF_THE_YEAR"
+        ? { playerFans: 0, playerStardom: 0, programFans: 8_000, prestige: 3, nationalPress: 6 }
+        : awardType === "FRESHMAN_OF_THE_YEAR"
+          ? { playerFans: 12_000, playerStardom: 6, programFans: 4_000, prestige: 1, nationalPress: 3 }
+          : { playerFans: 22_000, playerStardom: 8, programFans: 6_000, prestige: 2, nationalPress: 5 };
+    const program = state.programs[winner.programId]!;
+    if (winner.playerId) {
+      const player = state.players[winner.playerId]!;
+      player.personalFans += effects.playerFans;
+      player.stardom = clamp(player.stardom + effects.playerStardom, 0, 100);
+    }
+    if (winner.staffId) program.coachSecurity = clamp(program.coachSecurity + 10, 0, 100);
+    program.fanBase += effects.programFans;
+    program.prestige = clamp(program.prestige + effects.prestige, 0, 100);
+    program.nationalPress = clamp(program.nationalPress + effects.nationalPress, 0, 100);
+    awards.push({ type: awardType, winner, finalists });
+    events.push({
+      type: "SEASON_AWARD_FINALIZED",
+      season: state.season,
+      awardType,
+      programId: program.id,
+      playerId: winner.playerId,
+      staffId: winner.staffId,
+      score: winner.score,
+      playerFanGain: effects.playerFans,
+      programFanGain: effects.programFans,
+      prestigeGain: effects.prestige,
+      nationalPressGain: effects.nationalPress
+    });
+  }
+  return awards;
+}
+
+function divisionChampions(state: Readonly<GameState>): Partial<Record<DivisionId, string>> {
+  const result: Partial<Record<DivisionId, string>> = {};
+  const divisionIds = [...new Set(Object.values(state.programs).map((program) => program.divisionId))];
+  for (const divisionId of divisionIds) {
+    const contenders = Object.values(state.programs).filter((program) => program.divisionId === divisionId);
+    const divisionRecord = (programId: string): { wins: number; losses: number } => {
+      let wins = 0;
+      let losses = 0;
+      for (const game of state.schedule.filter((item) => item.played && item.matchupType === "DIVISION" && (item.homeProgramId === programId || item.awayProgramId === programId))) {
+        const homeWon = game.homeScore! > game.awayScore!;
+        const won = homeWon ? game.homeProgramId === programId : game.awayProgramId === programId;
+        if (won) wins += 1;
+        else losses += 1;
+      }
+      return { wins, losses };
+    };
+    contenders.sort((left, right) => {
+      const leftDivision = divisionRecord(left.id);
+      const rightDivision = divisionRecord(right.id);
+      return rightDivision.wins - leftDivision.wins
+        || leftDivision.losses - rightDivision.losses
+        || right.wins - left.wins
+        || left.losses - right.losses
+        || left.nationalRank - right.nationalRank
+        || left.id.localeCompare(right.id);
+    });
+    if (contenders[0]) result[divisionId] = contenders[0].id;
+  }
+  return result;
+}
+
+function buildPlayoffSeeds(state: Readonly<GameState>, champions: Readonly<Partial<Record<DivisionId, string>>>): PlayoffSeed[] {
+  const championIds = new Set(Object.values(champions).filter((programId): programId is string => Boolean(programId)));
+  const participantCount = Math.min(12, Object.keys(state.programs).length);
+  const participants = [
+    ...championIds,
+    ...Object.values(state.programs)
+      .sort((left, right) => left.nationalRank - right.nationalRank)
+      .map((program) => program.id)
+      .filter((programId) => !championIds.has(programId))
+  ].slice(0, participantCount);
+  return participants
+    .sort((left, right) => state.programs[left]!.nationalRank - state.programs[right]!.nationalRank)
+    .map((programId, index) => ({
+      seed: index + 1,
+      programId,
+      qualification: championIds.has(programId) ? "DIVISION_CHAMPION" : "AT_LARGE"
+    }));
+}
+
+function postseasonRound(participantCount: number): PostseasonRound {
+  if (participantCount > 8) return "FIRST_ROUND";
+  if (participantCount > 4) return "QUARTERFINAL";
+  if (participantCount > 2) return "SEMIFINAL";
+  return "NATIONAL_CHAMPIONSHIP";
+}
+
+function resolvePostseason(
+  state: GameState,
+  seeds: readonly PlayoffSeed[],
+  events: GameEvent[]
+): { games: PostseasonGame[]; championProgramId: string; runnerUpProgramId: string } {
+  const rng = new AddressableRng(state.identity.rootSeed).fork("postseason", String(state.season));
+  const games: PostseasonGame[] = [];
+  let participants = seeds.map((seed) => ({ seed: seed.seed, programId: seed.programId }));
+  let runnerUpProgramId = participants[1]?.programId ?? participants[0]!.programId;
+  let gameIndex = 0;
+  while (participants.length > 1) {
+    const round = postseasonRound(participants.length);
+    const byeCount = participants.length > 8 ? Math.max(0, 16 - participants.length) : participants.length % 2;
+    const advancing = participants.slice(0, byeCount);
+    const playing = participants.slice(byeCount);
+    const paired: Array<{ seed: number; programId: string }> = [];
+    for (let index = 0; index < Math.floor(playing.length / 2); index += 1) {
+      const home = playing[index]!;
+      const away = playing[playing.length - 1 - index]!;
+      const gameId = `playoff:${state.season}:${gameIndex++}`;
+      const homeField = round === "FIRST_ROUND";
+      const gameRng = rng.fork(gameId);
+      const { homeScore, awayScore } = simulateGameScore(state, home.programId, away.programId, gameRng.fork("score"), homeField);
+      const winner = homeScore > awayScore ? home : away;
+      const loser = homeScore > awayScore ? away : home;
+      state.programs[winner.programId]!.wins += 1;
+      state.programs[loser.programId]!.losses += 1;
+      const scheduledGame = {
+        id: gameId,
+        week: round === "FIRST_ROUND" ? 15 : round === "QUARTERFINAL" ? 16 : round === "SEMIFINAL" ? 17 : 18,
+        homeProgramId: home.programId,
+        awayProgramId: away.programId,
+        matchupType: "PLAYOFF" as const,
+        guaranteePaid: 0,
+        marqueeOpponentRank: null,
+        played: true,
+        homeScore,
+        awayScore
+      };
+      recordPlayerGameStats(state, scheduledGame, home.programId, away.programId, homeScore, awayScore, gameRng.fork("home-stats"));
+      recordPlayerGameStats(state, scheduledGame, away.programId, home.programId, awayScore, homeScore, gameRng.fork("away-stats"));
+      games.push({
+        id: gameId,
+        season: state.season,
+        round,
+        homeProgramId: home.programId,
+        awayProgramId: away.programId,
+        homeSeed: home.seed,
+        awaySeed: away.seed,
+        homeScore,
+        awayScore,
+        winnerProgramId: winner.programId
+      });
+      events.push({
+        type: "PLAYOFF_GAME_COMPLETED",
+        season: state.season,
+        round,
+        gameId,
+        homeProgramId: home.programId,
+        awayProgramId: away.programId,
+        homeScore,
+        awayScore,
+        winnerProgramId: winner.programId
+      });
+      if (round === "NATIONAL_CHAMPIONSHIP") runnerUpProgramId = loser.programId;
+      paired.push(winner);
+    }
+    participants = [...advancing, ...paired].sort((left, right) => left.seed - right.seed);
+  }
+  return { games, championProgramId: participants[0]!.programId, runnerUpProgramId };
+}
+
+function finalizeSeason(state: GameState, events: GameEvent[]): SeasonHistory {
+  const awards = finalizeSeasonAwards(state, events);
+  const champions = divisionChampions(state);
+  for (const [divisionId, programId] of Object.entries(champions) as [DivisionId, string][]) {
+    const program = state.programs[programId]!;
+    program.fanBase += Math.round(program.fanBase * 0.03);
+    program.prestige = clamp(program.prestige + 1, 0, 100);
+    program.localPress = clamp(program.localPress + 6, 0, 100);
+    program.nationalPress = clamp(program.nationalPress + 3, 0, 100);
+    program.budget += 350_000;
+    events.push({ type: "DIVISION_TITLE_WON", season: state.season, divisionId, programId });
+  }
+  const playoffSeeds = buildPlayoffSeeds(state, champions);
+  for (const seed of playoffSeeds) {
+    const program = state.programs[seed.programId]!;
+    program.fanBase += Math.round(program.fanBase * 0.02);
+    program.prestige = clamp(program.prestige + 1, 0, 100);
+    program.nationalPress = clamp(program.nationalPress + 3, 0, 100);
+    program.budget += 750_000;
+  }
+  const postseason = resolvePostseason(state, playoffSeeds, events);
+  const champion = state.programs[postseason.championProgramId]!;
+  const runnerUp = state.programs[postseason.runnerUpProgramId]!;
+  const fanGain = Math.round(champion.fanBase * 0.18);
+  champion.fanBase += fanGain;
+  champion.championships += 1;
+  champion.prestige = clamp(champion.prestige + 10, 0, 100);
+  champion.localPress = clamp(champion.localPress + 15, 0, 100);
+  champion.nationalPress = clamp(champion.nationalPress + 20, 0, 100);
+  champion.coachSecurity = clamp(champion.coachSecurity + 20, 0, 100);
+  champion.budget += 6_000_000;
+  runnerUp.fanBase += Math.round(runnerUp.fanBase * 0.08);
+  runnerUp.prestige = clamp(runnerUp.prestige + 4, 0, 100);
+  runnerUp.nationalPress = clamp(runnerUp.nationalPress + 10, 0, 100);
+  runnerUp.budget += 2_000_000;
+  const priorRankings = Object.values(state.programs).sort((left, right) => left.nationalRank - right.nationalRank);
+  const finalRanking = [champion, runnerUp, ...priorRankings.filter((program) => program.id !== champion.id && program.id !== runnerUp.id)];
+  finalRanking.forEach((program, index) => { program.nationalRank = index + 1; });
+  events.push({
+    type: "NATIONAL_CHAMPION_CROWNED",
+    season: state.season,
+    championProgramId: champion.id,
+    runnerUpProgramId: runnerUp.id,
+    fanGain,
+    prestigeGain: 10,
+    nationalPressGain: 20,
+    revenueGain: 6_000_000
+  });
+  const history: SeasonHistory = {
+    season: state.season,
+    awards,
+    divisionChampions: champions,
+    playoffSeeds,
+    postseasonGames: postseason.games,
+    nationalChampionProgramId: champion.id,
+    nationalRunnerUpProgramId: runnerUp.id,
+    finalRecords: Object.fromEntries(Object.values(state.programs).map((program) => [
+      program.id,
+      { wins: program.wins, losses: program.losses, nationalRank: program.nationalRank }
+    ]))
+  };
+  state.seasonHistory ??= [];
+  state.seasonHistory.push(history);
+  return history;
+}
+
 function updateNationalRankings(state: GameState): void {
   const ranked = Object.values(state.programs).sort((left, right) => {
     const leftScore = left.wins * 14 - left.losses * 5 + left.prestige * 0.55 + teamStrength(state, left) * 0.35;
@@ -1706,6 +2096,7 @@ function updateNationalRankings(state: GameState): void {
 }
 
 function rolloverSeason(state: GameState, events: GameEvent[]): void {
+  finalizeSeason(state, events);
   const portalRng = new AddressableRng(state.identity.rootSeed).fork("portal", String(state.season));
   for (const player of Object.values(state.players)) {
     if (player.programId === null || player.eligibility.rosterStatus !== "SCHOLARSHIP") continue;

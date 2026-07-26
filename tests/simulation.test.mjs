@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, PLAYER_STAT_BANDS, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, ROSTER_COMPOSITION, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
+import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, PLAYER_STAT_BANDS, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -277,6 +277,61 @@ test("weekly player statistics use plausible bands with real variance and persis
     && line.receptions <= line.targets
     && line.fieldGoalsMade <= line.fieldGoalsAttempted
   ));
+});
+
+test("live national award races are driven by recorded production and explain their ballot scores", () => {
+  let state = activeLeague("live-award-races", 12);
+  for (let week = 0; week < 7; week += 1) state = advanceWeek(state).state;
+  const playerRace = seasonAwardRace(state, "PLAYER_OF_THE_YEAR");
+  const offensiveRace = seasonAwardRace(state, "OFFENSIVE_PLAYER_OF_THE_YEAR");
+  const defensiveRace = seasonAwardRace(state, "DEFENSIVE_PLAYER_OF_THE_YEAR");
+  const freshmanRace = seasonAwardRace(state, "FRESHMAN_OF_THE_YEAR");
+  const coachRace = seasonAwardRace(state, "COACH_OF_THE_YEAR");
+  assert.ok(playerRace.length > 0 && offensiveRace.length > 0 && defensiveRace.length > 0 && freshmanRace.length > 0 && coachRace.length > 0);
+  assert.ok(playerRace.every((candidate, index) => index === 0 || playerRace[index - 1].score >= candidate.score));
+  assert.ok(offensiveRace.every((candidate) => ["QB", "RB", "WR", "TE", "OL"].includes(state.players[candidate.playerId].position)));
+  assert.ok(defensiveRace.every((candidate) => ["DL", "LB", "DB"].includes(state.players[candidate.playerId].position)));
+  assert.ok(freshmanRace.every((candidate) => state.players[candidate.playerId].eligibility.seasonsParticipated === 0));
+  assert.ok(coachRace.every((candidate) => state.staff[candidate.staffId].role === "HEAD_COACH"));
+  assert.equal(playerRace[0].evidence.length, 3);
+  assert.ok(playerRace[0].productionScore >= 0 && playerRace[0].productionScore <= 100);
+});
+
+test("the season crowns six division champions, resolves a 12-team playoff, and preserves every honor", () => {
+  let state = activeLeague("complete-honors-postseason", 72);
+  const season = state.season;
+  let finalEvents = [];
+  while (state.season === season) {
+    const result = advanceWeek(state);
+    state = result.state;
+    finalEvents = result.events;
+  }
+  const history = state.seasonHistory.find((item) => item.season === season);
+  assert.ok(history);
+  assert.equal(Object.keys(history.divisionChampions).length, 6);
+  assert.equal(new Set(Object.values(history.divisionChampions)).size, 6);
+  assert.equal(history.playoffSeeds.length, 12);
+  assert.equal(history.postseasonGames.length, 11);
+  assert.equal(history.postseasonGames.filter((game) => game.round === "FIRST_ROUND").length, 4);
+  assert.equal(history.postseasonGames.filter((game) => game.round === "QUARTERFINAL").length, 4);
+  assert.equal(history.postseasonGames.filter((game) => game.round === "SEMIFINAL").length, 2);
+  assert.equal(history.postseasonGames.filter((game) => game.round === "NATIONAL_CHAMPIONSHIP").length, 1);
+  assert.equal(history.awards.length, 5);
+  assert.deepEqual(new Set(history.awards.map((award) => award.type)), new Set([
+    "PLAYER_OF_THE_YEAR",
+    "OFFENSIVE_PLAYER_OF_THE_YEAR",
+    "DEFENSIVE_PLAYER_OF_THE_YEAR",
+    "FRESHMAN_OF_THE_YEAR",
+    "COACH_OF_THE_YEAR"
+  ]));
+  assert.equal(state.programs[history.nationalChampionProgramId].championships, 1);
+  assert.equal(state.programs[history.nationalChampionProgramId].nationalRank, 1);
+  assert.ok(history.finalRecords[history.nationalChampionProgramId].wins + history.finalRecords[history.nationalChampionProgramId].losses >= 15);
+  assert.ok(finalEvents.some((event) => event.type === "NATIONAL_CHAMPION_CROWNED"));
+  assert.equal(finalEvents.filter((event) => event.type === "DIVISION_TITLE_WON").length, 6);
+  assert.equal(finalEvents.filter((event) => event.type === "SEASON_AWARD_FINALIZED").length, 5);
+  const coachAward = history.awards.find((award) => award.type === "COACH_OF_THE_YEAR");
+  assert.equal(state.staff[coachAward.winner.staffId].role, "HEAD_COACH");
 });
 
 test("training choices create distinct permanent attributes and injury-prevention payoffs", () => {

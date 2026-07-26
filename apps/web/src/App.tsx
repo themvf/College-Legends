@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import type {
+  AwardCandidate,
   CareerPath,
   DevelopmentFocus,
   DivisionId,
@@ -14,6 +15,7 @@ import type {
   ProgramId,
   RecruitingEvaluation,
   RecruitingSearchType,
+  SeasonAwardType,
   StaffAssignment
 } from "@college-legends/model";
 import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
@@ -27,17 +29,20 @@ import {
   prospectScoutingReport,
   recruitingEvaluationCost,
   recruitingSearchCost,
+  SEASON_AWARD_LABELS,
+  SEASON_AWARD_TYPES,
+  seasonAwardRace,
   staffAssignmentPayoff,
   stadiumCapacity
 } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 
 type GameView = { state: GameState; playerProgramId: ProgramId; events: GameEvent[] };
-type Screen = "DASHBOARD" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CHART" | "PLAYER_STATS" | "DEVELOPMENT" | "PLAYER_MEDIA" | "SCHEDULE" | "DIVISIONS" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
+type Screen = "DASHBOARD" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CHART" | "PLAYER_STATS" | "HONORS" | "DEVELOPMENT" | "PLAYER_MEDIA" | "SCHEDULE" | "DIVISIONS" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
 
 const careerOrder: CareerPath[] = ["DYNASTY_BUILDER", "PROGRAM_RISER", "CHAMPIONSHIP_MANDATE"];
 const positionOrder: Player["position"][] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
-const screens: Screen[] = ["DASHBOARD", "WEEKLY_RECAPS", "ROSTER", "DEPTH_CHART", "PLAYER_STATS", "DEVELOPMENT", "PLAYER_MEDIA", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
+const screens: Screen[] = ["DASHBOARD", "WEEKLY_RECAPS", "ROSTER", "DEPTH_CHART", "PLAYER_STATS", "HONORS", "DEVELOPMENT", "PLAYER_MEDIA", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
 const developmentFocuses: DevelopmentFocus[] = ["BALANCED", "TECHNIQUE", "STRENGTH", "CONDITIONING"];
 const playerMediaActions: PlayerMediaAction[] = ["FOOTBALL_FOCUS", "MEDIA_DAY", "SOCIAL_MEDIA", "COMMUNITY_APPEARANCE"];
 const recruitingEvaluations: RecruitingEvaluation[] = ["BASIC", "ATHLETIC", "POSITION", "CHARACTER", "MEDICAL", "PROJECTION"];
@@ -195,6 +200,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQ
       <Metric label="Fans" value={compactNumber(program.fanBase)} />
       <Metric label="Budget" value={money(program.budget)} />
       <Metric label="Job security" value={`${program.coachSecurity}/100`} />
+      <Metric label="National titles" value={`${program.championships}`} />
       <Metric label="Roster" value={`${roster.length}/${program.scholarshipLimit}`} />
     </section>
     <nav className="game-nav" aria-label="Program sections">{screens.map((item) =>
@@ -206,6 +212,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQ
     {screen === "ROSTER" && <Roster roster={roster} />}
     {screen === "DEPTH_CHART" && <DepthChart game={game} roster={roster} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "PLAYER_STATS" && <PlayerStats game={game} roster={roster} />}
+    {screen === "HONORS" && <Honors game={game} />}
     {screen === "DEVELOPMENT" && <Development state={game.state} roster={roster} programId={program.id} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "PLAYER_MEDIA" && <PlayerMedia game={game} roster={roster} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "SCHEDULE" && <Schedule game={game} pending={pendingCommands} onQueue={onQueue} />}
@@ -314,6 +321,66 @@ function PlayerStats({ game, roster }: { game: GameView; roster: Player[] }): Re
       </div>
     </article>
   </section>;
+}
+
+function Honors({ game }: { game: GameView }): ReactElement {
+  const histories = [...(game.state.seasonHistory ?? [])].reverse();
+  const playerProgramHistory = histories.filter((history) =>
+    history.playoffSeeds.some((seed) => seed.programId === game.playerProgramId)
+    || Object.values(history.divisionChampions).includes(game.playerProgramId)
+    || history.awards.some((award) => award.winner.programId === game.playerProgramId)
+  );
+  const divisionTitles = histories.filter((history) => Object.values(history.divisionChampions).includes(game.playerProgramId)).length;
+  const playoffAppearances = histories.filter((history) => history.playoffSeeds.some((seed) => seed.programId === game.playerProgramId)).length;
+  const nationalAwards = histories.reduce((total, history) => total + history.awards.filter((award) => award.winner.programId === game.playerProgramId).length, 0);
+  return <section className="honors-layout">
+    <SectionHeading eyebrow="National honors" title="Award races and championship history" detail="Real weekly production drives the races. Winning honors and titles creates permanent stardom, fans, press, prestige, recruiting strength, and postseason revenue." />
+    <div className="trophy-summary">
+      <article><span>National titles</span><strong>{game.state.programs[game.playerProgramId]?.championships ?? 0}</strong></article>
+      <article><span>Playoff appearances</span><strong>{playoffAppearances}</strong></article>
+      <article><span>Division titles</span><strong>{divisionTitles}</strong></article>
+      <article><span>National awards</span><strong>{nationalAwards}</strong></article>
+    </div>
+    <div className="award-grid">{SEASON_AWARD_TYPES.map((awardType) =>
+      <AwardRaceCard key={awardType} game={game} awardType={awardType} candidates={seasonAwardRace(game.state, awardType).slice(0, 5)} />
+    )}</div>
+    <SectionHeading eyebrow="Permanent record book" title="Completed seasons" detail={`${playerProgramHistory.length} season${playerProgramHistory.length === 1 ? "" : "s"} with a playoff berth, division title, or national award for your program.`} />
+    {histories.length ? histories.map((history) => {
+      const champion = game.state.programs[history.nationalChampionProgramId]!;
+      const runnerUp = game.state.programs[history.nationalRunnerUpProgramId]!;
+      const titleGame = history.postseasonGames.find((postseasonGame) => postseasonGame.round === "NATIONAL_CHAMPIONSHIP");
+      return <article className={`panel season-history ${history.nationalChampionProgramId === game.playerProgramId ? "user-champion" : ""}`} key={history.season}>
+        <header><div><p className="eyebrow">{history.season} national champion</p><h2>{champion.name}</h2><p>{titleGame ? `${champion.abbreviation} defeated ${runnerUp.abbreviation}, ${Math.max(titleGame.homeScore, titleGame.awayScore)}–${Math.min(titleGame.homeScore, titleGame.awayScore)}` : `Runner-up: ${runnerUp.name}`}</p></div><strong>🏆</strong></header>
+        <div className="season-honors-grid">
+          <div><h3>National awards</h3>{history.awards.map((award) => <p key={award.type}><span>{SEASON_AWARD_LABELS[award.type]}</span><strong>{candidateName(game, award.winner)}<small>{game.state.programs[award.winner.programId]?.abbreviation} · {award.winner.score.toFixed(1)} score</small></strong></p>)}</div>
+          <div><h3>Division champions</h3>{Object.entries(history.divisionChampions).map(([divisionId, programId]) => <p key={divisionId}><span>{DIVISION_NAMES[divisionId as DivisionId]}</span><strong>{game.state.programs[programId!]?.name}</strong></p>)}</div>
+        </div>
+        <div className="playoff-results"><h3>12-team playoff</h3>{history.postseasonGames.map((postseasonGame) => {
+          const home = game.state.programs[postseasonGame.homeProgramId]!;
+          const away = game.state.programs[postseasonGame.awayProgramId]!;
+          return <p key={postseasonGame.id}><span>{label(postseasonGame.round)} · #{postseasonGame.homeSeed} {home.abbreviation} vs. #{postseasonGame.awaySeed} {away.abbreviation}</span><strong>{home.abbreviation} {postseasonGame.homeScore} · {away.abbreviation} {postseasonGame.awayScore}</strong></p>;
+        })}</div>
+      </article>;
+    }) : <article className="panel"><p className="muted">Complete the regular season to crown division champions, finalize awards, and resolve the national playoff.</p></article>}
+  </section>;
+}
+
+function AwardRaceCard({ game, awardType, candidates }: { game: GameView; awardType: SeasonAwardType; candidates: AwardCandidate[] }): ReactElement {
+  return <article className="panel award-card">
+    <header><div><p className="eyebrow">Live ballot</p><h2>{SEASON_AWARD_LABELS[awardType]}</h2></div><span>{candidates.length ? `Week ${game.state.week}` : "No ballot yet"}</span></header>
+    {candidates.length ? candidates.map((candidate, index) => <div className={candidate.programId === game.playerProgramId ? "user-candidate" : ""} key={candidate.playerId ?? candidate.staffId}>
+      <b>{index + 1}</b><p><strong>{candidateName(game, candidate)}</strong><span>{game.state.programs[candidate.programId]?.abbreviation} · {candidate.evidence[0]}</span></p><em>{candidate.score.toFixed(1)}</em>
+    </div>) : <p className="empty-state">The first ballot appears after players record a game.</p>}
+    <footer>{awardType === "COACH_OF_THE_YEAR"
+      ? "40% record · 30% wins above expectation · 20% national finish · 10% coach/press profile"
+      : "38% weekly performance · 37% production · 17% team success · 8% visibility"}</footer>
+  </article>;
+}
+
+function candidateName(game: GameView, candidate: AwardCandidate): string {
+  if (candidate.playerId) return game.state.players[candidate.playerId]?.name ?? "Unknown player";
+  if (candidate.staffId) return game.state.staff[candidate.staffId]?.name ?? "Unknown coach";
+  return "Unknown";
 }
 
 function Development({ state, roster, programId, pending, onQueue }: { state: GameState; roster: Player[]; programId: string; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
@@ -593,6 +660,9 @@ function eventRelevantToProgram(event: GameEvent, game: GameView): boolean {
 
 function eventIcon(event: GameEvent): string {
   if (event.type === "GAME_COMPLETED") return "🏈";
+  if (event.type === "PLAYOFF_GAME_COMPLETED") return "P";
+  if (event.type === "NATIONAL_CHAMPION_CROWNED" || event.type === "DIVISION_TITLE_WON") return "🏆";
+  if (event.type === "SEASON_AWARD_FINALIZED") return "★";
   if (event.type === "WEEKLY_RECAP") return "↗";
   if (event.type === "MARQUEE_GAME_SCHEDULED") return "TV";
   if (event.type === "PLAYER_INJURED") return "✚";
@@ -613,6 +683,13 @@ function eventTitle(event: GameEvent): string {
 
 function eventText(event: GameEvent, game: GameView): string {
   if (event.type === "GAME_COMPLETED") return `${game.state.programs[event.homeProgramId]?.name} ${event.homeScore}, ${game.state.programs[event.awayProgramId]?.name} ${event.awayScore}`;
+  if (event.type === "PLAYOFF_GAME_COMPLETED") return `${label(event.round)}: ${game.state.programs[event.homeProgramId]?.name} ${event.homeScore}, ${game.state.programs[event.awayProgramId]?.name} ${event.awayScore}.`;
+  if (event.type === "NATIONAL_CHAMPION_CROWNED") return `${game.state.programs[event.championProgramId]?.name} won the national title over ${game.state.programs[event.runnerUpProgramId]?.name} · ${signedNumber(event.fanGain)} fans · +${event.prestigeGain} prestige · ${signedMoney(event.revenueGain)} postseason revenue.`;
+  if (event.type === "DIVISION_TITLE_WON") return `${game.state.programs[event.programId]?.name} won the ${DIVISION_NAMES[event.divisionId]} title.`;
+  if (event.type === "SEASON_AWARD_FINALIZED") {
+    const winner = event.playerId ? game.state.players[event.playerId]?.name : event.staffId ? game.state.staff[event.staffId]?.name : "Winner";
+    return `${winner} won ${SEASON_AWARD_LABELS[event.awardType]} with a ${event.score.toFixed(1)} score · ${signedNumber(event.playerFanGain)} personal fans · ${signedNumber(event.programFanGain)} school fans.`;
+  }
   if (event.type === "WEEKLY_FINANCES") return `${money(event.revenue)} revenue · ${money(event.expenses)} expenses · ${event.net >= 0 ? "+" : ""}${money(event.net)} net`;
   if (event.type === "WEEKLY_RECAP") return `${event.result} · ${signedNumber(event.fanChange)} fans · ${signedNumber(event.localPressChange)} local press · ${signedNumber(event.nationalPressChange)} national press · ${signedMoney(event.weeklyNet)} net`;
   if (event.type === "PLAYER_BRAND_UPDATED") return `${game.state.players[event.playerId]?.name ?? "Player"}: ${event.performanceSummary} · ${signedNumber(event.personalFanChange)} personal fans · ${signedNumber(event.schoolFanLift)} school fans · ${signed(event.stardomChange)} stardom.`;

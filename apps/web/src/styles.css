@@ -25,7 +25,7 @@ dd { margin:0; font-weight:700; text-align:right; }
 .dashboard-header p:not(.eyebrow) { color:#afc0cd; margin-bottom:0; }
 .week-action { text-align:right; display:grid; gap:.5rem; }
 .week-action span { font-size:.82rem; color:#b9c7d2; }
-.metrics { display:grid; grid-template-columns:repeat(6,1fr); gap:.8rem; margin-bottom:1rem; }
+.metrics { display:grid; grid-template-columns:repeat(7,1fr); gap:.8rem; margin-bottom:1rem; }
 .metrics article { padding:1rem; }
 .metrics p { color:#a9bac9; margin-bottom:.35rem; font-size:.8rem; }
 .metrics strong { font-size:1.35rem; }
@@ -51,6 +51,35 @@ dd { margin:0; font-weight:700; text-align:right; }
 .game-log-table .win { color:#6ed4a7; font-weight:800; }
 .game-log-table .loss { color:#f18c9b; font-weight:800; }
 .empty-state { color:#91a8b9; padding:1rem 1.25rem; margin:0; }
+.honors-layout { display:grid; gap:1rem; }
+.trophy-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.8rem; }
+.trophy-summary article { display:flex; justify-content:space-between; align-items:center; border:1px solid #315270; border-radius:.8rem; background:#0b2641; padding:1rem; }
+.trophy-summary span { color:#a9bac9; font-size:.76rem; }
+.trophy-summary strong { color:#e0b057; font-size:1.5rem; }
+.award-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
+.award-card { padding:0; overflow:hidden; }
+.award-card>header { display:flex; justify-content:space-between; align-items:start; gap:1rem; padding:1.1rem 1.2rem; background:#0d2d49; }
+.award-card>header span { color:#91a8b9; font-size:.7rem; }
+.award-card>div { display:grid; grid-template-columns:1.5rem minmax(0,1fr) 3.5rem; align-items:center; gap:.65rem; border-top:1px solid #294864; padding:.7rem 1.2rem; }
+.award-card>div>b { color:#e0b057; }
+.award-card>div p { margin:0; min-width:0; }
+.award-card>div p strong,.award-card>div p span { display:block; }
+.award-card>div p span { color:#91a8b9; font-size:.68rem; margin-top:.2rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.award-card>div em { font-style:normal; font-weight:900; text-align:right; }
+.award-card .user-candidate { background:#123755; }
+.award-card footer { color:#91a8b9; border-top:1px solid #294864; padding:.8rem 1.2rem; font-size:.65rem; line-height:1.4; }
+.season-history { padding:0; overflow:hidden; }
+.season-history.user-champion { border-color:#e0b057; }
+.season-history>header { display:flex; justify-content:space-between; gap:1rem; padding:1.25rem; background:#0d2d49; }
+.season-history>header p:last-child { color:#afc0cd; margin:0; }
+.season-history>header>strong { font-size:2rem; }
+.season-honors-grid { display:grid; grid-template-columns:1fr 1fr; gap:1rem; padding:1.1rem 1.25rem; }
+.season-honors-grid h3,.playoff-results h3 { color:#e0b057; font-size:.75rem; letter-spacing:.08em; text-transform:uppercase; }
+.season-honors-grid p,.playoff-results p { display:flex; justify-content:space-between; gap:1rem; border-top:1px solid #294864; margin:0; padding:.6rem 0; font-size:.76rem; }
+.season-honors-grid p span,.playoff-results p span { color:#91a8b9; }
+.season-honors-grid p strong,.playoff-results p strong { text-align:right; }
+.season-honors-grid small { display:block; color:#91a8b9; margin-top:.2rem; }
+.playoff-results { border-top:1px solid #294864; padding:1.1rem 1.25rem; }
 .recruit-table .data-row { grid-template-columns:minmax(10rem,1fr) 3rem 3.5rem 3.5rem 4.5rem 5.5rem; }
 .development-table .data-row { grid-template-columns:minmax(10rem,1fr) 3rem 5rem minmax(12rem,1.2fr) 4rem minmax(18rem,1.4fr); align-items:start; }
 .player-media-table .data-row { grid-template-columns:minmax(11rem,1fr) minmax(8rem,.7fr) minmax(13rem,1.1fr) minmax(18rem,1.35fr); align-items:start; }
@@ -174,6 +203,7 @@ dd { margin:0; font-weight:700; text-align:right; }
   .week-action button { width:100%; }
   .metrics { grid-template-columns:repeat(2,1fr); }
   .position-grid,.facility-grid { grid-template-columns:1fr; }
+  .award-grid { grid-template-columns:1fr; }
   .decision-legend { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .metrics { grid-template-columns:repeat(3,1fr); }
   .marquee-options { grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -197,6 +227,8 @@ dd { margin:0; font-weight:700; text-align:right; }
   .decision-legend { grid-template-columns:1fr; padding-inline:1rem; }
   .decision-control { grid-column:1/-1; }
   .recap-grid { grid-template-columns:1fr; }
+  .trophy-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .season-honors-grid { grid-template-columns:1fr; }
   .recap-cascade { grid-template-columns:1fr; }
   .recap-cascade .marquee-note { grid-column:auto; }
   .scouting-actions { grid-template-columns:1fr; padding-inline:1rem; }
