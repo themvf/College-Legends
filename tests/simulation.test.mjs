@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, ROSTER_COMPOSITION, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
+import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, PLAYER_STAT_BANDS, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, ROSTER_COMPOSITION, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -220,6 +220,65 @@ test("played games retain scores for the schedule and inbox", () => {
   assert.ok(result.state.eventHistory.some((event) => event.type === "GAME_COMPLETED"));
 });
 
+test("the selected depth chart determines starters and injured players promote backups", () => {
+  const state = activeLeague("functional-depth-chart", 4);
+  const programId = "program-1";
+  const quarterbacks = state.depthCharts[programId].QB;
+  assert.equal(quarterbacks.length, 4);
+  const selectedStarter = quarterbacks.at(-1);
+  assert.ok(selectedStarter);
+  const reordered = [selectedStarter, ...quarterbacks.filter((playerId) => playerId !== selectedStarter)];
+  let result = advanceWeek(state, [{ type: "SET_DEPTH_CHART", programId, position: "QB", playerIds: reordered }]);
+  const selectedLine = result.state.playerGameStats.find((line) => line.season === state.season && line.week === 1 && line.playerId === selectedStarter);
+  assert.ok(selectedLine?.started);
+  assert.equal(result.state.playerGameStats.some((line) => line.season === state.season && line.week === 1 && line.playerId === quarterbacks[0]), false);
+
+  const injuredState = activeLeague("depth-chart-injury", 4);
+  const injuredStarter = injuredState.depthCharts[programId].QB[0];
+  const promotedBackup = injuredState.depthCharts[programId].QB[1];
+  injuredState.players[injuredStarter].injuryWeeksRemaining = 3;
+  result = advanceWeek(injuredState);
+  assert.equal(result.state.playerGameStats.some((line) => line.week === 1 && line.playerId === injuredStarter), false);
+  assert.ok(result.state.playerGameStats.some((line) => line.week === 1 && line.playerId === promotedBackup));
+});
+
+test("a redshirted player does not play and preserves a season of eligibility", () => {
+  let state = activeLeague("real-redshirt-season", 4);
+  const player = Object.values(state.players).find((candidate) => candidate.programId === "program-1" && candidate.eligibility.redshirtStatus === "AVAILABLE");
+  assert.ok(player);
+  const openingSeason = state.season;
+  const openingEligibility = player.eligibility.seasonsRemaining;
+  let result = advanceWeek(state, [{ type: "SET_REDSHIRT", programId: "program-1", playerId: player.id, enabled: true }]);
+  state = result.state;
+  while (state.season === openingSeason) {
+    result = advanceWeek(state);
+    state = result.state;
+  }
+  assert.equal(state.players[player.id].eligibility.seasonsRemaining, openingEligibility);
+  assert.equal(state.players[player.id].eligibility.redshirtStatus, "USED");
+  assert.equal(state.playerGameStats.some((line) => line.season === openingSeason && line.playerId === player.id), false);
+});
+
+test("weekly player statistics use plausible bands with real variance and persist as game logs", () => {
+  let state = activeLeague("historical-stat-bands", 12);
+  const season = state.season;
+  while (state.season === season) state = advanceWeek(state).state;
+  const quarterbackLines = state.playerGameStats.filter((line) => line.season === season && line.position === "QB");
+  assert.ok(quarterbackLines.length >= 90);
+  assert.ok(quarterbackLines.every((line) => line.passingAttempts >= PLAYER_STAT_BANDS.qbAttempts.minimum && line.passingAttempts <= PLAYER_STAT_BANDS.qbAttempts.maximum));
+  const attempts = quarterbackLines.map((line) => line.passingAttempts);
+  const mean = attempts.reduce((sum, value) => sum + value, 0) / attempts.length;
+  const standardDeviation = Math.sqrt(attempts.reduce((sum, value) => sum + (value - mean) ** 2, 0) / attempts.length);
+  assert.ok(mean >= 25 && mean <= 37);
+  assert.ok(standardDeviation >= 4 && standardDeviation <= 10);
+  assert.ok(quarterbackLines.every((line) => line.id && line.gameId && line.opponentProgramId && line.gameRating >= 25 && line.gameRating <= 99));
+  assert.ok(state.playerGameStats.every((line) =>
+    line.passingCompletions <= line.passingAttempts
+    && line.receptions <= line.targets
+    && line.fieldGoalsMade <= line.fieldGoalsAttempted
+  ));
+});
+
 test("training choices create distinct permanent attributes and injury-prevention payoffs", () => {
   const strengthState = activeLeague("training-payoffs", 4);
   const conditioningState = structuredClone(strengthState);
@@ -281,7 +340,7 @@ test("weekly recaps connect results to fans, attendance, press, and game-day rev
   assert.ok(homeRecap.ticketRevenue > 0);
   assert.ok(homeRecap.concessionRevenue > 0);
   for (const recap of recaps.filter((item) => item.result !== "BYE")) {
-    assert.equal(Math.sign(recap.fanChange), recap.result === "WIN" ? 1 : -1);
+    assert.equal(Math.sign(recap.teamResultFanChange), recap.result === "WIN" ? 1 : -1);
     assert.equal(Math.sign(recap.localPressChange), recap.result === "WIN" ? 1 : -1);
   }
 });

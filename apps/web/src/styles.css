@@ -44,6 +44,13 @@ dd { margin:0; font-weight:700; text-align:right; }
 .data-table { overflow-x:auto; }
 .data-row { display:grid; align-items:center; gap:.65rem; padding:.72rem 1.25rem; border-top:1px solid #23435f; font-size:.88rem; }
 .roster-table .data-row { grid-template-columns:minmax(10rem,1fr) 3rem 3.5rem 3.5rem 5rem 5rem 5.5rem; }
+.roster-table span small,.game-log-table span small { display:block; color:#91a8b9; font-size:.68rem; margin-top:.2rem; }
+.stats-layout { display:grid; gap:1rem; }
+.stats-table .data-row { grid-template-columns:minmax(11rem,1fr) 3rem 3rem 3.5rem minmax(18rem,1.5fr); }
+.game-log-table .data-row { grid-template-columns:4rem minmax(10rem,1fr) 5rem 5rem 4rem minmax(19rem,1.5fr); }
+.game-log-table .win { color:#6ed4a7; font-weight:800; }
+.game-log-table .loss { color:#f18c9b; font-weight:800; }
+.empty-state { color:#91a8b9; padding:1rem 1.25rem; margin:0; }
 .recruit-table .data-row { grid-template-columns:minmax(10rem,1fr) 3rem 3.5rem 3.5rem 4.5rem 5.5rem; }
 .development-table .data-row { grid-template-columns:minmax(10rem,1fr) 3rem 5rem minmax(12rem,1.2fr) 4rem minmax(18rem,1.4fr); align-items:start; }
 .player-media-table .data-row { grid-template-columns:minmax(11rem,1fr) minmax(8rem,.7fr) minmax(13rem,1.1fr) minmax(18rem,1.35fr); align-items:start; }
@@ -105,6 +112,18 @@ dd { margin:0; font-weight:700; text-align:right; }
 .position-card>p { display:flex; justify-content:space-between; gap:1rem; margin:0; padding:.62rem 1.15rem; border-top:1px solid #1f3b55; font-size:.84rem; }
 .position-card>p:first-of-type { border-top:0; }
 .position-card>p b { display:inline-block; min-width:2.9rem; color:#e0b057; font-size:.65rem; letter-spacing:.05em; }
+.depth-rules { display:grid; grid-template-columns:auto 1fr; gap:.3rem 1rem; margin-bottom:1rem; border-color:#e0b057; }
+.depth-rules strong { color:#e0b057; }
+.depth-rules small { grid-column:2; color:#91a8b9; }
+.depth-player { display:grid; grid-template-columns:minmax(0,1fr) 3rem auto; align-items:center; gap:.65rem; padding:.62rem 1.15rem; border-top:1px solid #1f3b55; font-size:.84rem; }
+.depth-player:first-of-type { border-top:0; }
+.depth-player>span { min-width:0; }
+.depth-player>span b { display:inline-block; min-width:2.9rem; color:#e0b057; font-size:.65rem; letter-spacing:.05em; }
+.depth-player>span small { display:block; color:#91a8b9; font-size:.66rem; margin:.2rem 0 0 3.15rem; }
+.depth-player.inactive { background:#091f35; color:#8da3b4; }
+.depth-actions { display:flex; gap:.3rem; }
+.depth-actions button { padding:.35rem .5rem; min-width:2rem; background:#143754; color:#dce8f0; border:1px solid #315270; font-size:.7rem; }
+.depth-actions button.selected { background:#e0b057; color:#172638; }
 .next-row { background:#123755; }
 .schedule-layout { display:grid; gap:1rem; }
 .marquee-planner { border-color:#e0b057; }
@@ -167,7 +186,7 @@ dd { margin:0; font-weight:700; text-align:right; }
   .section-heading { align-items:start; flex-direction:column; }
   .section-heading p:not(.eyebrow) { text-align:left; }
   .data-header { display:none; }
-  .data-row,.roster-table .data-row,.recruit-table .data-row,.development-table .data-row,.player-media-table .data-row,.schedule-table .data-row,.staff-table .data-row { grid-template-columns:repeat(2,minmax(0,1fr)); gap:.65rem 1rem; padding:1rem; }
+  .data-row,.roster-table .data-row,.recruit-table .data-row,.development-table .data-row,.player-media-table .data-row,.schedule-table .data-row,.staff-table .data-row,.stats-table .data-row,.game-log-table .data-row { grid-template-columns:repeat(2,minmax(0,1fr)); gap:.65rem 1rem; padding:1rem; }
   .division-grid { grid-template-columns:1fr; }
   .data-row strong { grid-column:1/-1; font-size:1rem; }
   .data-row [data-label] { display:grid; grid-template-columns:auto 1fr; align-items:baseline; gap:.45rem; }
@@ -184,4 +203,9 @@ dd { margin:0; font-weight:700; text-align:right; }
   .recruiting-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .position-search { min-height:auto; }
   .evaluation-actions { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .depth-rules { grid-template-columns:1fr; }
+  .depth-rules small { grid-column:auto; }
+  .depth-player { grid-template-columns:minmax(0,1fr) 3rem; }
+  .depth-actions { grid-column:1/-1; }
+  .depth-actions button:last-child { margin-left:auto; }
 }

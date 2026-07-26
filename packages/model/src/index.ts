@@ -16,6 +16,7 @@ export type PlayerRating = "technique" | "strength" | "conditioning" | "injuryPr
 export type PlayerMediaAction = "FOOTBALL_FOCUS" | "MEDIA_DAY" | "SOCIAL_MEDIA" | "COMMUNITY_APPEARANCE";
 export type RecruitingEvaluation = "BASIC" | "ATHLETIC" | "POSITION" | "CHARACTER" | "MEDICAL" | "PROJECTION";
 export type RecruitingSearchType = "LOCAL_REGION" | "POSITION" | "SLEEPERS" | "NATIONAL_SHOWCASE";
+export type RedshirtStatus = "AVAILABLE" | "REDSHIRTING" | "USED" | "INELIGIBLE";
 export type RecruitPriority =
   | "EARLY_PLAYING_TIME"
   | "WINNING"
@@ -40,9 +41,48 @@ export interface Eligibility {
   seasonsEnrolled: number;
   seasonsParticipated: number;
   seasonsRemaining: number;
-  redshirtStatus: "AVAILABLE" | "USED" | "INELIGIBLE";
+  redshirtStatus: RedshirtStatus;
   gamesPlayedThisSeason: number;
   rosterStatus: RosterStatus;
+}
+
+export type DepthChart = Record<Position, PlayerId[]>;
+
+export interface PlayerGameStatLine {
+  id: string;
+  season: Season;
+  week: number;
+  gameId: string;
+  playerId: PlayerId;
+  programId: ProgramId;
+  opponentProgramId: ProgramId;
+  position: Position;
+  started: boolean;
+  result: "WIN" | "LOSS";
+  gameRating: number;
+  snaps: number;
+  passingAttempts: number;
+  passingCompletions: number;
+  passingYards: number;
+  passingTouchdowns: number;
+  interceptionsThrown: number;
+  rushingAttempts: number;
+  rushingYards: number;
+  rushingTouchdowns: number;
+  targets: number;
+  receptions: number;
+  receivingYards: number;
+  receivingTouchdowns: number;
+  tackles: number;
+  tacklesForLoss: number;
+  sacks: number;
+  defensiveInterceptions: number;
+  passBreakups: number;
+  fieldGoalsAttempted: number;
+  fieldGoalsMade: number;
+  punts: number;
+  puntYards: number;
+  blockingGrade: number;
 }
 
 export interface Player {
@@ -165,6 +205,8 @@ export interface GameState {
   prospects: Record<ProspectId, Prospect>;
   recruiting: Record<ProgramId, RecruitingProgramState>;
   staff: Record<string, StaffMember>;
+  depthCharts: Record<ProgramId, DepthChart>;
+  playerGameStats: PlayerGameStatLine[];
   schedule: ScheduledGame[];
   eventHistory: GameEvent[];
 }
@@ -187,6 +229,8 @@ export type GameCommand =
   | { type: "EVALUATE_PROSPECT"; programId: ProgramId; prospectId: ProspectId; evaluation: RecruitingEvaluation }
   | { type: "INVEST_RECRUITING_POINTS"; programId: ProgramId; prospectId: ProspectId; points: number }
   | { type: "RED_SHIRT"; programId: ProgramId; playerId: PlayerId }
+  | { type: "SET_REDSHIRT"; programId: ProgramId; playerId: PlayerId; enabled: boolean }
+  | { type: "SET_DEPTH_CHART"; programId: ProgramId; position: Position; playerIds: PlayerId[] }
   | { type: "SET_DEVELOPMENT_FOCUS"; programId: ProgramId; playerId: PlayerId; focus: DevelopmentFocus }
   | { type: "ASSIGN_STAFF"; programId: ProgramId; staffId: string; assignment: StaffAssignment }
   | { type: "UPGRADE_FACILITY"; programId: ProgramId; facility: FacilityType }
@@ -273,6 +317,8 @@ export type GameEvent =
   | { type: "FACILITY_UPGRADED"; season: Season; week: number; programId: ProgramId; facility: FacilityType; newLevel: number; cost: number }
   | { type: "MARQUEE_GAME_SCHEDULED"; season: Season; programId: ProgramId; opponentProgramId: ProgramId; week: number; guarantee: number; opponentRank: number }
   | { type: "PLAYER_MEDIA_ACTION_SET"; season: Season; week: number; programId: ProgramId; playerId: PlayerId; action: PlayerMediaAction }
+  | { type: "DEPTH_CHART_UPDATED"; season: Season; week: number; programId: ProgramId; position: Position; playerIds: PlayerId[] }
+  | { type: "REDSHIRT_STATUS_CHANGED"; season: Season; week: number; programId: ProgramId; playerId: PlayerId; status: RedshirtStatus }
   | {
       type: "PLAYER_BRAND_UPDATED";
       season: Season;

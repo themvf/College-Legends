@@ -8,6 +8,7 @@ import type {
   GameEvent,
   GameState,
   Player,
+  PlayerGameStatLine,
   PlayerMediaAction,
   Position,
   ProgramId,
@@ -32,11 +33,11 @@ import {
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 
 type GameView = { state: GameState; playerProgramId: ProgramId; events: GameEvent[] };
-type Screen = "DASHBOARD" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CHART" | "DEVELOPMENT" | "PLAYER_MEDIA" | "SCHEDULE" | "DIVISIONS" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
+type Screen = "DASHBOARD" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CHART" | "PLAYER_STATS" | "DEVELOPMENT" | "PLAYER_MEDIA" | "SCHEDULE" | "DIVISIONS" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
 
 const careerOrder: CareerPath[] = ["DYNASTY_BUILDER", "PROGRAM_RISER", "CHAMPIONSHIP_MANDATE"];
 const positionOrder: Player["position"][] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
-const screens: Screen[] = ["DASHBOARD", "WEEKLY_RECAPS", "ROSTER", "DEPTH_CHART", "DEVELOPMENT", "PLAYER_MEDIA", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
+const screens: Screen[] = ["DASHBOARD", "WEEKLY_RECAPS", "ROSTER", "DEPTH_CHART", "PLAYER_STATS", "DEVELOPMENT", "PLAYER_MEDIA", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
 const developmentFocuses: DevelopmentFocus[] = ["BALANCED", "TECHNIQUE", "STRENGTH", "CONDITIONING"];
 const playerMediaActions: PlayerMediaAction[] = ["FOOTBALL_FOCUS", "MEDIA_DAY", "SOCIAL_MEDIA", "COMMUNITY_APPEARANCE"];
 const recruitingEvaluations: RecruitingEvaluation[] = ["BASIC", "ATHLETIC", "POSITION", "CHARACTER", "MEDICAL", "PROJECTION"];
@@ -101,7 +102,23 @@ export function App(): ReactElement {
       : command.type === "EVALUATE_PROSPECT" ? `recruit-eval:${command.prospectId}:${command.evaluation}`
       : command.type === "INVEST_RECRUITING_POINTS" ? `recruit-invest:${command.prospectId}`
       : command.type === "OFFER_PROSPECT" ? `prospect:${command.prospectId}`
-      : `${command.type}:${command.playerId}`;
+      : command.type === "SET_DEPTH_CHART" ? `depth:${command.position}`
+      : command.type === "SET_REDSHIRT" || command.type === "RED_SHIRT" ? `redshirt:${command.playerId}`
+      : "command";
+    if (command.type === "SET_REDSHIRT" && game) {
+      const actual = game.state.players[command.playerId]?.eligibility.redshirtStatus === "REDSHIRTING";
+      if (command.enabled === actual) {
+        setPendingCommands((previous) => previous.filter((item) => commandKey(item) !== key));
+        return;
+      }
+    }
+    if (command.type === "SET_DEPTH_CHART" && game) {
+      const actual = game.state.depthCharts[command.programId]?.[command.position] ?? [];
+      if (actual.length === command.playerIds.length && actual.every((playerId, index) => playerId === command.playerIds[index])) {
+        setPendingCommands((previous) => previous.filter((item) => commandKey(item) !== key));
+        return;
+      }
+    }
     setPendingCommands((previous) => [
       ...previous.filter((item) => commandKey(item) !== key),
       command
@@ -127,7 +144,9 @@ function commandKey(command: GameCommand): string {
   if (command.type === "EVALUATE_PROSPECT") return `recruit-eval:${command.prospectId}:${command.evaluation}`;
   if (command.type === "INVEST_RECRUITING_POINTS") return `recruit-invest:${command.prospectId}`;
   if (command.type === "OFFER_PROSPECT") return `prospect:${command.prospectId}`;
-  return `${command.type}:${command.playerId}`;
+  if (command.type === "SET_DEPTH_CHART") return `depth:${command.position}`;
+  if (command.type === "SET_REDSHIRT" || command.type === "RED_SHIRT") return `redshirt:${command.playerId}`;
+  return "command";
 }
 
 function NewGame({ busy, onStart }: { busy: boolean; onStart: (path: CareerPath) => void }): ReactElement {
@@ -185,7 +204,8 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQ
     {screen === "DASHBOARD" && <ProgramDashboard game={game} roster={roster} />}
     {screen === "WEEKLY_RECAPS" && <WeeklyRecaps game={game} />}
     {screen === "ROSTER" && <Roster roster={roster} />}
-    {screen === "DEPTH_CHART" && <DepthChart roster={roster} />}
+    {screen === "DEPTH_CHART" && <DepthChart game={game} roster={roster} pending={pendingCommands} onQueue={onQueue} />}
+    {screen === "PLAYER_STATS" && <PlayerStats game={game} roster={roster} />}
     {screen === "DEVELOPMENT" && <Development state={game.state} roster={roster} programId={program.id} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "PLAYER_MEDIA" && <PlayerMedia game={game} roster={roster} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "SCHEDULE" && <Schedule game={game} pending={pendingCommands} onQueue={onQueue} />}
@@ -222,19 +242,78 @@ function ProgramDashboard({ game, roster }: { game: GameView; roster: Player[] }
 function Roster({ roster }: { roster: Player[] }): ReactElement {
   const average = roster.reduce((sum, player) => sum + player.overall, 0) / Math.max(roster.length, 1);
   return <section className="panel table-panel"><SectionHeading eyebrow="Team management" title={`${roster.length} scholarship players`} detail={`Average rating ${average.toFixed(1)} · complete positional roster`} />
-    <div className="data-table roster-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>OVR</span><span>POT</span><span>Stardom</span><span>Fans</span><span>Year</span></div>
-      {roster.map((player) => <div className="data-row" key={player.id}><strong data-label="Player">{player.name}</strong><span data-label="Position">{player.position}</span><span data-label="Overall">{Math.round(player.overall)}</span><span data-label="Potential">{Math.round(player.potential)}</span><span data-label="Stardom">{player.stardom}/100</span><span data-label="Personal fans">{compactNumber(player.personalFans)}</span><span data-label="Year">{className(player.eligibility.seasonsEnrolled)}</span></div>)}
+    <div className="data-table roster-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>OVR</span><span>POT</span><span>Stardom</span><span>Fans</span><span>Year / status</span></div>
+      {roster.map((player) => <div className="data-row" key={player.id}><strong data-label="Player">{player.name}</strong><span data-label="Position">{player.position}</span><span data-label="Overall">{Math.round(player.overall)}</span><span data-label="Potential">{Math.round(player.potential)}</span><span data-label="Stardom">{player.stardom}/100</span><span data-label="Personal fans">{compactNumber(player.personalFans)}</span><span data-label="Year / status">{eligibilityClass(player)}<small>{player.eligibility.redshirtStatus === "REDSHIRTING" ? "Redshirting" : `${player.eligibility.seasonsRemaining} seasons left`}</small></span></div>)}
     </div></section>;
 }
 
-function DepthChart({ roster }: { roster: Player[] }): ReactElement {
-  return <section><SectionHeading eyebrow="Game day" title="Depth chart" detail="The best available players currently earn each starting role." />
+function DepthChart({ game, roster, pending, onQueue }: { game: GameView; roster: Player[]; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
+  const programId = game.playerProgramId;
+  const redshirtState = (player: Player): boolean => {
+    const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_REDSHIRT" }> =>
+      command.type === "SET_REDSHIRT" && command.playerId === player.id
+    );
+    return queued?.enabled ?? player.eligibility.redshirtStatus === "REDSHIRTING";
+  };
+  const orderedIds = (position: Position): string[] => {
+    const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_DEPTH_CHART" }> =>
+      command.type === "SET_DEPTH_CHART" && command.position === position
+    );
+    return queued?.playerIds ?? game.state.depthCharts[programId]?.[position] ?? roster
+      .filter((player) => player.position === position)
+      .sort((left, right) => right.overall - left.overall)
+      .map((player) => player.id);
+  };
+  const move = (position: Position, playerId: string, direction: -1 | 1): void => {
+    const playerIds = [...orderedIds(position)];
+    const from = playerIds.indexOf(playerId);
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= playerIds.length) return;
+    [playerIds[from], playerIds[to]] = [playerIds[to]!, playerIds[from]!];
+    onQueue({ type: "SET_DEPTH_CHART", programId, position, playerIds });
+  };
+  return <section><SectionHeading eyebrow="Game day" title="Functional depth chart" detail="Your selected healthy starters drive team strength and record stats. Injuries promote the next active player automatically; redshirts do not play." />
+    <article className="panel depth-rules"><strong>Redshirt payoff</strong><span>Preserves one season of eligibility at rollover.</span><small>Tradeoff: the player is removed from the active depth chart all season, but can still train and develop.</small></article>
     <div className="position-grid">{positionOrder.map((position) => {
-      const players = roster.filter((player) => player.position === position);
+      const players = orderedIds(position).map((playerId) => game.state.players[playerId]).filter((player): player is Player => Boolean(player));
+      let activeIndex = 0;
       return <article className="panel position-card" key={position}><div className="position-title"><h2>{position}</h2><span>{starterCounts[position]} starter{starterCounts[position] === 1 ? "" : "s"}</span></div>
-        {players.map((player, index) => <p key={player.id}><span><b>{index < starterCounts[position] ? "START" : `#${index + 1}`}</b> {player.name}</span><strong>{Math.round(player.overall)}</strong></p>)}
+        {players.map((player, index) => {
+          const redshirted = redshirtState(player);
+          const injured = player.injuryWeeksRemaining > 0;
+          const availableSlot = !redshirted && !injured ? activeIndex++ : -1;
+          const role = redshirted ? "RS" : injured ? "OUT" : availableSlot < starterCounts[position] ? "START" : `#${availableSlot + 1}`;
+          const canRedshirt = player.eligibility.redshirtStatus === "AVAILABLE" || player.eligibility.redshirtStatus === "REDSHIRTING";
+          return <div className={`depth-player ${redshirted || injured ? "inactive" : ""}`} key={player.id}>
+            <span><b>{role}</b> {player.name}<small>{eligibilityClass(player)} · {player.eligibility.gamesPlayedThisSeason} GP · {player.eligibility.seasonsRemaining} seasons left</small></span>
+            <strong>{Math.round(player.overall)}</strong>
+            <div className="depth-actions"><button disabled={index === 0} onClick={() => move(position, player.id, -1)} aria-label={`Move ${player.name} up`}>↑</button><button disabled={index === players.length - 1} onClick={() => move(position, player.id, 1)} aria-label={`Move ${player.name} down`}>↓</button>
+              <button className={redshirted ? "selected" : ""} disabled={!canRedshirt} onClick={() => onQueue({ type: "SET_REDSHIRT", programId, playerId: player.id, enabled: !redshirted })}>{redshirted ? "Remove RS" : "Redshirt"}</button></div>
+          </div>;
+        })}
       </article>;
     })}</div></section>;
+}
+
+function PlayerStats({ game, roster }: { game: GameView; roster: Player[] }): ReactElement {
+  const lines = game.state.playerGameStats.filter((line) => line.programId === game.playerProgramId && line.season === game.state.season);
+  const totals = roster.map((player) => {
+    const playerLines = lines.filter((line) => line.playerId === player.id);
+    return { player, playerLines, games: playerLines.length, rating: playerLines.length ? Math.round(playerLines.reduce((sum, line) => sum + line.gameRating, 0) / playerLines.length) : null };
+  }).filter((entry) => entry.games > 0).sort((left, right) => (right.rating ?? 0) - (left.rating ?? 0) || right.games - left.games);
+  const weekly = [...lines].sort((left, right) => right.week - left.week || right.gameRating - left.gameRating);
+  return <section className="stats-layout">
+    <article className="panel table-panel"><SectionHeading eyebrow="Season statistics" title={`${game.state.season} player leaders`} detail="Totals accumulate from each weekly game log; AVG is the player’s mean game rating." />
+      <div className="data-table stats-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>GP</span><span>AVG</span><span>Season production</span></div>
+        {totals.length ? totals.map(({ player, playerLines, games, rating }) => <div className="data-row" key={player.id}><strong>{player.name}</strong><span>{player.position}</span><span>{games}</span><span>{rating}</span><span>{seasonStatSummary(player.position, playerLines)}</span></div>) : <p className="empty-state">Stats will appear after the first game.</p>}
+      </div>
+    </article>
+    <article className="panel table-panel"><SectionHeading eyebrow="Weekly game logs" title="Every recorded performance" detail="Position-specific production is sampled from historical FBS bands and shifted by player quality, opponent strength, and game context." />
+      <div className="data-table game-log-table"><div className="data-row data-header"><span>Week</span><span>Player</span><span>Opponent</span><span>Result</span><span>Rating</span><span>Stat line</span></div>
+        {weekly.length ? weekly.map((line) => <div className="data-row" key={line.id}><strong>W{line.week}</strong><span>{game.state.players[line.playerId]?.name}<small>{line.position}</small></span><span>{game.state.programs[line.opponentProgramId]?.abbreviation}</span><span className={line.result.toLowerCase()}>{line.result}</span><strong>{line.gameRating}</strong><span>{statLineSummary(line)}</span></div>) : <p className="empty-state">No weekly performances recorded yet.</p>}
+      </div>
+    </article>
+  </section>;
 }
 
 function Development({ state, roster, programId, pending, onQueue }: { state: GameState; roster: Player[]; programId: string; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
@@ -542,6 +621,8 @@ function eventText(event: GameEvent, game: GameView): string {
   if (event.type === "FACILITY_UPGRADED") return `${label(event.facility)} reached Level ${event.newLevel} for ${money(event.cost)}.`;
   if (event.type === "STAFF_ASSIGNED") return `${game.state.staff[event.staffId]?.name ?? "Coach"} assigned to ${label(event.assignment)}.`;
   if (event.type === "DEVELOPMENT_FOCUS_SET") return `${game.state.players[event.playerId]?.name ?? "Player"} changed to ${label(event.focus)} training.`;
+  if (event.type === "DEPTH_CHART_UPDATED") return `${event.position} depth chart updated.`;
+  if (event.type === "REDSHIRT_STATUS_CHANGED") return `${game.state.players[event.playerId]?.name ?? "Player"} is now ${event.status === "REDSHIRTING" ? "redshirting" : label(event.status)}.`;
   if (event.type === "PLAYER_INJURED") return `${game.state.players[event.playerId]?.name ?? "Player"} will miss approximately ${event.weeks} week${event.weeks === 1 ? "" : "s"} (${event.risk}% risk).`;
   if (event.type === "PLAYER_RECOVERED") return `${game.state.players[event.playerId]?.name ?? "Player"} has returned to full availability.`;
   if (event.type === "PROSPECT_SIGNED") return `${game.state.prospects[event.prospectId]?.name ?? "Prospect"} signed with ${game.state.programs[event.programId]?.name}.`;
@@ -561,7 +642,35 @@ function SectionHeading({ eyebrow, title, detail }: { eyebrow: string; title: st
   return <div className="section-heading"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div><p>{detail}</p></div>;
 }
 
-function className(seasonsEnrolled: number): string { return ["Freshman", "Sophomore", "Junior", "Senior"][Math.min(seasonsEnrolled, 3)]!; }
+function statLineSummary(line: PlayerGameStatLine): string {
+  if (line.position === "QB") return `${line.passingCompletions}/${line.passingAttempts}, ${line.passingYards} YD, ${line.passingTouchdowns} TD, ${line.interceptionsThrown} INT`;
+  if (line.position === "RB") return `${line.rushingAttempts} CAR, ${line.rushingYards} YD, ${line.rushingTouchdowns} TD`;
+  if (line.position === "WR" || line.position === "TE") return `${line.receptions}/${line.targets} REC/TGT, ${line.receivingYards} YD, ${line.receivingTouchdowns} TD`;
+  if (line.position === "OL") return `${line.snaps} SNAPS, ${line.blockingGrade} BLK`;
+  if (line.position === "DL" || line.position === "LB") return `${line.tackles} TKL, ${line.tacklesForLoss} TFL, ${line.sacks} SACK`;
+  if (line.position === "DB") return `${line.tackles} TKL, ${line.defensiveInterceptions} INT, ${line.passBreakups} PBU`;
+  if (line.position === "K") return `${line.fieldGoalsMade}/${line.fieldGoalsAttempted} FG`;
+  return `${line.punts} PUNTS, ${line.punts ? (line.puntYards / line.punts).toFixed(1) : "0.0"} AVG`;
+}
+
+function seasonStatSummary(position: Position, lines: PlayerGameStatLine[]): string {
+  const sum = (field: keyof PlayerGameStatLine): number => lines.reduce((total, line) => total + (typeof line[field] === "number" ? Number(line[field]) : 0), 0);
+  if (position === "QB") return `${sum("passingCompletions")}/${sum("passingAttempts")}, ${sum("passingYards")} YD, ${sum("passingTouchdowns")} TD, ${sum("interceptionsThrown")} INT`;
+  if (position === "RB") return `${sum("rushingAttempts")} CAR, ${sum("rushingYards")} YD, ${sum("rushingTouchdowns")} TD`;
+  if (position === "WR" || position === "TE") return `${sum("receptions")} REC, ${sum("receivingYards")} YD, ${sum("receivingTouchdowns")} TD`;
+  if (position === "OL") return `${sum("snaps")} SNAPS, ${Math.round(sum("blockingGrade") / Math.max(1, lines.length))} AVG BLK`;
+  if (position === "DL" || position === "LB") return `${sum("tackles")} TKL, ${sum("tacklesForLoss")} TFL, ${sum("sacks")} SACK`;
+  if (position === "DB") return `${sum("tackles")} TKL, ${sum("defensiveInterceptions")} INT, ${sum("passBreakups")} PBU`;
+  if (position === "K") return `${sum("fieldGoalsMade")}/${sum("fieldGoalsAttempted")} FG`;
+  const punts = sum("punts");
+  return `${punts} PUNTS, ${punts ? (sum("puntYards") / punts).toFixed(1) : "0.0"} AVG`;
+}
+
+function className(seasonsParticipated: number): string { return ["Freshman", "Sophomore", "Junior", "Senior"][Math.min(seasonsParticipated, 3)]!; }
+function eligibilityClass(player: Player): string {
+  const redshirtPrefix = player.eligibility.redshirtStatus === "USED" && player.eligibility.seasonsEnrolled > player.eligibility.seasonsParticipated ? "RS " : "";
+  return `${redshirtPrefix}${className(player.eligibility.seasonsParticipated)}`;
+}
 function label(value: string): string { return value.toLowerCase().split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" "); }
 function money(value: number): string {
   const absolute = Math.abs(value);
