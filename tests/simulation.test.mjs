@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, ROSTER_COMPOSITION, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
+import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, ROSTER_COMPOSITION, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -96,25 +96,75 @@ test("eligibility produces departures after four season rollovers", () => {
 
 test("contested recruiting is independent of command order", () => {
   const state = activeLeague("recruiting-order", 4);
-  openScholarship(state, "program-1");
-  openScholarship(state, "program-4");
+  const prospectId = state.recruiting["program-1"].discoveredProspectIds[0];
+  assert.ok(prospectId);
+  state.recruiting["program-4"].discoveredProspectIds.push(prospectId);
+  state.recruiting["program-4"].scoutingByProspect[prospectId] = { evaluations: [], pursuitPoints: 0 };
   const commands = [
-    { type: "OFFER_PROSPECT", programId: "program-1", prospectId: "prospect-initial-1" },
-    { type: "OFFER_PROSPECT", programId: "program-4", prospectId: "prospect-initial-1" },
+    { type: "INVEST_RECRUITING_POINTS", programId: "program-1", prospectId, points: 20 },
+    { type: "INVEST_RECRUITING_POINTS", programId: "program-4", prospectId, points: 20 },
   ];
   const forward = advanceWeek(state, commands);
   const reversed = advanceWeek(state, [...commands].reverse());
   assert.deepEqual(forward, reversed);
-  assert.equal(forward.events.filter((event) => event.type === "PROSPECT_SIGNED").length, 1);
+  assert.equal(forward.events.filter((event) => event.type === "RECRUITING_INVESTMENT").length, 2);
 });
 
-test("a signed prospect becomes a rostered scholarship player", () => {
-  const state = activeLeague("recruiting-sign", 4);
-  openScholarship(state, "program-2");
-  const result = advanceWeek(state, [{ type: "OFFER_PROSPECT", programId: "program-2", prospectId: "prospect-initial-2" }]);
-  const signed = result.events.find((event) => event.type === "PROSPECT_SIGNED");
-  assert.ok(signed && result.state.players[signed.playerId]);
-  assert.equal(result.state.prospects["prospect-initial-2"].status, "SIGNED");
+test("a commitment waits until offseason departures before the freshman enrolls", () => {
+  let state = activeLeague("recruiting-sign", 4);
+  const programId = "program-2";
+  const prospectId = state.recruiting[programId].discoveredProspectIds[0];
+  assert.ok(prospectId);
+  state.recruiting[programId].scoutingByProspect[prospectId].pursuitPoints = 100;
+  const openingSeason = state.season;
+  let result = advanceWeek(state);
+  state = result.state;
+  const commitment = result.events.find((event) => event.type === "PROSPECT_COMMITTED" && event.prospectId === prospectId);
+  assert.ok(commitment);
+  assert.equal(state.prospects[prospectId].status, "COMMITTED");
+  assert.equal(state.players[`player:${prospectId}`], undefined);
+  while (state.season === openingSeason) {
+    result = advanceWeek(state);
+    state = result.state;
+  }
+  assert.equal(state.prospects[prospectId].status, "ENROLLED");
+  assert.equal(state.players[`player:${prospectId}`].programId, programId);
+  assert.ok(result.events.some((event) => event.type === "PROSPECT_ENROLLED" && event.prospectId === prospectId));
+});
+
+test("one Recruiting Point budget pays for both information and pursuit", () => {
+  const state = activeLeague("recruiting-shared-budget", 4);
+  const programId = "program-1";
+  const prospectId = state.recruiting[programId].discoveredProspectIds[0];
+  const prospect = state.prospects[prospectId];
+  assert.ok(prospect);
+  const before = prospectScoutingReport(state, programId, prospect);
+  assert.equal(before.overall, "Unknown");
+  assert.equal(before.potential, "Unknown");
+  const openingPoints = state.recruiting[programId].points;
+  const result = advanceWeek(state, [
+    { type: "EVALUATE_PROSPECT", programId, prospectId, evaluation: "BASIC" },
+    { type: "INVEST_RECRUITING_POINTS", programId, prospectId, points: 10 }
+  ]);
+  const report = prospectScoutingReport(result.state, programId, result.state.prospects[prospectId]);
+  const replenishment = result.events.find((event) => event.type === "RECRUITING_POINTS_ADDED" && event.programId === programId);
+  assert.ok(replenishment);
+  assert.match(report.overall, /^\d+–\d+$/);
+  assert.equal(report.potential, "Unknown");
+  assert.equal(report.pursuitPoints, 10);
+  assert.equal(result.state.recruiting[programId].points, Math.min(120, openingPoints - 15 + replenishment.pointsAdded));
+});
+
+test("scouting searches unlock a limited set of new prospects", () => {
+  const state = activeLeague("recruiting-search", 12);
+  const programId = "program-1";
+  const before = new Set(state.recruiting[programId].discoveredProspectIds);
+  const result = advanceWeek(state, [{ type: "SEARCH_PROSPECTS", programId, searchType: "SLEEPERS" }]);
+  const discovery = result.events.find((event) => event.type === "PROSPECTS_DISCOVERED" && event.programId === programId);
+  assert.ok(discovery);
+  assert.ok(discovery.prospectIds.length > 0 && discovery.prospectIds.length <= 6);
+  assert.ok(discovery.prospectIds.every((prospectId) => !before.has(prospectId)));
+  assert.ok(discovery.prospectIds.every((prospectId) => result.state.recruiting[programId].scoutingByProspect[prospectId]));
 });
 
 test("AI recruiting respects scholarship limits and receives a new annual cohort", () => {
@@ -184,7 +234,7 @@ test("training choices create distinct permanent attributes and injury-preventio
   assert.ok(conditioning.state.players[player.id].fatigue < strength.state.players[player.id].fatigue);
 });
 
-test("recovery assignments lower fatigue and recruiting investments raise contest scores", () => {
+test("recovery assignments lower fatigue and recruiting staff and facilities generate more points", () => {
   const base = activeLeague("staff-facility-payoffs", 4);
   const player = Object.values(base.players).find((candidate) => candidate.programId === "program-1");
   const coach = Object.values(base.staff).find((candidate) => candidate.programId === "program-1");
@@ -196,15 +246,16 @@ test("recovery assignments lower fatigue and recruiting investments raise contes
 
   const basicRecruiting = activeLeague("recruiting-investment", 4);
   const investedRecruiting = structuredClone(basicRecruiting);
-  openScholarship(basicRecruiting, "program-1");
-  openScholarship(investedRecruiting, "program-1");
   basicRecruiting.programs["program-1"].facilities.RECRUITING = 1;
   investedRecruiting.programs["program-1"].facilities.RECRUITING = 5;
-  const offer = [{ type: "OFFER_PROSPECT", programId: "program-1", prospectId: "prospect-initial-1" }];
-  const basicContest = advanceWeek(basicRecruiting, offer).events.find((event) => event.type === "RECRUITING_CONTEST_RESOLVED");
-  const investedContest = advanceWeek(investedRecruiting, offer).events.find((event) => event.type === "RECRUITING_CONTEST_RESOLVED");
-  assert.ok(basicContest && investedContest);
-  assert.equal(investedContest.scores["program-1"] - basicContest.scores["program-1"], 8);
+  const basicPoints = recruitingWeeklyPoints(basicRecruiting, "program-1");
+  const investedPoints = recruitingWeeklyPoints(investedRecruiting, "program-1");
+  assert.equal(investedPoints - basicPoints, 16);
+  const recruiter = Object.values(investedRecruiting.staff).find((candidate) => candidate.programId === "program-1");
+  assert.ok(recruiter);
+  recruiter.assignment = "RECRUITING";
+  assert.ok(recruitingWeeklyPoints(investedRecruiting, "program-1") > investedPoints);
+  assert.ok(projectedRecruitingOpenings(investedRecruiting, "program-1") > 0);
 });
 
 test("stadium levels directly increase home-game revenue", () => {

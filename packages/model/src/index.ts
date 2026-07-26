@@ -14,6 +14,17 @@ export type FacilityType = "TRAINING" | "STADIUM" | "ACADEMICS" | "RECRUITING";
 export type DivisionId = "ATLANTIC" | "GREAT_LAKES" | "HEARTLAND" | "GULF" | "MOUNTAIN" | "PACIFIC";
 export type PlayerRating = "technique" | "strength" | "conditioning" | "injuryPrevention" | "armStrength";
 export type PlayerMediaAction = "FOOTBALL_FOCUS" | "MEDIA_DAY" | "SOCIAL_MEDIA" | "COMMUNITY_APPEARANCE";
+export type RecruitingEvaluation = "BASIC" | "ATHLETIC" | "POSITION" | "CHARACTER" | "MEDICAL" | "PROJECTION";
+export type RecruitingSearchType = "LOCAL_REGION" | "POSITION" | "SLEEPERS" | "NATIONAL_SHOWCASE";
+export type RecruitPriority =
+  | "EARLY_PLAYING_TIME"
+  | "WINNING"
+  | "PLAYER_DEVELOPMENT"
+  | "NATIONAL_EXPOSURE"
+  | "ACADEMICS"
+  | "FACILITIES"
+  | "CLOSE_TO_HOME"
+  | "PERSONAL_STARDOM";
 
 export interface PlayerRatings {
   technique: number;
@@ -64,10 +75,28 @@ export interface Prospect {
   overall: number;
   potential: number;
   workEthic: number;
+  ratings: PlayerRatings;
+  homeStateCode: string;
+  homeDivisionId: DivisionId;
+  reputation: "UNRANKED" | "REGIONAL" | "NATIONAL" | "ELITE";
+  priorities: RecruitPriority[];
   /** A prospect's private fit with each school, generated from the save seed. */
   interestByProgram: Record<ProgramId, number>;
-  status: "AVAILABLE" | "SIGNED";
+  status: "AVAILABLE" | "COMMITTED" | "ENROLLED" | "WITHDRAWN";
   signedProgramId: ProgramId | null;
+}
+
+export interface ProspectScoutingState {
+  evaluations: RecruitingEvaluation[];
+  /** Persistent staff investment that remains with the recruit until he commits. */
+  pursuitPoints: number;
+}
+
+export interface RecruitingProgramState {
+  points: number;
+  weeklyPoints: number;
+  discoveredProspectIds: ProspectId[];
+  scoutingByProspect: Record<ProspectId, ProspectScoutingState>;
 }
 
 export interface Program {
@@ -134,6 +163,7 @@ export interface GameState {
   programs: Record<ProgramId, Program>;
   players: Record<PlayerId, Player>;
   prospects: Record<ProspectId, Prospect>;
+  recruiting: Record<ProgramId, RecruitingProgramState>;
   staff: Record<string, StaffMember>;
   schedule: ScheduledGame[];
   eventHistory: GameEvent[];
@@ -153,6 +183,9 @@ export interface BalanceConfiguration {
 
 export type GameCommand =
   | { type: "OFFER_PROSPECT"; programId: ProgramId; prospectId: ProspectId }
+  | { type: "SEARCH_PROSPECTS"; programId: ProgramId; searchType: RecruitingSearchType; position?: Position }
+  | { type: "EVALUATE_PROSPECT"; programId: ProgramId; prospectId: ProspectId; evaluation: RecruitingEvaluation }
+  | { type: "INVEST_RECRUITING_POINTS"; programId: ProgramId; prospectId: ProspectId; points: number }
   | { type: "RED_SHIRT"; programId: ProgramId; playerId: PlayerId }
   | { type: "SET_DEVELOPMENT_FOCUS"; programId: ProgramId; playerId: PlayerId; focus: DevelopmentFocus }
   | { type: "ASSIGN_STAFF"; programId: ProgramId; staffId: string; assignment: StaffAssignment }
@@ -189,6 +222,52 @@ export type GameEvent =
       scores: Record<ProgramId, number>;
     }
   | { type: "PROSPECT_SIGNED"; season: Season; week: number; prospectId: ProspectId; playerId: PlayerId; programId: ProgramId }
+  | {
+      type: "PROSPECTS_DISCOVERED";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      searchType: RecruitingSearchType;
+      prospectIds: ProspectId[];
+      pointsSpent: number;
+    }
+  | {
+      type: "PROSPECT_EVALUATED";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      prospectId: ProspectId;
+      evaluation: RecruitingEvaluation;
+      pointsSpent: number;
+    }
+  | {
+      type: "RECRUITING_INVESTMENT";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      prospectId: ProspectId;
+      pointsSpent: number;
+      totalInvestment: number;
+    }
+  | {
+      type: "PROSPECT_COMMITTED";
+      season: Season;
+      week: number;
+      prospectId: ProspectId;
+      programId: ProgramId;
+      score: number;
+      runnerUpProgramId: ProgramId | null;
+      runnerUpScore: number | null;
+    }
+  | { type: "PROSPECT_ENROLLED"; season: Season; prospectId: ProspectId; playerId: PlayerId; programId: ProgramId }
+  | {
+      type: "RECRUITING_POINTS_ADDED";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      pointsAdded: number;
+      pointsAvailable: number;
+    }
   | { type: "DEVELOPMENT_FOCUS_SET"; season: Season; week: number; programId: ProgramId; playerId: PlayerId; focus: DevelopmentFocus }
   | { type: "STAFF_ASSIGNED"; season: Season; week: number; programId: ProgramId; staffId: string; assignment: StaffAssignment }
   | { type: "FACILITY_UPGRADED"; season: Season; week: number; programId: ProgramId; facility: FacilityType; newLevel: number; cost: number }

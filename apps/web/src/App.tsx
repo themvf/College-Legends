@@ -9,11 +9,26 @@ import type {
   GameState,
   Player,
   PlayerMediaAction,
+  Position,
   ProgramId,
+  RecruitingEvaluation,
+  RecruitingSearchType,
   StaffAssignment
 } from "@college-legends/model";
 import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
-import { developmentPayoff, facilityPayoff, marqueeGameOptions, playerMediaPayoff, projectedDevelopmentPayoff, staffAssignmentPayoff, stadiumCapacity } from "@college-legends/simulation";
+import {
+  developmentPayoff,
+  facilityPayoff,
+  marqueeGameOptions,
+  playerMediaPayoff,
+  projectedDevelopmentPayoff,
+  projectedRecruitingOpenings,
+  prospectScoutingReport,
+  recruitingEvaluationCost,
+  recruitingSearchCost,
+  staffAssignmentPayoff,
+  stadiumCapacity
+} from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 
 type GameView = { state: GameState; playerProgramId: ProgramId; events: GameEvent[] };
@@ -24,6 +39,7 @@ const positionOrder: Player["position"][] = ["QB", "RB", "WR", "TE", "OL", "DL",
 const screens: Screen[] = ["DASHBOARD", "WEEKLY_RECAPS", "ROSTER", "DEPTH_CHART", "DEVELOPMENT", "PLAYER_MEDIA", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
 const developmentFocuses: DevelopmentFocus[] = ["BALANCED", "TECHNIQUE", "STRENGTH", "CONDITIONING"];
 const playerMediaActions: PlayerMediaAction[] = ["FOOTBALL_FOCUS", "MEDIA_DAY", "SOCIAL_MEDIA", "COMMUNITY_APPEARANCE"];
+const recruitingEvaluations: RecruitingEvaluation[] = ["BASIC", "ATHLETIC", "POSITION", "CHARACTER", "MEDICAL", "PROJECTION"];
 const staffAssignments: StaffAssignment[] = ["GAME_PREP", "PLAYER_DEVELOPMENT", "RECRUITING", "RECOVERY"];
 const facilities: FacilityType[] = ["TRAINING", "STADIUM", "ACADEMICS", "RECRUITING"];
 const starterCounts: Record<Player["position"], number> = { QB: 1, RB: 1, WR: 3, TE: 1, OL: 5, DL: 4, LB: 3, DB: 4, K: 1, P: 1 };
@@ -81,19 +97,15 @@ export function App(): ReactElement {
       : command.type === "ASSIGN_STAFF" ? `staff:${command.staffId}`
       : command.type === "UPGRADE_FACILITY" ? `facility:${command.facility}`
       : command.type === "SCHEDULE_MARQUEE_HOME_GAME" ? "marquee-game"
+      : command.type === "SEARCH_PROSPECTS" ? `recruit-search:${command.searchType}:${command.position ?? "ALL"}`
+      : command.type === "EVALUATE_PROSPECT" ? `recruit-eval:${command.prospectId}:${command.evaluation}`
+      : command.type === "INVEST_RECRUITING_POINTS" ? `recruit-invest:${command.prospectId}`
       : command.type === "OFFER_PROSPECT" ? `prospect:${command.prospectId}`
       : `${command.type}:${command.playerId}`;
     setPendingCommands((previous) => [
       ...previous.filter((item) => commandKey(item) !== key),
       command
     ]);
-  };
-  const toggleOffer = (prospectId: string): void => {
-    if (!game) return;
-    const key = `prospect:${prospectId}`;
-    setPendingCommands((previous) => previous.some((item) => commandKey(item) === key)
-      ? previous.filter((item) => commandKey(item) !== key)
-      : [...previous, { type: "OFFER_PROSPECT", programId: game.playerProgramId, prospectId }]);
   };
   const advance = (): void => {
     if (!game) return;
@@ -102,7 +114,7 @@ export function App(): ReactElement {
 
   if (!game) return <NewGame busy={busy} onStart={startGame} />;
   return <Dashboard game={game} screen={screen} busy={busy} error={error} pendingCommands={pendingCommands}
-    onNavigate={setScreen} onQueue={queue} onToggleOffer={toggleOffer} onBegin={begin} onAdvance={advance} />;
+    onNavigate={setScreen} onQueue={queue} onBegin={begin} onAdvance={advance} />;
 }
 
 function commandKey(command: GameCommand): string {
@@ -111,6 +123,9 @@ function commandKey(command: GameCommand): string {
   if (command.type === "ASSIGN_STAFF") return `staff:${command.staffId}`;
   if (command.type === "UPGRADE_FACILITY") return `facility:${command.facility}`;
   if (command.type === "SCHEDULE_MARQUEE_HOME_GAME") return "marquee-game";
+  if (command.type === "SEARCH_PROSPECTS") return `recruit-search:${command.searchType}:${command.position ?? "ALL"}`;
+  if (command.type === "EVALUATE_PROSPECT") return `recruit-eval:${command.prospectId}:${command.evaluation}`;
+  if (command.type === "INVEST_RECRUITING_POINTS") return `recruit-invest:${command.prospectId}`;
   if (command.type === "OFFER_PROSPECT") return `prospect:${command.prospectId}`;
   return `${command.type}:${command.playerId}`;
 }
@@ -134,15 +149,15 @@ function NewGame({ busy, onStart }: { busy: boolean; onStart: (path: CareerPath)
   </main>;
 }
 
-function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQueue, onToggleOffer, onBegin, onAdvance }: {
+function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQueue, onBegin, onAdvance }: {
   game: GameView; screen: Screen; busy: boolean; error: string | undefined; pendingCommands: GameCommand[];
-  onNavigate: (screen: Screen) => void; onQueue: (command: GameCommand) => void; onToggleOffer: (id: string) => void; onBegin: () => void; onAdvance: () => void;
+  onNavigate: (screen: Screen) => void; onQueue: (command: GameCommand) => void; onBegin: () => void; onAdvance: () => void;
 }): ReactElement {
   const program = game.state.programs[game.playerProgramId]!;
   const roster = useMemo(() => Object.values(game.state.players)
     .filter((player) => player.programId === program.id && player.eligibility.rosterStatus === "SCHOLARSHIP")
     .sort((a, b) => positionOrder.indexOf(a.position) - positionOrder.indexOf(b.position) || b.overall - a.overall), [game.state.players, program.id]);
-  const openScholarships = Math.max(0, program.scholarshipLimit - roster.length);
+  const incomingOpenings = projectedRecruitingOpenings(game.state, program.id);
   const isReview = game.state.phase === "ROSTER_REVIEW";
 
   return <main className="app-shell">
@@ -177,7 +192,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQ
     {screen === "DIVISIONS" && <Divisions game={game} />}
     {screen === "STAFF" && <Staff game={game} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "FINANCES" && <Finances game={game} pending={pendingCommands} onQueue={onQueue} />}
-    {screen === "RECRUITING" && <Recruiting game={game} locked={isReview || openScholarships === 0} openScholarships={openScholarships} pending={pendingCommands} onToggle={onToggleOffer} />}
+    {screen === "RECRUITING" && <Recruiting game={game} locked={isReview} incomingOpenings={incomingOpenings} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "INBOX" && <Inbox game={game} />}
   </main>;
 }
@@ -373,25 +388,128 @@ function Finances({ game, pending, onQueue }: { game: GameView; pending: GameCom
   </section>;
 }
 
-function Recruiting({ game, locked, openScholarships, pending, onToggle }: { game: GameView; locked: boolean; openScholarships: number; pending: GameCommand[]; onToggle: (id: string) => void }): ReactElement {
+function Recruiting({ game, locked, incomingOpenings, pending, onQueue }: {
+  game: GameView;
+  locked: boolean;
+  incomingOpenings: number;
+  pending: GameCommand[];
+  onQueue: (command: GameCommand) => void;
+}): ReactElement {
+  const [position, setPosition] = useState<Position>("QB");
   const program = game.state.programs[game.playerProgramId]!;
-  const prospects = Object.values(game.state.prospects).filter((prospect) => prospect.status === "AVAILABLE").sort((a, b) => b.potential - a.potential || b.overall - a.overall).slice(0, 24);
-  return <section className="panel table-panel"><SectionHeading eyebrow="Recruiting board" title={locked ? "Recruiting is not open yet" : "Available prospects"} detail={game.state.phase === "ROSTER_REVIEW" ? "Begin with the roster you inherited. No offers exist." : openScholarships === 0 ? "Your 85-player roster is full. Openings arrive after departures." : `${openScholarships} scholarship openings available.`} />
-    {!locked && <div className="data-table recruit-table"><div className="data-row data-header"><span>Prospect</span><span>Pos</span><span>OVR</span><span>POT</span><span>Interest</span><span>Offer</span></div>{prospects.map((prospect) => {
-      const selected = pending.some((item) => item.type === "OFFER_PROSPECT" && item.prospectId === prospect.id);
-      return <div className="data-row" key={prospect.id}><strong data-label="Prospect">{prospect.name}</strong><span data-label="Position">{prospect.position}</span><span data-label="Overall">{prospect.overall}</span><span data-label="Potential">{Math.round(prospect.potential)}</span><span data-label="Interest">{Math.round(prospect.interestByProgram[program.id] ?? 0)}</span><label className="offer-toggle"><input type="checkbox" checked={selected} onChange={() => onToggle(prospect.id)} /><span>{selected ? "Queued" : "Offer"}</span></label></div>;
-    })}</div>}</section>;
+  const recruiting = game.state.recruiting[program.id]!;
+  const queuedSpend = pending.reduce((sum, command) => sum + queuedRecruitingCost(command), 0);
+  const pointsAvailable = Math.max(0, recruiting.points - queuedSpend);
+  const prospects = recruiting.discoveredProspectIds
+    .map((prospectId) => game.state.prospects[prospectId])
+    .filter((prospect) => prospect && (prospect.status === "AVAILABLE" || prospect.signedProgramId === program.id))
+    .sort((left, right) => {
+      const leftReport = prospectScoutingReport(game.state, program.id, left!);
+      const rightReport = prospectScoutingReport(game.state, program.id, right!);
+      return Number(right!.status === "COMMITTED") - Number(left!.status === "COMMITTED")
+        || rightReport.pursuitPoints - leftReport.pursuitPoints
+        || left!.name.localeCompare(right!.name);
+    });
+  const commitments = Object.values(game.state.prospects).filter((prospect) =>
+    prospect.status === "COMMITTED" && prospect.signedProgramId === program.id
+  );
+  const queueSearch = (searchType: RecruitingSearchType): void => {
+    if (searchType === "POSITION") {
+      onQueue({ type: "SEARCH_PROSPECTS", programId: program.id, searchType, position });
+    } else {
+      onQueue({ type: "SEARCH_PROSPECTS", programId: program.id, searchType });
+    }
+  };
+
+  return <section className="recruiting-layout">
+    <article className="panel recruiting-command-center">
+      <div><p className="eyebrow">Prospect Market</p><h2>{locked ? "Recruiting opens with the season" : `${pointsAvailable} Recruiting Points available`}</h2>
+        <p className="muted">Use one shared resource to discover talent, unlock information, and entice recruits. Investments persist; committed freshmen enroll next season.</p></div>
+      <div className="recruiting-metrics">
+        <Metric label="Weekly production" value={`+${recruiting.weeklyPoints}`} />
+        <Metric label="Projected openings" value={String(incomingOpenings)} />
+        <Metric label="Committed" value={String(commitments.length)} />
+        <Metric label="Board" value={String(prospects.length)} />
+      </div>
+    </article>
+
+    {!locked && <article className="panel scouting-market">
+      <SectionHeading eyebrow="Scouting department" title="Find the next group" detail="Searches reveal prospects—not ratings. You decide which discoveries deserve deeper evaluation." />
+      <div className="scouting-actions">
+        <button disabled={pointsAvailable < recruitingSearchCost("LOCAL_REGION")} onClick={() => queueSearch("LOCAL_REGION")}>
+          <strong>Local region</strong><span>8 discoveries · {recruitingSearchCost("LOCAL_REGION")} pts</span>
+        </button>
+        <button disabled={pointsAvailable < recruitingSearchCost("SLEEPERS")} onClick={() => queueSearch("SLEEPERS")}>
+          <strong>Find sleepers</strong><span>6 high-upside discoveries · {recruitingSearchCost("SLEEPERS")} pts</span>
+        </button>
+        <button disabled={pointsAvailable < recruitingSearchCost("NATIONAL_SHOWCASE")} onClick={() => queueSearch("NATIONAL_SHOWCASE")}>
+          <strong>National showcase</strong><span>10 national names · {recruitingSearchCost("NATIONAL_SHOWCASE")} pts</span>
+        </button>
+        <div className="position-search"><select value={position} onChange={(event) => setPosition(event.target.value as Position)}>
+          {positionOrder.map((item) => <option key={item} value={item}>{item}</option>)}
+        </select><button disabled={pointsAvailable < recruitingSearchCost("POSITION")} onClick={() => queueSearch("POSITION")}>Scout position · {recruitingSearchCost("POSITION")} pts</button></div>
+      </div>
+    </article>}
+
+    {locked
+      ? <article className="panel"><SectionHeading eyebrow="Recruiting board" title="Review the inherited roster first" detail="Your scouting department begins work when you accept the roster and start the season." /></article>
+      : <div className="prospect-grid">{prospects.map((prospect) => {
+        const report = prospectScoutingReport(game.state, program.id, prospect!);
+        const queuedInvestment = pending.find((command): command is Extract<GameCommand, { type: "INVEST_RECRUITING_POINTS" }> =>
+          command.type === "INVEST_RECRUITING_POINTS" && command.prospectId === prospect!.id
+        );
+        const pendingEvaluations = pending.filter((command): command is Extract<GameCommand, { type: "EVALUATE_PROSPECT" }> =>
+          command.type === "EVALUATE_PROSPECT" && command.prospectId === prospect!.id
+        ).map((command) => command.evaluation);
+        const committed = prospect!.status === "COMMITTED";
+        return <article className={`panel prospect-card ${committed ? "committed" : ""}`} key={prospect!.id}>
+          <header><div><p className="eyebrow">{prospect!.reputation} · {prospect!.homeStateCode}</p><h2>{prospect!.name}</h2><p>{prospect!.position} · Scouted {report.scoutingPercent}%</p></div><strong>{committed ? "COMMITTED" : report.pursuitPoints ? `${report.pursuitPoints} PTS` : "NEW"}</strong></header>
+          <div className="intel-grid">
+            <p><span>Overall</span><strong>{report.overall}</strong></p>
+            <p><span>Potential</span><strong>{report.potential}</strong></p>
+            <p><span>Position skill</span><strong>{report.positionSkill}</strong></p>
+            <p><span>Athletic</span><strong>{report.athletic}</strong></p>
+            <p><span>Character</span><strong>{report.character}</strong></p>
+            <p><span>Medical</span><strong>{report.medical}</strong></p>
+          </div>
+          {report.priorities.length > 0 && <div className="recruit-fit"><span>Priorities</span><strong>{report.priorities.map(label).join(" · ")}</strong><span>Program fit</span><strong>{report.fitScore}/100</strong></div>}
+          {report.competition.length > 0 && <div className="competition"><span>Competition</span>{report.competition.map((entry) => <small key={entry.programId}>{game.state.programs[entry.programId]?.abbreviation}: {entry.points} pts</small>)}</div>}
+          {!committed && <><div className="evaluation-actions">{recruitingEvaluations.map((evaluation) => {
+            const complete = game.state.recruiting[program.id]!.scoutingByProspect[prospect!.id]!.evaluations.includes(evaluation);
+            const queued = pendingEvaluations.includes(evaluation);
+            const cost = recruitingEvaluationCost(evaluation);
+            return <button disabled={complete || queued || pointsAvailable < cost} key={evaluation} onClick={() => onQueue({ type: "EVALUATE_PROSPECT", programId: program.id, prospectId: prospect!.id, evaluation })}>
+              {complete ? `${label(evaluation)} ✓` : queued ? `${label(evaluation)} queued` : `${label(evaluation)} · ${cost}`}
+            </button>;
+          })}</div>
+          <div className="pursuit-actions"><span>{incomingOpenings > 0 ? "Entice him to join" : "Incoming class full"}</span>{[5, 10, 20].map((points) => <button disabled={incomingOpenings <= 0 || pointsAvailable < points} key={points} onClick={() => onQueue({ type: "INVEST_RECRUITING_POINTS", programId: program.id, prospectId: prospect!.id, points })}>+{points}</button>)}{queuedInvestment && <strong>+{queuedInvestment.points} queued</strong>}</div></>}
+        </article>;
+      })}</div>}
+  </section>;
 }
 
 function Inbox({ game }: { game: GameView }): ReactElement {
-  const events = [...game.state.eventHistory].reverse().filter((event) => event.type !== "PLAYER_DEVELOPED").slice(0, 50);
+  const events = game.state.eventHistory.filter((event) => event.type !== "PLAYER_DEVELOPED").slice(-500);
   return <section className="panel"><p className="eyebrow">Program inbox</p><h2>Decisions, results, and reports</h2>{events.length ? <EventList events={events} game={game} /> : <p className="muted">Your inbox is clear. Begin the season to receive weekly reports.</p>}</section>;
 }
 
 function EventList({ events, game }: { events: GameEvent[]; game: GameView }): ReactElement {
-  const visible = events.filter((event) => event.type !== "PLAYER_DEVELOPED").slice(-12).reverse();
+  const visible = events.filter((event) => event.type !== "PLAYER_DEVELOPED" && eventRelevantToProgram(event, game)).slice(-12).reverse();
   if (!visible.length) return <p className="muted">No new reports.</p>;
   return <div className="inbox-list">{visible.map((event, index) => <article key={`${event.type}-${"week" in event ? event.week : "season" in event ? event.season : 0}-${index}`}><span>{eventIcon(event)}</span><div><strong>{eventTitle(event)}</strong><p>{eventText(event, game)}</p></div></article>)}</div>;
+}
+
+function eventRelevantToProgram(event: GameEvent, game: GameView): boolean {
+  const programId = game.playerProgramId;
+  if (event.type === "RECRUITING_CONTEST_RESOLVED") return event.offeredBy.includes(programId);
+  if (event.type === "PROSPECT_COMMITTED") {
+    return event.programId === programId || game.state.recruiting[programId]?.discoveredProspectIds.includes(event.prospectId) === true;
+  }
+  if (event.type === "PROSPECTS_DISCOVERED" || event.type === "PROSPECT_EVALUATED" || event.type === "RECRUITING_INVESTMENT"
+    || event.type === "RECRUITING_POINTS_ADDED" || event.type === "PROSPECT_ENROLLED" || event.type === "COMMAND_REJECTED") {
+    return event.programId === programId;
+  }
+  return true;
 }
 
 function eventIcon(event: GameEvent): string {
@@ -402,7 +520,9 @@ function eventIcon(event: GameEvent): string {
   if (event.type === "PLAYER_RECOVERED") return "✓";
   if (event.type === "WEEKLY_FINANCES") return "＄";
   if (event.type === "FACILITY_UPGRADED") return "▲";
-  if (event.type === "PROSPECT_SIGNED") return "★";
+  if (event.type === "PROSPECT_SIGNED" || event.type === "PROSPECT_COMMITTED" || event.type === "PROSPECT_ENROLLED") return "★";
+  if (event.type === "PROSPECTS_DISCOVERED" || event.type === "PROSPECT_EVALUATED") return "⌕";
+  if (event.type === "RECRUITING_INVESTMENT" || event.type === "RECRUITING_POINTS_ADDED") return "R";
   if (event.type === "PLAYER_BRAND_UPDATED" || event.type === "PLAYER_MEDIA_ACTION_SET") return "✦";
   if (event.type === "COMMAND_REJECTED") return "!";
   return "✓";
@@ -425,6 +545,12 @@ function eventText(event: GameEvent, game: GameView): string {
   if (event.type === "PLAYER_INJURED") return `${game.state.players[event.playerId]?.name ?? "Player"} will miss approximately ${event.weeks} week${event.weeks === 1 ? "" : "s"} (${event.risk}% risk).`;
   if (event.type === "PLAYER_RECOVERED") return `${game.state.players[event.playerId]?.name ?? "Player"} has returned to full availability.`;
   if (event.type === "PROSPECT_SIGNED") return `${game.state.prospects[event.prospectId]?.name ?? "Prospect"} signed with ${game.state.programs[event.programId]?.name}.`;
+  if (event.type === "PROSPECTS_DISCOVERED") return `${event.prospectIds.length} new prospects found through ${label(event.searchType)} scouting for ${event.pointsSpent} points.`;
+  if (event.type === "PROSPECT_EVALUATED") return `${label(event.evaluation)} report unlocked for ${game.state.prospects[event.prospectId]?.name ?? "prospect"} at a cost of ${event.pointsSpent} points.`;
+  if (event.type === "RECRUITING_INVESTMENT") return `${event.pointsSpent} points invested in ${game.state.prospects[event.prospectId]?.name ?? "prospect"} · ${event.totalInvestment} total.`;
+  if (event.type === "PROSPECT_COMMITTED") return `${game.state.prospects[event.prospectId]?.name ?? "Prospect"} committed to ${game.state.programs[event.programId]?.name}; he will enroll next season.`;
+  if (event.type === "PROSPECT_ENROLLED") return `${game.state.prospects[event.prospectId]?.name ?? "Freshman"} joined ${game.state.programs[event.programId]?.name}.`;
+  if (event.type === "RECRUITING_POINTS_ADDED") return `Scouting generated ${event.pointsAdded} points · ${event.pointsAvailable} available for next week.`;
   if (event.type === "COMMAND_REJECTED") return event.reason;
   if (event.type === "PLAYER_DEPARTED") return `${game.state.players[event.playerId]?.name ?? "Player"} left the program.`;
   if (event.type === "RECRUITING_CONTEST_RESOLVED") return `${game.state.prospects[event.prospectId]?.name ?? "Prospect"} chose ${game.state.programs[event.winnerProgramId]?.name}.`;
@@ -446,6 +572,13 @@ function signedMoney(value: number): string { return `${value > 0 ? "+" : ""}${m
 function compactNumber(value: number): string { return Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value); }
 function signedNumber(value: number): string { return `${value > 0 ? "+" : ""}${value.toLocaleString()}`; }
 function signed(value: number): string { return `${value > 0 ? "+" : ""}${value}`; }
+function queuedRecruitingCost(command: GameCommand): number {
+  if (command.type === "SEARCH_PROSPECTS") return recruitingSearchCost(command.searchType);
+  if (command.type === "EVALUATE_PROSPECT") return recruitingEvaluationCost(command.evaluation);
+  if (command.type === "INVEST_RECRUITING_POINTS") return command.points;
+  if (command.type === "OFFER_PROSPECT") return 10;
+  return 0;
+}
 function formatRatingChanges(changes: Partial<Record<keyof Player["ratings"], number>>): string {
   const names: Record<keyof Player["ratings"], string> = { technique: "TEC", strength: "STR", conditioning: "CON", injuryPrevention: "INJ", armStrength: "ARM" };
   return (Object.entries(changes) as [keyof Player["ratings"], number][]).map(([rating, value]) => `${names[rating]} +${value}`).join(" · ");
