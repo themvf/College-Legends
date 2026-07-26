@@ -7,7 +7,9 @@
     "build": "tsc -b",
     "check": "tsc -b --pretty false",
     "test": "pnpm build && node --test tests/**/*.test.mjs",
-    "sim": "pnpm build && node apps/simulator-cli/dist/index.js"
+    "sim": "pnpm build && node apps/simulator-cli/dist/index.js",
+    "web": "pnpm --filter @college-legends/web dev",
+    "web:build": "pnpm --filter @college-legends/web build"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

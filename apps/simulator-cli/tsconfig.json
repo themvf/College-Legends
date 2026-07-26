@@ -1,1 +1,1 @@
-{"extends":"../../tsconfig.base.json","compilerOptions":{"composite":true,"rootDir":"src","outDir":"dist"},"references":[{"path":"../../packages/model"},{"path":"../../packages/analytics"},{"path":"../../packages/simulation"}],"include":["src"]}
+{"extends":"../../tsconfig.base.json","compilerOptions":{"composite":true,"rootDir":"src","outDir":"dist"},"references":[{"path":"../../packages/model"},{"path":"../../packages/analytics"},{"path":"../../packages/simulation"},{"path":"../../packages/ai"}],"include":["src"]}

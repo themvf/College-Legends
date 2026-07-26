@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { GameEvent } from "@college-legends/model";
 import { summarize } from "@college-legends/analytics";
+import { planWeeklyCommands } from "@college-legends/ai";
 import { advanceWeek, createFictionalLeague } from "@college-legends/simulation";
 
 const args = new Map<string, string>();
@@ -15,7 +16,7 @@ const output = resolve(String(args.get("output") ?? "reports/latest"));
 let state = createFictionalLeague(seed);
 const events: GameEvent[] = [];
 const initialSeason = state.season;
-while (state.season < initialSeason + seasons) { const result = advanceWeek(state); state = result.state; events.push(...result.events); }
+while (state.season < initialSeason + seasons) { const result = advanceWeek(state, planWeeklyCommands(state)); state = result.state; events.push(...result.events); }
 const metrics = summarize(state, events, seasons);
 await mkdir(output, { recursive: true });
 await writeFile(resolve(output, "metrics.json"), `${JSON.stringify({ seed, metrics }, null, 2)}\n`);

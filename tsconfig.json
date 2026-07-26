@@ -6,6 +6,7 @@
     { "path": "packages/simulation" },
     { "path": "packages/ai" },
     { "path": "packages/analytics" },
-    { "path": "apps/simulator-cli" }
+    { "path": "apps/simulator-cli" },
+    { "path": "apps/web" }
   ]
 }

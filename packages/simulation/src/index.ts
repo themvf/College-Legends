@@ -1,4 +1,4 @@
-import type { GameCommand, GameEvent, GameState, Player, Program, SimulationResult } from "@college-legends/model";
+import type { GameCommand, GameEvent, GameState, Player, Program, Prospect, SimulationResult } from "@college-legends/model";
 import { AddressableRng } from "./rng.js";
 
 export { AddressableRng } from "./rng.js";
@@ -10,7 +10,7 @@ export function createFictionalLeague(rootSeed: string, programCount = 12): Game
   const rng = new AddressableRng(rootSeed).fork("league-generation");
   const state: GameState = {
     identity: { rootSeed, balanceConfiguration: { version: "0.1.0", weeklyDevelopment: { base: 0.012, coachWeight: 0.018, workEthicWeight: 0.022, fatigueFloor: 0.62, maximum: 0.09 }, game: { possessions: 24, homeFieldAdvantage: 1.8, upsetNoise: 11 } }, simulationVersion: "0.1.0" },
-    season: 2027, week: 1, programs: {}, players: {}, schedule: []
+    season: 2027, week: 1, programs: {}, players: {}, prospects: {}, schedule: []
   };
   const positions: Player["position"][] = ["QB", "RB", "WR", "OL", "DL", "LB", "DB"];
   for (let index = 0; index < programCount; index += 1) {
@@ -24,6 +24,7 @@ export function createFictionalLeague(rootSeed: string, programCount = 12): Game
       state.players[playerId] = { id: playerId, name: `Player ${index + 1}-${rosterIndex + 1}`, programId: id, position: positions[rosterIndex % positions.length]!, overall, potential: clamp(overall + rng.between(`${playerId}:potential`, 2, 16), overall, 99), workEthic: rng.between(`${playerId}:work-ethic`, 0.2, 1), fatigue: 0, eligibility: { cohortYear: 2027 - (rosterIndex % 4), seasonsEnrolled: rosterIndex % 4, seasonsParticipated: rosterIndex % 4, seasonsRemaining: 4 - (rosterIndex % 4), redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" } };
     }
   }
+  generateProspects(state, rng.fork("prospects"), programCount * 30, "initial");
   buildSeasonSchedule(state);
   return state;
 }
@@ -46,7 +47,7 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   const state = clone<GameState>(input);
   const events: GameEvent[] = [];
   const rng = new AddressableRng(state.identity.rootSeed).fork(String(state.season), String(state.week));
-  applyCommands(state, commands, events);
+  resolveCommands(state, commands, rng.fork("commands"), events);
   developPlayers(state, rng.fork("development"), events);
   resolveScheduledGames(state, rng.fork("games"), events);
   state.week += 1;
@@ -54,11 +55,35 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   return { state, events };
 }
 
-function applyCommands(state: GameState, commands: readonly GameCommand[], events: GameEvent[]): void {
+function resolveCommands(state: GameState, commands: readonly GameCommand[], rng: AddressableRng, events: GameEvent[]): void {
+  const offers = new Map<string, Set<string>>();
   for (const command of commands) {
-    const player = "playerId" in command ? state.players[command.playerId] : state.players[command.prospectId];
     const program = state.programs[command.programId];
-    if (!player || !program || player.programId !== program.id || command.type !== "RED_SHIRT") {
+    if (!program) {
+      events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Program does not exist." });
+      continue;
+    }
+    if (command.type === "OFFER_PROSPECT") {
+      const prospect = state.prospects[command.prospectId];
+      if (!prospect || prospect.status !== "AVAILABLE") {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Prospect is unavailable." });
+        continue;
+      }
+      if (scholarshipCount(state, program.id) >= program.scholarshipLimit) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Program has no scholarship available." });
+        continue;
+      }
+      const bidders = offers.get(prospect.id) ?? new Set<string>();
+      if (bidders.has(program.id)) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Program already offered this prospect this week." });
+      } else {
+        bidders.add(program.id);
+        offers.set(prospect.id, bidders);
+      }
+      continue;
+    }
+    const player = state.players[command.playerId];
+    if (!player || player.programId !== program.id) {
       events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Command is not valid for this roster." });
       continue;
     }
@@ -67,6 +92,56 @@ function applyCommands(state: GameState, commands: readonly GameCommand[], event
       continue;
     }
     player.eligibility.redshirtStatus = "USED";
+  }
+  resolveRecruitingContests(state, offers, rng.fork("recruiting"), events);
+}
+
+/**
+ * Every valid offer is collected before resolution.  A prospect's choice never
+ * depends on command ordering or program-array order; the only tie breaker is
+ * an addressable draw derived from the prospect and school IDs.
+ */
+function resolveRecruitingContests(state: GameState, offers: ReadonlyMap<string, ReadonlySet<string>>, rng: AddressableRng, events: GameEvent[]): void {
+  const resolved = [...offers.entries()].map(([prospectId, bidderSet]) => {
+    const prospect = state.prospects[prospectId]!;
+    const offeredBy = [...bidderSet].sort();
+    const scores = Object.fromEntries(offeredBy.map((programId) => [programId, recruitingScore(state, prospect, programId, rng)]));
+    const winnerProgramId = offeredBy.reduce((best, candidate) => scores[candidate]! > scores[best]! || (scores[candidate] === scores[best] && candidate < best) ? candidate : best);
+    return { prospect, offeredBy, scores, winnerProgramId, priority: rng.at(`${prospectId}:commitment-priority`) };
+  }).sort((left, right) => left.priority - right.priority || left.prospect.id.localeCompare(right.prospect.id));
+
+  for (const contest of resolved) {
+    const program = state.programs[contest.winnerProgramId]!;
+    if (scholarshipCount(state, program.id) >= program.scholarshipLimit) continue;
+    const playerId = `player:${contest.prospect.id}`;
+    state.players[playerId] = prospectToPlayer(contest.prospect, playerId, program.id, state.season);
+    contest.prospect.status = "SIGNED";
+    contest.prospect.signedProgramId = program.id;
+    events.push({ type: "RECRUITING_CONTEST_RESOLVED", season: state.season, week: state.week, prospectId: contest.prospect.id, offeredBy: contest.offeredBy, winnerProgramId: program.id, scores: contest.scores });
+    events.push({ type: "PROSPECT_SIGNED", season: state.season, week: state.week, prospectId: contest.prospect.id, playerId, programId: program.id });
+  }
+}
+
+function recruitingScore(state: GameState, prospect: Prospect, programId: string, rng: AddressableRng): number {
+  const tierBonus = state.programs[programId]!.tier === "POWER" ? 12 : state.programs[programId]!.tier === "MID" ? 6 : 0;
+  return Number((prospect.interestByProgram[programId]! + tierBonus + rng.between(`${prospect.id}:${programId}:decision-noise`, -7, 7)).toFixed(3));
+}
+
+function scholarshipCount(state: GameState, programId: string): number {
+  return Object.values(state.players).filter((player) => player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP").length;
+}
+
+function prospectToPlayer(prospect: Prospect, id: string, programId: string, season: number): Player {
+  return { id, name: prospect.name, programId, position: prospect.position, overall: prospect.overall, potential: prospect.potential, workEthic: prospect.workEthic, fatigue: 0, eligibility: { cohortYear: season, seasonsEnrolled: 0, seasonsParticipated: 0, seasonsRemaining: 4, redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" } };
+}
+
+function generateProspects(state: GameState, rng: AddressableRng, count: number, cohort: string): void {
+  const positions: Player["position"][] = ["QB", "RB", "WR", "OL", "DL", "LB", "DB"];
+  for (let index = 0; index < count; index += 1) {
+    const id = `prospect-${cohort}-${index + 1}`;
+    const overall = Math.round(rng.between(`${id}:overall`, 52, 79));
+    const interestByProgram = Object.fromEntries(Object.keys(state.programs).map((programId) => [programId, Number(rng.between(`${id}:${programId}:interest`, 35, 88).toFixed(3))]));
+    state.prospects[id] = { id, name: `Prospect ${index + 1}`, position: positions[index % positions.length]!, overall, potential: clamp(overall + rng.between(`${id}:potential`, 4, 20), overall, 99), workEthic: rng.between(`${id}:work-ethic`, 0.2, 1), interestByProgram, status: "AVAILABLE", signedProgramId: null };
   }
 }
 
@@ -125,5 +200,6 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
   }
   state.season += 1; state.week = 1;
   for (const program of Object.values(state.programs)) { program.wins = 0; program.losses = 0; }
+  generateProspects(state, new AddressableRng(state.identity.rootSeed).fork("recruiting-cohort", String(state.season)), Object.keys(state.programs).length * 15, String(state.season));
   buildSeasonSchedule(state);
 }
