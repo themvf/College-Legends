@@ -1,0 +1,16 @@
+{
+  "name": "college-legends",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "build": "tsc -b",
+    "check": "tsc -b --pretty false",
+    "test": "pnpm build && node --test tests/**/*.test.mjs",
+    "sim": "pnpm build && node apps/simulator-cli/dist/index.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}

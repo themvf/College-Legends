@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/model" },
+    { "path": "packages/content" },
+    { "path": "packages/simulation" },
+    { "path": "packages/ai" },
+    { "path": "packages/analytics" },
+    { "path": "apps/simulator-cli" }
+  ]
+}

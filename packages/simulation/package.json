@@ -1,0 +1,1 @@
+{"name":"@college-legends/simulation","private":true,"type":"module","exports":"./dist/index.js","dependencies":{"@college-legends/model":"workspace:*","@college-legends/content":"workspace:*"}}

@@ -1,0 +1,1 @@
+{"name":"@college-legends/simulator-cli","private":true,"type":"module","dependencies":{"@college-legends/model":"workspace:*","@college-legends/analytics":"workspace:*","@college-legends/simulation":"workspace:*"}}
