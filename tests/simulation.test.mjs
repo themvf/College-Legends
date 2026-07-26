@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, ROSTER_COMPOSITION, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
+import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, ROSTER_COMPOSITION, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -217,4 +217,56 @@ test("stadium levels directly increase home-game revenue", () => {
   const highFinance = advanceWeek(levelFive).events.find((event) => event.type === "WEEKLY_FINANCES" && event.programId === homeProgramId);
   assert.ok(lowFinance && highFinance);
   assert.ok(highFinance.revenue > lowFinance.revenue);
+});
+
+test("weekly recaps connect results to fans, attendance, press, and game-day revenue", () => {
+  const state = activeLeague("weekly-recap-loop", 12);
+  const result = advanceWeek(state);
+  const recaps = result.events.filter((event) => event.type === "WEEKLY_RECAP");
+  assert.equal(recaps.length, Object.keys(state.programs).length);
+  const homeRecap = recaps.find((recap) => recap.homeGame);
+  assert.ok(homeRecap);
+  assert.ok(homeRecap.attendance > 0 && homeRecap.attendance <= homeRecap.capacity);
+  assert.ok(homeRecap.ticketRevenue > 0);
+  assert.ok(homeRecap.concessionRevenue > 0);
+  for (const recap of recaps.filter((item) => item.result !== "BYE")) {
+    assert.equal(Math.sign(recap.fanChange), recap.result === "WIN" ? 1 : -1);
+    assert.equal(Math.sign(recap.localPressChange), recap.result === "WIN" ? 1 : -1);
+  }
+});
+
+test("a preseason guarantee buys a Top-25 home game with asymmetric recognition payoff", () => {
+  const preseason = createFictionalLeague("marquee-upset");
+  const host = Object.values(preseason.programs).find((program) => program.tier === "LOW");
+  assert.ok(host);
+  const option = marqueeGameOptions(preseason, host.id)[0];
+  assert.ok(option);
+  const openingBudget = host.budget;
+  let state = beginSeason(preseason, [{ type: "SCHEDULE_MARQUEE_HOME_GAME", programId: host.id, opponentProgramId: option.opponentProgramId }]);
+  const scheduled = state.eventHistory.find((event) => event.type === "MARQUEE_GAME_SCHEDULED" && event.programId === host.id);
+  assert.ok(scheduled);
+  assert.equal(state.programs[host.id].budget, openingBudget - option.guarantee);
+  const marquee = state.schedule.find((game) => game.matchupType === "MARQUEE" && game.homeProgramId === host.id);
+  assert.ok(marquee && marquee.awayProgramId === option.opponentProgramId);
+
+  for (const player of Object.values(state.players)) {
+    if (player.programId === host.id) {
+      player.overall = 99;
+      for (const rating of Object.keys(player.ratings)) player.ratings[rating] = 99;
+    } else if (player.programId === option.opponentProgramId) {
+      player.overall = 40;
+      for (const rating of Object.keys(player.ratings)) player.ratings[rating] = 40;
+    }
+  }
+  while (state.week <= marquee.week) {
+    const result = advanceWeek(state);
+    state = result.state;
+    const recap = result.events.find((event) => event.type === "WEEKLY_RECAP" && event.programId === host.id && event.marqueeGame);
+    if (!recap) continue;
+    assert.equal(recap.result, "WIN");
+    assert.ok(recap.nationalPressChange >= 20);
+    assert.ok(recap.fanChange > Math.round(recap.fansBefore * 0.05));
+    return;
+  }
+  assert.fail("Marquee game recap was not generated.");
 });

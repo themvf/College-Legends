@@ -2,7 +2,7 @@ import type { CareerPath, GameCommand, GameEvent, GameState, ProgramId } from "@
 
 export type WorkerRequest =
   | { type: "CREATE_GAME"; requestId: string; careerPath: CareerPath; seed: string }
-  | { type: "BEGIN_SEASON"; requestId: string; playerProgramId: ProgramId }
+  | { type: "BEGIN_SEASON"; requestId: string; playerProgramId: ProgramId; commands: GameCommand[] }
   | { type: "ADVANCE_WEEK"; requestId: string; playerProgramId: ProgramId; commands: GameCommand[] };
 
 export type WorkerResponse =

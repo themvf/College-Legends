@@ -29,8 +29,9 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
     }
     if (!activeState) throw new Error("Create a game before advancing the simulation.");
     if (request.type === "BEGIN_SEASON") {
-      activeState = beginSeason(activeState);
-      reply({ type: "COMPLETE", requestId: request.requestId, state: activeState, events: [] });
+      const historyLength = activeState.eventHistory.length;
+      activeState = beginSeason(activeState, request.commands);
+      reply({ type: "COMPLETE", requestId: request.requestId, state: activeState, events: activeState.eventHistory.slice(historyLength) });
       return;
     }
     const aiCommands = planWeeklyCommands(activeState, request.playerProgramId);

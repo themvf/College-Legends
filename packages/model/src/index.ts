@@ -80,6 +80,11 @@ export interface Program {
   coachSecurity: number;
   prestige: number;
   fanSupport: number;
+  /** The addressable audience that can turn into attendance and game-day revenue. */
+  fanBase: number;
+  localPress: number;
+  nationalPress: number;
+  nationalRank: number;
   weeklyRevenue: number;
   weeklyExpenses: number;
   facilities: Record<FacilityType, number>;
@@ -90,7 +95,10 @@ export interface ScheduledGame {
   week: number;
   homeProgramId: ProgramId;
   awayProgramId: ProgramId;
-  matchupType: "DIVISION" | "CROSS_DIVISION";
+  matchupType: "DIVISION" | "CROSS_DIVISION" | "MARQUEE";
+  /** Paid by the home program during preseason to bring a ranked visitor to campus. */
+  guaranteePaid: number;
+  marqueeOpponentRank: number | null;
   played: boolean;
   homeScore: number | null;
   awayScore: number | null;
@@ -140,7 +148,8 @@ export type GameCommand =
   | { type: "RED_SHIRT"; programId: ProgramId; playerId: PlayerId }
   | { type: "SET_DEVELOPMENT_FOCUS"; programId: ProgramId; playerId: PlayerId; focus: DevelopmentFocus }
   | { type: "ASSIGN_STAFF"; programId: ProgramId; staffId: string; assignment: StaffAssignment }
-  | { type: "UPGRADE_FACILITY"; programId: ProgramId; facility: FacilityType };
+  | { type: "UPGRADE_FACILITY"; programId: ProgramId; facility: FacilityType }
+  | { type: "SCHEDULE_MARQUEE_HOME_GAME"; programId: ProgramId; opponentProgramId: ProgramId };
 
 export type GameEvent =
   | {
@@ -174,7 +183,32 @@ export type GameEvent =
   | { type: "DEVELOPMENT_FOCUS_SET"; season: Season; week: number; programId: ProgramId; playerId: PlayerId; focus: DevelopmentFocus }
   | { type: "STAFF_ASSIGNED"; season: Season; week: number; programId: ProgramId; staffId: string; assignment: StaffAssignment }
   | { type: "FACILITY_UPGRADED"; season: Season; week: number; programId: ProgramId; facility: FacilityType; newLevel: number; cost: number }
+  | { type: "MARQUEE_GAME_SCHEDULED"; season: Season; programId: ProgramId; opponentProgramId: ProgramId; week: number; guarantee: number; opponentRank: number }
   | { type: "WEEKLY_FINANCES"; season: Season; week: number; programId: ProgramId; revenue: number; expenses: number; net: number }
+  | {
+      type: "WEEKLY_RECAP";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      result: "WIN" | "LOSS" | "BYE";
+      opponentProgramId: ProgramId | null;
+      opponentRank: number | null;
+      homeGame: boolean;
+      marqueeGame: boolean;
+      scoreFor: number | null;
+      scoreAgainst: number | null;
+      fansBefore: number;
+      fansAfter: number;
+      fanChange: number;
+      attendance: number;
+      capacity: number;
+      ticketRevenue: number;
+      concessionRevenue: number;
+      localPressChange: number;
+      nationalPressChange: number;
+      guaranteePaid: number;
+      weeklyNet: number;
+    }
   | { type: "COMMAND_REJECTED"; programId: ProgramId; command: GameCommand; reason: string };
 
 export interface SimulationResult { state: GameState; events: GameEvent[]; }

@@ -31,6 +31,7 @@ export const FACILITY_UPGRADE_COST: Readonly<Record<number, number>> = {
 const STAFF_ROLES: readonly StaffRole[] = ["HEAD_COACH", "OFFENSIVE_COORDINATOR", "DEFENSIVE_COORDINATOR", "STRENGTH_COACH"];
 const REGULAR_SEASON_WEEKS = [1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14] as const;
 const DIVISION_GAME_COUNT = 8;
+const STADIUM_CAPACITY_BY_LEVEL: Readonly<Record<number, number>> = { 1: 25_000, 2: 36_000, 3: 50_000, 4: 68_000, 5: 88_000 };
 
 export interface DevelopmentPayoff {
   ratingChanges: Partial<Record<PlayerRating, number>>;
@@ -106,6 +107,14 @@ export function facilityPayoff(facility: FacilityType, level: number): string {
   return `+${Math.max(0, level - 1) * 2} recruiting score on every offer`;
 }
 
+export function stadiumCapacity(level: number): number {
+  return STADIUM_CAPACITY_BY_LEVEL[clamp(Math.round(level), 1, 5)]!;
+}
+
+export function marqueeGuarantee(rank: number): number {
+  return Math.round(500_000 + (25 - clamp(rank, 1, 25)) * (1_000_000 / 24));
+}
+
 export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL_PROGRAMS.length): GameState {
   const selectedPrograms = FICTIONAL_PROGRAMS.slice(0, clamp(Math.trunc(programCount), 2, FICTIONAL_PROGRAMS.length));
   const rng = new AddressableRng(rootSeed).fork("league-generation");
@@ -144,6 +153,10 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       coachSecurity: tier === "POWER" ? 45 : tier === "MID" ? 65 : 92,
       prestige: tier === "POWER" ? 88 : tier === "MID" ? 72 : 55,
       fanSupport: tier === "POWER" ? 91 : tier === "MID" ? 70 : 48,
+      fanBase: tier === "POWER" ? 92_000 : tier === "MID" ? 55_000 : 27_000,
+      localPress: tier === "POWER" ? 82 : tier === "MID" ? 55 : 32,
+      nationalPress: tier === "POWER" ? 80 : tier === "MID" ? 38 : 12,
+      nationalRank: index + 1,
       weeklyRevenue: tier === "POWER" ? 1_200_000 : tier === "MID" ? 520_000 : 210_000,
       weeklyExpenses: tier === "POWER" ? 940_000 : tier === "MID" ? 430_000 : 185_000,
       facilities: { TRAINING: facilityLevel, STADIUM: facilityLevel, ACADEMICS: facilityLevel, RECRUITING: facilityLevel }
@@ -182,6 +195,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       };
     }
   }
+  updateNationalRankings(state);
   const actualProgramCount = selectedPrograms.length;
   generateProspects(state, rng.fork("prospects"), actualProgramCount * 30, "initial", actualProgramCount * (STARTING_ROSTER_SIZE + STAFF_ROLES.length), firstNameOffset, lastNameOffset);
   buildSeasonSchedule(state);
@@ -200,13 +214,103 @@ function createPlayerRatings(overall: number, position: Position, rng: Addressab
   };
 }
 
-export function beginSeason(input: Readonly<GameState>): GameState {
+export function beginSeason(input: Readonly<GameState>, commands: readonly GameCommand[] = []): GameState {
   const state = clone<GameState>(input);
   if (state.phase === "ROSTER_REVIEW") {
+    const events: GameEvent[] = [];
+    for (const command of commands) {
+      if (command.type === "SCHEDULE_MARQUEE_HOME_GAME") {
+        scheduleMarqueeHomeGame(state, command.programId, command.opponentProgramId, events);
+      } else {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Only preseason scheduling decisions can be made before the season begins." });
+      }
+    }
+    state.eventHistory.push(...events);
     state.phase = "REGULAR_SEASON";
     state.week = 1;
   }
   return state;
+}
+
+export interface MarqueeGameOption {
+  opponentProgramId: string;
+  rank: number;
+  guarantee: number;
+  week: number;
+}
+
+export function marqueeGameOptions(state: Readonly<GameState>, hostProgramId: string): MarqueeGameOption[] {
+  if (state.phase !== "ROSTER_REVIEW") return [];
+  const host = state.programs[hostProgramId];
+  if (!host) return [];
+  return Object.values(state.programs)
+    .filter((program) => program.id !== hostProgramId && program.tier === "POWER" && program.nationalRank <= 25)
+    .map((program) => {
+      const swap = findMarqueeSwap(state, hostProgramId, program.id);
+      return swap ? { opponentProgramId: program.id, rank: program.nationalRank, guarantee: marqueeGuarantee(program.nationalRank), week: state.schedule[swap.hostGameIndex]!.week } : null;
+    })
+    .filter((option): option is MarqueeGameOption => option !== null && option.guarantee <= host.budget)
+    .sort((left, right) => left.rank - right.rank);
+}
+
+function scheduleMarqueeHomeGame(state: GameState, hostProgramId: string, opponentProgramId: string, events: GameEvent[]): void {
+  const host = state.programs[hostProgramId];
+  const opponent = state.programs[opponentProgramId];
+  const command: GameCommand = { type: "SCHEDULE_MARQUEE_HOME_GAME", programId: hostProgramId, opponentProgramId };
+  if (!host || !opponent || opponent.tier !== "POWER" || opponent.nationalRank > 25) {
+    events.push({ type: "COMMAND_REJECTED", programId: hostProgramId, command, reason: "Choose an available Top-25 power program." });
+    return;
+  }
+  const guarantee = marqueeGuarantee(opponent.nationalRank);
+  if (host.budget < guarantee) {
+    events.push({ type: "COMMAND_REJECTED", programId: hostProgramId, command, reason: "The program cannot afford this appearance guarantee." });
+    return;
+  }
+  const swap = findMarqueeSwap(state, hostProgramId, opponentProgramId);
+  if (!swap) {
+    events.push({ type: "COMMAND_REJECTED", programId: hostProgramId, command, reason: "No compatible cross-division date is available for this matchup." });
+    return;
+  }
+  const hostGame = state.schedule[swap.hostGameIndex]!;
+  const opponentGame = state.schedule[swap.opponentGameIndex]!;
+  const displacedVisitor = hostGame.awayProgramId;
+  const displacedOpponent = opponentGame.homeProgramId === opponentProgramId ? opponentGame.awayProgramId : opponentGame.homeProgramId;
+  hostGame.awayProgramId = opponentProgramId;
+  hostGame.matchupType = "MARQUEE";
+  hostGame.guaranteePaid = guarantee;
+  hostGame.marqueeOpponentRank = opponent.nationalRank;
+  opponentGame.homeProgramId = displacedOpponent;
+  opponentGame.awayProgramId = displacedVisitor;
+  host.budget -= guarantee;
+  events.push({
+    type: "MARQUEE_GAME_SCHEDULED",
+    season: state.season,
+    programId: host.id,
+    opponentProgramId: opponent.id,
+    week: hostGame.week,
+    guarantee,
+    opponentRank: opponent.nationalRank
+  });
+}
+
+function findMarqueeSwap(state: Readonly<GameState>, hostProgramId: string, opponentProgramId: string): { hostGameIndex: number; opponentGameIndex: number } | null {
+  const existingPair = (left: string, right: string, ignored: ReadonlySet<number>): boolean =>
+    state.schedule.some((game, index) => !ignored.has(index) &&
+      ((game.homeProgramId === left && game.awayProgramId === right) || (game.homeProgramId === right && game.awayProgramId === left)));
+  for (const [hostGameIndex, hostGame] of state.schedule.entries()) {
+    if (hostGame.homeProgramId !== hostProgramId || hostGame.matchupType !== "CROSS_DIVISION") continue;
+    for (const [opponentGameIndex, opponentGame] of state.schedule.entries()) {
+      if (opponentGameIndex === hostGameIndex || opponentGame.week !== hostGame.week || opponentGame.matchupType !== "CROSS_DIVISION") continue;
+      if (opponentGame.homeProgramId !== opponentProgramId && opponentGame.awayProgramId !== opponentProgramId) continue;
+      const displacedVisitor = hostGame.awayProgramId;
+      const displacedOpponent = opponentGame.homeProgramId === opponentProgramId ? opponentGame.awayProgramId : opponentGame.homeProgramId;
+      if (new Set([hostProgramId, opponentProgramId, displacedVisitor, displacedOpponent]).size < 4) continue;
+      const ignored = new Set([hostGameIndex, opponentGameIndex]);
+      if (existingPair(hostProgramId, opponentProgramId, ignored) || existingPair(displacedOpponent, displacedVisitor, ignored)) continue;
+      return { hostGameIndex, opponentGameIndex };
+    }
+  }
+  return null;
 }
 
 export function buildSeasonSchedule(state: GameState): void {
@@ -231,7 +335,7 @@ export function buildSeasonSchedule(state: GameState): void {
         const flip = (slot + pairIndex + divisionIndex + state.season) % 2 === 0;
         const homeProgramId = flip ? left : right;
         const awayProgramId = flip ? right : left;
-        state.schedule.push({ id: `game:${state.season}:${scheduleIndex++}`, week, homeProgramId, awayProgramId, matchupType: "DIVISION", played: false, homeScore: null, awayScore: null });
+        state.schedule.push({ id: `game:${state.season}:${scheduleIndex++}`, week, homeProgramId, awayProgramId, matchupType: "DIVISION", guaranteePaid: 0, marqueeOpponentRank: null, played: false, homeScore: null, awayScore: null });
       }
     }
   }
@@ -252,7 +356,7 @@ export function buildSeasonSchedule(state: GameState): void {
         const flip = (crossSlot + teamIndex + divisionPairIndex + state.season) % 2 === 0;
         const homeProgramId = flip ? left : right;
         const awayProgramId = flip ? right : left;
-        state.schedule.push({ id: `game:${state.season}:${scheduleIndex++}`, week, homeProgramId, awayProgramId, matchupType: "CROSS_DIVISION", played: false, homeScore: null, awayScore: null });
+        state.schedule.push({ id: `game:${state.season}:${scheduleIndex++}`, week, homeProgramId, awayProgramId, matchupType: "CROSS_DIVISION", guaranteePaid: 0, marqueeOpponentRank: null, played: false, homeScore: null, awayScore: null });
       }
     }
   }
@@ -328,11 +432,12 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   developPlayers(state, rng.fork("development"), events);
   resolveScheduledGames(state, rng.fork("games"), events);
   processInjuries(state, rng.fork("injuries"), events);
-  processWeeklyFinances(state, events);
+  processWeeklyRecapsAndFinances(state, events);
+  updateNationalRankings(state);
   state.week += 1;
   if (state.week > 14) rolloverSeason(state, events);
   state.eventHistory.push(...events);
-  if (state.eventHistory.length > 500) state.eventHistory = state.eventHistory.slice(-500);
+  if (state.eventHistory.length > 10_000) state.eventHistory = state.eventHistory.slice(-10_000);
   return { state, events };
 }
 
@@ -342,6 +447,10 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
     const program = state.programs[command.programId];
     if (!program) {
       events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Program does not exist." });
+      continue;
+    }
+    if (command.type === "SCHEDULE_MARQUEE_HOME_GAME") {
+      events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Marquee home games must be arranged before the season begins." });
       continue;
     }
     if (command.type === "OFFER_PROSPECT") {
@@ -441,7 +550,8 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
   const staffBonus = Object.values(state.staff)
     .filter((staff) => staff.programId === programId && staff.assignment === "RECRUITING")
     .reduce((total, staff) => total + staff.rating / 25, 0);
-  return Number((prospect.interestByProgram[programId]! + tierBonus + facilityBonus + staffBonus + rng.between(`${prospect.id}:${programId}:decision-noise`, -7, 7)).toFixed(3));
+  const exposureBonus = program.localPress / 50 + program.nationalPress / 20;
+  return Number((prospect.interestByProgram[programId]! + tierBonus + facilityBonus + staffBonus + exposureBonus + rng.between(`${prospect.id}:${programId}:decision-noise`, -7, 7)).toFixed(3));
 }
 
 function scholarshipCount(state: GameState, programId: string): number {
@@ -569,18 +679,93 @@ function resolveScheduledGames(state: GameState, rng: AddressableRng, events: Ga
   }
 }
 
-function processWeeklyFinances(state: GameState, events: GameEvent[]): void {
+function processWeeklyRecapsAndFinances(state: GameState, events: GameEvent[]): void {
   for (const program of Object.values(state.programs)) {
-    const homeGame = state.schedule.find((game) => game.week === state.week && game.homeProgramId === program.id);
+    const game = state.schedule.find((item) => item.week === state.week && (item.homeProgramId === program.id || item.awayProgramId === program.id));
+    const homeGame = game?.homeProgramId === program.id;
+    const opponentId = game ? (homeGame ? game.awayProgramId : game.homeProgramId) : null;
+    const opponent = opponentId ? state.programs[opponentId]! : null;
+    const opponentRank = game?.matchupType === "MARQUEE" && game.marqueeOpponentRank
+      ? game.marqueeOpponentRank
+      : opponent?.nationalRank ?? null;
+    const scoreFor = game?.played ? (homeGame ? game.homeScore : game.awayScore) : null;
+    const scoreAgainst = game?.played ? (homeGame ? game.awayScore : game.homeScore) : null;
+    const result = scoreFor == null || scoreAgainst == null ? "BYE" : scoreFor > scoreAgainst ? "WIN" : "LOSS";
+    const marqueeGame = game?.matchupType === "MARQUEE";
+    const rankedOpponent = opponentRank !== null && opponentRank <= 25;
+    const fansBefore = program.fanBase;
+    let fanChange = 0;
+    let localPressChange = 0;
+    let nationalPressChange = 0;
+    if (result === "WIN") {
+      fanChange = Math.round(Math.max(450, fansBefore * 0.018));
+      localPressChange = 6;
+      if (rankedOpponent) {
+        fanChange += Math.round(fansBefore * 0.025);
+        nationalPressChange += 12;
+      }
+      if (marqueeGame) {
+        fanChange += Math.round(fansBefore * 0.03);
+        nationalPressChange += 10;
+      }
+    } else if (result === "LOSS") {
+      fanChange = -Math.round(Math.max(125, fansBefore * (marqueeGame ? 0.003 : 0.006)));
+      localPressChange = -2;
+      nationalPressChange = marqueeGame ? -2 : rankedOpponent ? -1 : 0;
+    }
+    program.fanBase = Math.max(5_000, program.fanBase + fanChange);
+    program.fanSupport = clamp(Math.round(program.fanSupport + fanChange / Math.max(1, fansBefore) * 35), 1, 100);
+    program.localPress = clamp(program.localPress + localPressChange, 0, 100);
+    program.nationalPress = clamp(program.nationalPress + nationalPressChange, 0, 100);
+
+    const capacity = stadiumCapacity(program.facilities.STADIUM);
+    const opponentDraw = opponent ? opponent.fanBase * 0.045 + (rankedOpponent ? 5_000 : 0) + (marqueeGame ? 7_500 : 0) : 0;
+    const attendance = homeGame && game?.played
+      ? Math.round(clamp(fansBefore * 0.62 + opponentDraw, capacity * 0.35, capacity))
+      : 0;
     const stadiumModifier = 1 + Math.max(0, program.facilities.STADIUM - 1) * 0.08;
-    const gameDayRevenue = homeGame?.played ? Math.round(program.weeklyRevenue * (0.55 + program.fanSupport / 100) * stadiumModifier) : 0;
-    const revenue = program.weeklyRevenue + gameDayRevenue;
+    const ticketRevenue = Math.round(attendance * 44 * stadiumModifier);
+    const concessionRevenue = Math.round(attendance * 17 * stadiumModifier);
+    const revenue = program.weeklyRevenue + ticketRevenue + concessionRevenue;
     const staffPayroll = Object.values(state.staff).filter((staff) => staff.programId === program.id).reduce((sum, staff) => sum + staff.salary / 52, 0);
     const expenses = Math.round(program.weeklyExpenses + staffPayroll);
     const net = Math.round(revenue - expenses);
     program.budget += net;
     events.push({ type: "WEEKLY_FINANCES", season: state.season, week: state.week, programId: program.id, revenue: Math.round(revenue), expenses, net });
+    events.push({
+      type: "WEEKLY_RECAP",
+      season: state.season,
+      week: state.week,
+      programId: program.id,
+      result,
+      opponentProgramId: opponentId,
+      opponentRank,
+      homeGame: Boolean(homeGame),
+      marqueeGame,
+      scoreFor,
+      scoreAgainst,
+      fansBefore,
+      fansAfter: program.fanBase,
+      fanChange,
+      attendance,
+      capacity,
+      ticketRevenue,
+      concessionRevenue,
+      localPressChange,
+      nationalPressChange,
+      guaranteePaid: game?.guaranteePaid ?? 0,
+      weeklyNet: net
+    });
   }
+}
+
+function updateNationalRankings(state: GameState): void {
+  const ranked = Object.values(state.programs).sort((left, right) => {
+    const leftScore = left.wins * 14 - left.losses * 5 + left.prestige * 0.55 + teamStrength(state, left) * 0.35;
+    const rightScore = right.wins * 14 - right.losses * 5 + right.prestige * 0.55 + teamStrength(state, right) * 0.35;
+    return rightScore - leftScore || left.id.localeCompare(right.id);
+  });
+  ranked.forEach((program, index) => { program.nationalRank = index + 1; });
 }
 
 function rolloverSeason(state: GameState, events: GameEvent[]): void {

@@ -12,15 +12,15 @@ import type {
   StaffAssignment
 } from "@college-legends/model";
 import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
-import { developmentPayoff, facilityPayoff, projectedDevelopmentPayoff, staffAssignmentPayoff } from "@college-legends/simulation";
+import { developmentPayoff, facilityPayoff, marqueeGameOptions, projectedDevelopmentPayoff, staffAssignmentPayoff, stadiumCapacity } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 
 type GameView = { state: GameState; playerProgramId: ProgramId; events: GameEvent[] };
-type Screen = "DASHBOARD" | "ROSTER" | "DEPTH_CHART" | "DEVELOPMENT" | "SCHEDULE" | "DIVISIONS" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
+type Screen = "DASHBOARD" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CHART" | "DEVELOPMENT" | "SCHEDULE" | "DIVISIONS" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
 
 const careerOrder: CareerPath[] = ["DYNASTY_BUILDER", "PROGRAM_RISER", "CHAMPIONSHIP_MANDATE"];
 const positionOrder: Player["position"][] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
-const screens: Screen[] = ["DASHBOARD", "ROSTER", "DEPTH_CHART", "DEVELOPMENT", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
+const screens: Screen[] = ["DASHBOARD", "WEEKLY_RECAPS", "ROSTER", "DEPTH_CHART", "DEVELOPMENT", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
 const developmentFocuses: DevelopmentFocus[] = ["BALANCED", "TECHNIQUE", "STRENGTH", "CONDITIONING"];
 const staffAssignments: StaffAssignment[] = ["GAME_PREP", "PLAYER_DEVELOPMENT", "RECRUITING", "RECOVERY"];
 const facilities: FacilityType[] = ["TRAINING", "STADIUM", "ACADEMICS", "RECRUITING"];
@@ -71,12 +71,13 @@ export function App(): ReactElement {
   const begin = (): void => {
     if (!game) return;
     setScreen("DASHBOARD");
-    send({ type: "BEGIN_SEASON", requestId: nextRequestId(), playerProgramId: game.playerProgramId });
+    send({ type: "BEGIN_SEASON", requestId: nextRequestId(), playerProgramId: game.playerProgramId, commands: pendingCommands });
   };
   const queue = (command: GameCommand): void => {
     const key = command.type === "SET_DEVELOPMENT_FOCUS" ? `player:${command.playerId}`
       : command.type === "ASSIGN_STAFF" ? `staff:${command.staffId}`
       : command.type === "UPGRADE_FACILITY" ? `facility:${command.facility}`
+      : command.type === "SCHEDULE_MARQUEE_HOME_GAME" ? "marquee-game"
       : command.type === "OFFER_PROSPECT" ? `prospect:${command.prospectId}`
       : `${command.type}:${command.playerId}`;
     setPendingCommands((previous) => [
@@ -105,6 +106,7 @@ function commandKey(command: GameCommand): string {
   if (command.type === "SET_DEVELOPMENT_FOCUS") return `player:${command.playerId}`;
   if (command.type === "ASSIGN_STAFF") return `staff:${command.staffId}`;
   if (command.type === "UPGRADE_FACILITY") return `facility:${command.facility}`;
+  if (command.type === "SCHEDULE_MARQUEE_HOME_GAME") return "marquee-game";
   if (command.type === "OFFER_PROSPECT") return `prospect:${command.prospectId}`;
   return `${command.type}:${command.playerId}`;
 }
@@ -144,13 +146,15 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQ
       <div><p className="eyebrow">{program.tier} TIER · {DIVISION_NAMES[program.divisionId]}</p><h1>{program.name}</h1><p>{program.city}, {program.stateCode} · Season {game.state.season} · {isReview ? "Opening roster review" : `Week ${game.state.week}`}</p></div>
       <div className="week-action">
         {isReview
-          ? <><span>Recruiting has not started</span><button disabled={busy} onClick={onBegin}>{busy ? "Starting…" : "Accept roster & begin season"}</button></>
+          ? <><span>{pendingCommands.length ? `${pendingCommands.length} preseason decision queued` : "Recruiting has not started"}</span><button disabled={busy} onClick={onBegin}>{busy ? "Starting…" : "Accept roster & begin season"}</button></>
           : <><span>{pendingCommands.length} decision{pendingCommands.length === 1 ? "" : "s"} queued</span><button disabled={busy} onClick={onAdvance}>{busy ? "Simulating…" : "Advance week"}</button></>}
       </div>
     </header>
     {error && <p className="error">{error}</p>}
     <section className="metrics">
       <Metric label="Record" value={`${program.wins}–${program.losses}`} />
+      <Metric label="National rank" value={`#${program.nationalRank}`} />
+      <Metric label="Fans" value={compactNumber(program.fanBase)} />
       <Metric label="Budget" value={money(program.budget)} />
       <Metric label="Job security" value={`${program.coachSecurity}/100`} />
       <Metric label="Roster" value={`${roster.length}/${program.scholarshipLimit}`} />
@@ -160,10 +164,11 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQ
         {item === "RECRUITING" && isReview ? "Recruiting · Locked" : label(item)}
       </button>)}</nav>
     {screen === "DASHBOARD" && <ProgramDashboard game={game} roster={roster} />}
+    {screen === "WEEKLY_RECAPS" && <WeeklyRecaps game={game} />}
     {screen === "ROSTER" && <Roster roster={roster} />}
     {screen === "DEPTH_CHART" && <DepthChart roster={roster} />}
     {screen === "DEVELOPMENT" && <Development state={game.state} roster={roster} programId={program.id} pending={pendingCommands} onQueue={onQueue} />}
-    {screen === "SCHEDULE" && <Schedule game={game} />}
+    {screen === "SCHEDULE" && <Schedule game={game} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "DIVISIONS" && <Divisions game={game} />}
     {screen === "STAFF" && <Staff game={game} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "FINANCES" && <Finances game={game} pending={pendingCommands} onQueue={onQueue} />}
@@ -178,11 +183,16 @@ function ProgramDashboard({ game, roster }: { game: GameView; roster: Player[] }
   const nextGame = game.state.schedule.find((item) => !item.played && (item.homeProgramId === program.id || item.awayProgramId === program.id));
   const opponentId = nextGame ? (nextGame.homeProgramId === program.id ? nextGame.awayProgramId : nextGame.homeProgramId) : undefined;
   const finance = [...game.state.eventHistory].reverse().find((event) => event.type === "WEEKLY_FINANCES" && event.programId === program.id);
+  const recap = [...game.state.eventHistory].reverse().find(
+    (event): event is Extract<GameEvent, { type: "WEEKLY_RECAP" }> => event.type === "WEEKLY_RECAP" && event.programId === program.id
+  );
   return <section className="dashboard-grid">
     <article className="panel hero-panel"><p className="eyebrow">Program command center</p><h2>{game.state.phase === "ROSTER_REVIEW" ? "Meet the program you inherited" : `Prepare for Week ${game.state.week}`}</h2>
       <p className="muted">{game.state.phase === "ROSTER_REVIEW" ? "Study your 85-player roster, depth chart, staff, facilities, and schedule before accepting the job." : "Make development, staffing, facility, and recruiting decisions. Everything resolves together when you advance the week."}</p>
     </article>
     <article className="panel"><p className="eyebrow">Next matchup</p><h2>{nextGame ? `${nextGame.homeProgramId === program.id ? "vs." : "at"} ${game.state.programs[opponentId!]?.name}` : "Season complete"}</h2><p className="muted">{nextGame ? `Week ${nextGame.week} · ${nextGame.homeProgramId === program.id ? "Home" : "Away"}` : "No remaining regular-season games."}</p></article>
+    <article className="panel"><p className="eyebrow">Program momentum</p><h2>{compactNumber(program.fanBase)} fans · #{program.nationalRank}</h2><div className="snapshot-list"><p><span>Local press</span><strong>{program.localPress}/100</strong></p><p><span>National press</span><strong>{program.nationalPress}/100</strong></p><p><span>Stadium capacity</span><strong>{compactNumber(stadiumCapacity(program.facilities.STADIUM))}</strong></p></div></article>
+    {recap && <article className="panel recap-feature"><p className="eyebrow">Latest weekly recap</p><h2>{recap.result === "BYE" ? `Week ${recap.week} bye` : `${recap.result}: ${recap.scoreFor}–${recap.scoreAgainst}`}</h2><RecapCascade recap={recap} game={game} /></article>}
     <article className="panel"><p className="eyebrow">Roster outlook</p><h2>{average.toFixed(1)} team overall</h2><div className="snapshot-list"><p><span>Seniors</span><strong>{roster.filter((player) => player.eligibility.seasonsRemaining === 1).length}</strong></p><p><span>Top-rated player</span><strong>{Math.round(Math.max(...roster.map((player) => player.overall)))}</strong></p></div></article>
     <article className="panel"><p className="eyebrow">Weekly business</p><h2>{finance && finance.type === "WEEKLY_FINANCES" ? `${finance.net >= 0 ? "+" : ""}${money(finance.net)}` : "Not reported yet"}</h2><p className="muted">Prestige {program.prestige}/100 · Fan support {program.fanSupport}/100</p></article>
     <article className="panel span-two"><p className="eyebrow">Latest inbox</p><h2>Program activity</h2><EventList events={game.events.length ? game.events : game.state.eventHistory.slice(-5)} game={game} /></article>
@@ -228,16 +238,58 @@ function Development({ state, roster, programId, pending, onQueue }: { state: Ga
       })}</div></section>;
 }
 
-function Schedule({ game }: { game: GameView }): ReactElement {
+function Schedule({ game, pending, onQueue }: { game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
   const program = game.state.programs[game.playerProgramId]!;
   const schedule = game.state.schedule.filter((item) => item.homeProgramId === program.id || item.awayProgramId === program.id);
-  return <section className="panel table-panel"><SectionHeading eyebrow="Season" title={`${game.state.season} schedule`} detail={`${program.wins} wins · ${program.losses} losses · 8 division games · 4 cross-division games`} />
+  const options = marqueeGameOptions(game.state, program.id);
+  const queued = pending.find((command): command is Extract<GameCommand, { type: "SCHEDULE_MARQUEE_HOME_GAME" }> => command.type === "SCHEDULE_MARQUEE_HOME_GAME");
+  return <section className="schedule-layout">
+    {game.state.phase === "ROSTER_REVIEW" && <article className="panel marquee-planner"><p className="eyebrow">Preseason business decision</p><h2>Bring a Top-25 program to your stadium</h2>
+      <p className="muted">Pay an appearance guarantee now to replace one cross-division opponent. An upset creates a major national story; a loss causes only a small recognition dip. The ranked visitor also lifts attendance, tickets, and concessions.</p>
+      <div className="marquee-options">{options.slice(0, 8).map((option) => {
+        const opponent = game.state.programs[option.opponentProgramId]!;
+        const selected = queued?.opponentProgramId === opponent.id;
+        return <button className={selected ? "selected" : ""} key={opponent.id} onClick={() => onQueue({ type: "SCHEDULE_MARQUEE_HOME_GAME", programId: program.id, opponentProgramId: opponent.id })}>
+          <span>#{option.rank} {opponent.abbreviation}</span><small>Week {option.week} · {money(option.guarantee)}</small>
+        </button>;
+      })}</div>
+      {!options.length && <p className="muted">No affordable compatible Top-25 date is available.</p>}
+    </article>}
+    <section className="panel table-panel"><SectionHeading eyebrow="Season" title={`${game.state.season} schedule`} detail={`${program.wins} wins · ${program.losses} losses · 8 division games · 4 national matchups`} />
     <div className="data-table schedule-table"><div className="data-row data-header"><span>Week</span><span>Site</span><span>Opponent</span><span>Matchup</span><span>Status</span></div>{schedule.map((item) => {
       const home = item.homeProgramId === program.id;
       const opponent = game.state.programs[home ? item.awayProgramId : item.homeProgramId]!;
       const result = item.played ? `${item.homeScore}–${item.awayScore}` : item.week === game.state.week ? "Next" : "Scheduled";
-      return <div className={`data-row ${item.week === game.state.week ? "next-row" : ""}`} key={item.id}><strong data-label="Week">Week {item.week}</strong><span data-label="Site">{home ? "Home" : "Away"}</span><span data-label="Opponent">{opponent.name}<small>{opponent.city}, {opponent.stateCode}</small></span><span data-label="Matchup">{item.matchupType === "DIVISION" ? "Division" : "Cross-division"}</span><span data-label="Status">{result}</span></div>;
-    })}</div></section>;
+      return <div className={`data-row ${item.week === game.state.week ? "next-row" : ""}`} key={item.id}><strong data-label="Week">Week {item.week}</strong><span data-label="Site">{home ? "Home" : "Away"}</span><span data-label="Opponent">{opponent.nationalRank <= 25 ? `#${opponent.nationalRank} ` : ""}{opponent.name}<small>{opponent.city}, {opponent.stateCode}</small></span><span data-label="Matchup">{item.matchupType === "DIVISION" ? "Division" : item.matchupType === "MARQUEE" ? `Marquee · ${money(item.guaranteePaid)}` : "Cross-division"}</span><span data-label="Status">{result}</span></div>;
+    })}</div></section>
+  </section>;
+}
+
+function WeeklyRecaps({ game }: { game: GameView }): ReactElement {
+  const recaps = [...game.state.eventHistory]
+    .filter((event): event is Extract<GameEvent, { type: "WEEKLY_RECAP" }> => event.type === "WEEKLY_RECAP" && event.programId === game.playerProgramId)
+    .reverse();
+  return <section><SectionHeading eyebrow="Cause and effect" title="Weekly program recaps" detail="Every result flows into audience, attendance, game-day sales, media reach, and the budget." />
+    {recaps.length ? <div className="recap-grid">{recaps.map((recap) => <article className="panel recap-card" key={`${recap.season}-${recap.week}`}>
+      <div className="recap-heading"><div><p className="eyebrow">Week {recap.week}</p><h2>{recap.result === "BYE" ? "Bye week" : `${recap.result} · ${recap.scoreFor}–${recap.scoreAgainst}`}</h2></div><strong className={recap.result.toLowerCase()}>{recap.result}</strong></div>
+      <RecapCascade recap={recap} game={game} />
+    </article>)}</div> : <article className="panel"><p className="muted">Advance the first week to generate the first connected recap.</p></article>}
+  </section>;
+}
+
+function RecapCascade({ recap, game }: { recap: Extract<GameEvent, { type: "WEEKLY_RECAP" }>; game: GameView }): ReactElement {
+  const opponent = recap.opponentProgramId ? game.state.programs[recap.opponentProgramId] : null;
+  return <div className="recap-cascade">
+    <p><span>Result</span><strong>{opponent ? `${recap.homeGame ? "vs." : "at"} ${recap.opponentRank && recap.opponentRank <= 25 ? `#${recap.opponentRank} ` : ""}${opponent.name}` : "No game"}</strong></p>
+    <p><span>Fans</span><strong>{signedNumber(recap.fanChange)} → {compactNumber(recap.fansAfter)}</strong></p>
+    <p><span>Stadium</span><strong>{recap.homeGame ? `${compactNumber(recap.attendance)} / ${compactNumber(recap.capacity)}` : "Away / bye"}</strong></p>
+    <p><span>Tickets</span><strong>{money(recap.ticketRevenue)}</strong></p>
+    <p><span>Concessions</span><strong>{money(recap.concessionRevenue)}</strong></p>
+    <p><span>Local press</span><strong>{signedNumber(recap.localPressChange)}</strong></p>
+    <p><span>National press</span><strong>{signedNumber(recap.nationalPressChange)}</strong></p>
+    <p><span>Weekly net</span><strong>{signedMoney(recap.weeklyNet)}</strong></p>
+    {recap.marqueeGame && <p className="marquee-note"><span>Marquee payoff</span><strong>{recap.result === "WIN" ? "National breakthrough" : "Small recognition dip"} · guarantee {money(recap.guaranteePaid)}</strong></p>}
+  </div>;
 }
 
 function Divisions({ game }: { game: GameView }): ReactElement {
@@ -272,7 +324,7 @@ function Finances({ game, pending, onQueue }: { game: GameView; pending: GameCom
   const staffPayroll = Object.values(game.state.staff).filter((staff) => staff.programId === program.id).reduce((sum, staff) => sum + staff.salary, 0);
   return <section className="finance-layout">
     <article className="panel"><p className="eyebrow">Athletic department</p><h2>Operating position</h2><div className="snapshot-list"><p><span>Available budget</span><strong>{money(program.budget)}</strong></p><p><span>Base weekly revenue</span><strong>{money(program.weeklyRevenue)}</strong></p><p><span>Base weekly expenses</span><strong>{money(program.weeklyExpenses)}</strong></p><p><span>Annual staff payroll</span><strong>{money(staffPayroll)}</strong></p></div></article>
-    <article className="panel"><p className="eyebrow">Program reach</p><h2>Business drivers</h2><div className="snapshot-list"><p><span>Prestige</span><strong>{program.prestige}/100</strong></p><p><span>Fan support</span><strong>{program.fanSupport}/100</strong></p><p><span>Home-game value</span><strong>{money(Math.round(program.weeklyRevenue * (0.55 + program.fanSupport / 100)))}</strong></p></div></article>
+    <article className="panel"><p className="eyebrow">Program reach</p><h2>Business drivers</h2><div className="snapshot-list"><p><span>Fan base</span><strong>{compactNumber(program.fanBase)}</strong></p><p><span>Stadium capacity</span><strong>{compactNumber(stadiumCapacity(program.facilities.STADIUM))}</strong></p><p><span>Local / national press</span><strong>{program.localPress} / {program.nationalPress}</strong></p><p><span>National rank</span><strong>#{program.nationalRank}</strong></p></div></article>
     <div className="facility-grid span-two">{facilities.map((facility) => {
       const level = program.facilities[facility];
       const queued = pending.some((item) => item.type === "UPGRADE_FACILITY" && item.facility === facility);
@@ -307,6 +359,8 @@ function EventList({ events, game }: { events: GameEvent[]; game: GameView }): R
 
 function eventIcon(event: GameEvent): string {
   if (event.type === "GAME_COMPLETED") return "🏈";
+  if (event.type === "WEEKLY_RECAP") return "↗";
+  if (event.type === "MARQUEE_GAME_SCHEDULED") return "TV";
   if (event.type === "PLAYER_INJURED") return "✚";
   if (event.type === "PLAYER_RECOVERED") return "✓";
   if (event.type === "WEEKLY_FINANCES") return "＄";
@@ -323,6 +377,8 @@ function eventTitle(event: GameEvent): string {
 function eventText(event: GameEvent, game: GameView): string {
   if (event.type === "GAME_COMPLETED") return `${game.state.programs[event.homeProgramId]?.name} ${event.homeScore}, ${game.state.programs[event.awayProgramId]?.name} ${event.awayScore}`;
   if (event.type === "WEEKLY_FINANCES") return `${money(event.revenue)} revenue · ${money(event.expenses)} expenses · ${event.net >= 0 ? "+" : ""}${money(event.net)} net`;
+  if (event.type === "WEEKLY_RECAP") return `${event.result} · ${signedNumber(event.fanChange)} fans · ${signedNumber(event.localPressChange)} local press · ${signedNumber(event.nationalPressChange)} national press · ${signedMoney(event.weeklyNet)} net`;
+  if (event.type === "MARQUEE_GAME_SCHEDULED") return `#${event.opponentRank} ${game.state.programs[event.opponentProgramId]?.name} will visit in Week ${event.week}. Guarantee: ${money(event.guarantee)}.`;
   if (event.type === "FACILITY_UPGRADED") return `${label(event.facility)} reached Level ${event.newLevel} for ${money(event.cost)}.`;
   if (event.type === "STAFF_ASSIGNED") return `${game.state.staff[event.staffId]?.name ?? "Coach"} assigned to ${label(event.assignment)}.`;
   if (event.type === "DEVELOPMENT_FOCUS_SET") return `${game.state.players[event.playerId]?.name ?? "Player"} changed to ${label(event.focus)} training.`;
@@ -346,6 +402,9 @@ function money(value: number): string {
   const amount = absolute >= 1_000_000 ? `$${(absolute / 1_000_000).toFixed(1)}M` : `$${Math.round(absolute / 1_000)}K`;
   return value < 0 ? `-${amount}` : amount;
 }
+function signedMoney(value: number): string { return `${value > 0 ? "+" : ""}${money(value)}`; }
+function compactNumber(value: number): string { return Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value); }
+function signedNumber(value: number): string { return `${value > 0 ? "+" : ""}${value.toLocaleString()}`; }
 function signed(value: number): string { return `${value > 0 ? "+" : ""}${value}`; }
 function formatRatingChanges(changes: Partial<Record<keyof Player["ratings"], number>>): string {
   const names: Record<keyof Player["ratings"], string> = { technique: "TEC", strength: "STR", conditioning: "CON", injuryPrevention: "INJ", armStrength: "ARM" };
