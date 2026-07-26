@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import type {
   CareerPath,
   DevelopmentFocus,
+  DivisionId,
   FacilityType,
   GameCommand,
   GameEvent,
@@ -10,15 +11,15 @@ import type {
   ProgramId,
   StaffAssignment
 } from "@college-legends/model";
-import { CAREER_PATHS } from "@college-legends/content";
+import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 
 type GameView = { state: GameState; playerProgramId: ProgramId; events: GameEvent[] };
-type Screen = "DASHBOARD" | "ROSTER" | "DEPTH_CHART" | "DEVELOPMENT" | "SCHEDULE" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
+type Screen = "DASHBOARD" | "ROSTER" | "DEPTH_CHART" | "DEVELOPMENT" | "SCHEDULE" | "DIVISIONS" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
 
 const careerOrder: CareerPath[] = ["DYNASTY_BUILDER", "PROGRAM_RISER", "CHAMPIONSHIP_MANDATE"];
 const positionOrder: Player["position"][] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
-const screens: Screen[] = ["DASHBOARD", "ROSTER", "DEPTH_CHART", "DEVELOPMENT", "SCHEDULE", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
+const screens: Screen[] = ["DASHBOARD", "ROSTER", "DEPTH_CHART", "DEVELOPMENT", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
 const developmentFocuses: DevelopmentFocus[] = ["BALANCED", "TECHNIQUE", "STRENGTH", "CONDITIONING"];
 const staffAssignments: StaffAssignment[] = ["GAME_PREP", "PLAYER_DEVELOPMENT", "RECRUITING", "RECOVERY"];
 const facilities: FacilityType[] = ["TRAINING", "STADIUM", "ACADEMICS", "RECRUITING"];
@@ -139,7 +140,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQ
 
   return <main className="app-shell">
     <header className="dashboard-header">
-      <div><p className="eyebrow">{program.tier} TIER PROGRAM</p><h1>{program.name}</h1><p>Season {game.state.season} · {isReview ? "Opening roster review" : `Week ${game.state.week}`}</p></div>
+      <div><p className="eyebrow">{program.tier} TIER · {DIVISION_NAMES[program.divisionId]}</p><h1>{program.name}</h1><p>{program.city}, {program.stateCode} · Season {game.state.season} · {isReview ? "Opening roster review" : `Week ${game.state.week}`}</p></div>
       <div className="week-action">
         {isReview
           ? <><span>Recruiting has not started</span><button disabled={busy} onClick={onBegin}>{busy ? "Starting…" : "Accept roster & begin season"}</button></>
@@ -162,6 +163,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQ
     {screen === "DEPTH_CHART" && <DepthChart roster={roster} />}
     {screen === "DEVELOPMENT" && <Development roster={roster} programId={program.id} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "SCHEDULE" && <Schedule game={game} />}
+    {screen === "DIVISIONS" && <Divisions game={game} />}
     {screen === "STAFF" && <Staff game={game} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "FINANCES" && <Finances game={game} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "RECRUITING" && <Recruiting game={game} locked={isReview || openScholarships === 0} openScholarships={openScholarships} pending={pendingCommands} onToggle={onToggleOffer} />}
@@ -218,12 +220,28 @@ function Development({ roster, programId, pending, onQueue }: { roster: Player[]
 function Schedule({ game }: { game: GameView }): ReactElement {
   const program = game.state.programs[game.playerProgramId]!;
   const schedule = game.state.schedule.filter((item) => item.homeProgramId === program.id || item.awayProgramId === program.id);
-  return <section className="panel table-panel"><SectionHeading eyebrow="Season" title={`${game.state.season} schedule`} detail={`${program.wins} wins · ${program.losses} losses`} />
-    <div className="data-table schedule-table"><div className="data-row data-header"><span>Week</span><span>Site</span><span>Opponent</span><span>Status</span></div>{schedule.map((item) => {
+  return <section className="panel table-panel"><SectionHeading eyebrow="Season" title={`${game.state.season} schedule`} detail={`${program.wins} wins · ${program.losses} losses · 8 division games · 4 cross-division games`} />
+    <div className="data-table schedule-table"><div className="data-row data-header"><span>Week</span><span>Site</span><span>Opponent</span><span>Matchup</span><span>Status</span></div>{schedule.map((item) => {
       const home = item.homeProgramId === program.id;
       const opponent = game.state.programs[home ? item.awayProgramId : item.homeProgramId]!;
       const result = item.played ? `${item.homeScore}–${item.awayScore}` : item.week === game.state.week ? "Next" : "Scheduled";
-      return <div className={`data-row ${item.week === game.state.week ? "next-row" : ""}`} key={item.id}><strong data-label="Week">Week {item.week}</strong><span data-label="Site">{home ? "Home" : "Away"}</span><span data-label="Opponent">{opponent.name}</span><span data-label="Status">{result}</span></div>;
+      return <div className={`data-row ${item.week === game.state.week ? "next-row" : ""}`} key={item.id}><strong data-label="Week">Week {item.week}</strong><span data-label="Site">{home ? "Home" : "Away"}</span><span data-label="Opponent">{opponent.name}<small>{opponent.city}, {opponent.stateCode}</small></span><span data-label="Matchup">{item.matchupType === "DIVISION" ? "Division" : "Cross-division"}</span><span data-label="Status">{result}</span></div>;
+    })}</div></section>;
+}
+
+function Divisions({ game }: { game: GameView }): ReactElement {
+  const divisionIds = Object.keys(DIVISION_NAMES) as DivisionId[];
+  return <section><SectionHeading eyebrow="National landscape" title="Six-division standings" detail="Seventy-two original programs represent all 50 states." />
+    <div className="division-grid">{divisionIds.map((divisionId) => {
+      const programs = Object.values(game.state.programs)
+        .filter((program) => program.divisionId === divisionId)
+        .sort((left, right) => right.wins - left.wins || left.losses - right.losses || right.prestige - left.prestige);
+      return <article className="panel division-card" key={divisionId}><div className="position-title"><h2>{DIVISION_NAMES[divisionId]}</h2><span>{programs.length} teams</span></div>
+        {programs.map((program, index) => <p className={program.id === game.playerProgramId ? "user-program" : ""} key={program.id}>
+          <span><b>{index + 1}</b> {program.abbreviation} · {program.stateCode}<small>{program.name}</small></span>
+          <strong>{program.wins}–{program.losses}</strong>
+        </p>)}
+      </article>;
     })}</div></section>;
 }
 

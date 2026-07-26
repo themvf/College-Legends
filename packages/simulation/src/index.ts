@@ -1,5 +1,5 @@
-import type { FacilityType, GameCommand, GameEvent, GameState, Player, Position, Program, Prospect, SimulationResult, StaffRole } from "@college-legends/model";
-import { fictionalPersonName } from "@college-legends/content";
+import type { DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, Position, Program, Prospect, SimulationResult, StaffRole } from "@college-legends/model";
+import { FICTIONAL_PROGRAMS, fictionalPersonName } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
 
 export { AddressableRng } from "./rng.js";
@@ -29,8 +29,11 @@ export const FACILITY_UPGRADE_COST: Readonly<Record<number, number>> = {
 };
 
 const STAFF_ROLES: readonly StaffRole[] = ["HEAD_COACH", "OFFENSIVE_COORDINATOR", "DEFENSIVE_COORDINATOR", "STRENGTH_COACH"];
+const REGULAR_SEASON_WEEKS = [1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14] as const;
+const DIVISION_GAME_COUNT = 8;
 
-export function createFictionalLeague(rootSeed: string, programCount = 12): GameState {
+export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL_PROGRAMS.length): GameState {
+  const selectedPrograms = FICTIONAL_PROGRAMS.slice(0, clamp(Math.trunc(programCount), 2, FICTIONAL_PROGRAMS.length));
   const rng = new AddressableRng(rootSeed).fork("league-generation");
   const nameRng = rng.fork("fictional-names");
   const firstNameOffset = Math.floor(nameRng.between("first-offset", 0, 96));
@@ -43,14 +46,21 @@ export function createFictionalLeague(rootSeed: string, programCount = 12): Game
   const rosterPositions = Object.entries(ROSTER_COMPOSITION).flatMap(([position, count]) =>
     Array.from({ length: count }, () => position as Position)
   );
-  for (let index = 0; index < programCount; index += 1) {
+  for (let index = 0; index < selectedPrograms.length; index += 1) {
+    const definition = selectedPrograms[index]!;
     const id = `program-${index + 1}`;
-    const tier = index < 3 ? "POWER" : index < 8 ? "MID" : "LOW";
+    const tier = definition.tier;
     const facilityLevel = tier === "POWER" ? 4 : tier === "MID" ? 3 : 2;
     const baseline = tier === "POWER" ? 83 : tier === "MID" ? 75 : 68;
     state.programs[id] = {
       id,
-      name: `College ${index + 1}`,
+      name: `${definition.name} ${definition.nickname}`,
+      nickname: definition.nickname,
+      abbreviation: definition.abbreviation,
+      city: definition.city,
+      state: definition.state,
+      stateCode: definition.stateCode,
+      divisionId: definition.divisionId,
       tier,
       budget: tier === "POWER" ? 20_000_000 : tier === "MID" ? 6_000_000 : 1_500_000,
       scholarshipLimit: 85,
@@ -84,7 +94,8 @@ export function createFictionalLeague(rootSeed: string, programCount = 12): Game
       state.players[playerId] = { id: playerId, name: nameFor(personOrdinal), programId: id, position: rosterPositions[rosterIndex]!, overall, potential: clamp(Math.round(overall + rng.between(`${playerId}:potential`, 2, 13)), overall, 99), workEthic: rng.between(`${playerId}:work-ethic`, 0.2, 1), fatigue: 0, developmentFocus: "BALANCED", eligibility: { cohortYear: 2027 - (rosterIndex % 4), seasonsEnrolled: rosterIndex % 4, seasonsParticipated: rosterIndex % 4, seasonsRemaining: 4 - (rosterIndex % 4), redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" } };
     }
   }
-  generateProspects(state, rng.fork("prospects"), programCount * 30, "initial", programCount * (STARTING_ROSTER_SIZE + STAFF_ROLES.length), firstNameOffset, lastNameOffset);
+  const actualProgramCount = selectedPrograms.length;
+  generateProspects(state, rng.fork("prospects"), actualProgramCount * 30, "initial", actualProgramCount * (STARTING_ROSTER_SIZE + STAFF_ROLES.length), firstNameOffset, lastNameOffset);
   buildSeasonSchedule(state);
   return state;
 }
@@ -99,15 +110,108 @@ export function beginSeason(input: Readonly<GameState>): GameState {
 }
 
 export function buildSeasonSchedule(state: GameState): void {
-  const ids = Object.keys(state.programs);
   state.schedule = [];
   let scheduleIndex = 0;
-  for (let week = 1; week <= 12; week += 1) {
-    for (let index = 0; index + 1 < ids.length; index += 2) {
-      const homeProgramId = ids[(index + week) % ids.length]!;
-      const awayProgramId = ids[(index + week + 1) % ids.length]!;
-      if (homeProgramId === awayProgramId) continue;
-      state.schedule.push({ id: `game:${week}:${scheduleIndex++}`, week, homeProgramId, awayProgramId, played: false, homeScore: null, awayScore: null });
+  const programsByDivision = new Map<DivisionId, string[]>();
+  for (const program of Object.values(state.programs)) {
+    const ids = programsByDivision.get(program.divisionId) ?? [];
+    ids.push(program.id);
+    programsByDivision.set(program.divisionId, ids);
+  }
+  const activeDivisions = [...programsByDivision.keys()];
+  const seasonRotation = Math.max(0, state.season - 2027);
+
+  for (const [divisionIndex, divisionId] of activeDivisions.entries()) {
+    const rounds = roundRobinRounds(programsByDivision.get(divisionId)!);
+    const roundCount = Math.min(DIVISION_GAME_COUNT, rounds.length);
+    for (let slot = 0; slot < roundCount; slot += 1) {
+      const week = REGULAR_SEASON_WEEKS[slot]!;
+      const round = rounds[(slot + seasonRotation * DIVISION_GAME_COUNT) % rounds.length]!;
+      for (const [pairIndex, [left, right]] of round.entries()) {
+        const flip = (slot + pairIndex + divisionIndex + state.season) % 2 === 0;
+        const homeProgramId = flip ? left : right;
+        const awayProgramId = flip ? right : left;
+        state.schedule.push({ id: `game:${state.season}:${scheduleIndex++}`, week, homeProgramId, awayProgramId, matchupType: "DIVISION", played: false, homeScore: null, awayScore: null });
+      }
+    }
+  }
+
+  if (activeDivisions.length < 2) return;
+  const divisionRounds = roundRobinRounds(activeDivisions);
+  for (let crossSlot = 0; crossSlot < 4; crossSlot += 1) {
+    const week = REGULAR_SEASON_WEEKS[DIVISION_GAME_COUNT + crossSlot]!;
+    const divisionPairings = divisionRounds[(crossSlot + seasonRotation * 4) % divisionRounds.length]!;
+    for (const [divisionPairIndex, [leftDivision, rightDivision]] of divisionPairings.entries()) {
+      const leftPrograms = programsByDivision.get(leftDivision)!;
+      const rightPrograms = programsByDivision.get(rightDivision)!;
+      const pairCount = Math.min(leftPrograms.length, rightPrograms.length);
+      const rotation = (seasonRotation * 4 + crossSlot) % Math.max(1, rightPrograms.length);
+      for (let teamIndex = 0; teamIndex < pairCount; teamIndex += 1) {
+        const left = leftPrograms[teamIndex]!;
+        const right = rightPrograms[(teamIndex + rotation) % rightPrograms.length]!;
+        const flip = (crossSlot + teamIndex + divisionPairIndex + state.season) % 2 === 0;
+        const homeProgramId = flip ? left : right;
+        const awayProgramId = flip ? right : left;
+        state.schedule.push({ id: `game:${state.season}:${scheduleIndex++}`, week, homeProgramId, awayProgramId, matchupType: "CROSS_DIVISION", played: false, homeScore: null, awayScore: null });
+      }
+    }
+  }
+  balanceHomeAndAway(state.schedule);
+}
+
+function roundRobinRounds<T extends string>(values: readonly T[]): [T, T][][] {
+  if (values.length < 2) return [];
+  const participants: Array<T | null> = [...values];
+  if (participants.length % 2 !== 0) participants.push(null);
+  const rounds: [T, T][][] = [];
+  for (let roundIndex = 0; roundIndex < participants.length - 1; roundIndex += 1) {
+    const pairings: [T, T][] = [];
+    for (let index = 0; index < participants.length / 2; index += 1) {
+      const left = participants[index];
+      const right = participants[participants.length - 1 - index];
+      if (left != null && right != null) pairings.push([left, right]);
+    }
+    rounds.push(pairings);
+    participants.splice(1, 0, participants.pop()!);
+  }
+  return rounds;
+}
+
+/**
+ * A 12-game schedule gives every full-league program an even graph degree.
+ * Orienting each Euler circuit produces exactly six home and six away games
+ * without changing opponents, weeks, or matchup types.
+ */
+function balanceHomeAndAway(schedule: GameState["schedule"]): void {
+  const adjacency = new Map<string, number[]>();
+  for (const [gameIndex, game] of schedule.entries()) {
+    for (const programId of [game.homeProgramId, game.awayProgramId]) {
+      const edges = adjacency.get(programId) ?? [];
+      edges.push(gameIndex);
+      adjacency.set(programId, edges);
+    }
+  }
+  if ([...adjacency.values()].some((edges) => edges.length % 2 !== 0)) return;
+
+  const unused = new Set(schedule.map((_, index) => index));
+  for (const start of adjacency.keys()) {
+    if (!(adjacency.get(start) ?? []).some((edge) => unused.has(edge))) continue;
+    const stack: Array<{ programId: string; viaGame: number | null }> = [{ programId: start, viaGame: null }];
+    while (stack.length > 0) {
+      const current = stack[stack.length - 1]!;
+      const edge = (adjacency.get(current.programId) ?? []).find((candidate) => unused.has(candidate));
+      if (edge !== undefined) {
+        unused.delete(edge);
+        const game = schedule[edge]!;
+        const opponent = game.homeProgramId === current.programId ? game.awayProgramId : game.homeProgramId;
+        stack.push({ programId: opponent, viaGame: edge });
+        continue;
+      }
+      const completed = stack.pop()!;
+      if (completed.viaGame === null || stack.length === 0) continue;
+      const previous = stack[stack.length - 1]!.programId;
+      schedule[completed.viaGame]!.homeProgramId = previous;
+      schedule[completed.viaGame]!.awayProgramId = completed.programId;
     }
   }
 }
@@ -275,7 +379,7 @@ function teamStrength(state: GameState, program: Program): number {
 }
 
 function resolveScheduledGames(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
-  for (const game of state.schedule.filter((item) => !item.played && state.week === Number(item.id.split(":")[1]))) {
+  for (const game of state.schedule.filter((item) => !item.played && state.week === item.week)) {
     const home = state.programs[game.homeProgramId]; const away = state.programs[game.awayProgramId];
     if (!home || !away) continue;
     const homeStrength = teamStrength(state, home) + state.identity.balanceConfiguration.game.homeFieldAdvantage;

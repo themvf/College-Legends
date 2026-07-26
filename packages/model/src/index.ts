@@ -11,6 +11,7 @@ export type DevelopmentFocus = "BALANCED" | "TECHNIQUE" | "STRENGTH" | "CONDITIO
 export type StaffRole = "HEAD_COACH" | "OFFENSIVE_COORDINATOR" | "DEFENSIVE_COORDINATOR" | "STRENGTH_COACH";
 export type StaffAssignment = "GAME_PREP" | "PLAYER_DEVELOPMENT" | "RECRUITING" | "RECOVERY";
 export type FacilityType = "TRAINING" | "STADIUM" | "ACADEMICS" | "RECRUITING";
+export type DivisionId = "ATLANTIC" | "GREAT_LAKES" | "HEARTLAND" | "GULF" | "MOUNTAIN" | "PACIFIC";
 
 export interface Eligibility {
   cohortYear: number;
@@ -52,6 +53,12 @@ export interface Prospect {
 export interface Program {
   id: ProgramId;
   name: string;
+  nickname: string;
+  abbreviation: string;
+  city: string;
+  state: string;
+  stateCode: string;
+  divisionId: DivisionId;
   tier: "LOW" | "MID" | "POWER";
   budget: number;
   scholarshipLimit: number;
@@ -71,6 +78,7 @@ export interface ScheduledGame {
   week: number;
   homeProgramId: ProgramId;
   awayProgramId: ProgramId;
+  matchupType: "DIVISION" | "CROSS_DIVISION";
   played: boolean;
   homeScore: number | null;
   awayScore: number | null;

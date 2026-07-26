@@ -50,6 +50,31 @@ test("players, coaches, and prospects receive stable unique fictional names", ()
   );
 });
 
+test("the national league has six divisions, all 50 states, and Division I-style schedules", () => {
+  const state = createFictionalLeague("national-football-world");
+  const programs = Object.values(state.programs);
+  assert.equal(programs.length, 72);
+  assert.equal(new Set(programs.map((program) => program.divisionId)).size, 6);
+  assert.equal(new Set(programs.map((program) => program.stateCode)).size, 50);
+  assert.equal(new Set(programs.map((program) => program.name)).size, programs.length);
+  assert.equal(new Set(programs.map((program) => program.abbreviation)).size, programs.length);
+  assert.ok(programs.every((program) => program.nickname && program.city && program.state));
+
+  for (const divisionId of new Set(programs.map((program) => program.divisionId))) {
+    assert.equal(programs.filter((program) => program.divisionId === divisionId).length, 12);
+  }
+  for (const program of programs) {
+    const schedule = state.schedule.filter((game) => game.homeProgramId === program.id || game.awayProgramId === program.id);
+    assert.equal(schedule.length, 12);
+    assert.equal(schedule.filter((game) => game.matchupType === "DIVISION").length, 8);
+    assert.equal(schedule.filter((game) => game.matchupType === "CROSS_DIVISION").length, 4);
+    assert.equal(new Set(schedule.map((game) => game.week)).size, 12);
+    assert.equal(new Set(schedule.map((game) => game.homeProgramId === program.id ? game.awayProgramId : game.homeProgramId)).size, 12);
+    const homeGames = schedule.filter((game) => game.homeProgramId === program.id).length;
+    assert.ok(homeGames >= 5 && homeGames <= 7);
+  }
+});
+
 test("low-tier programs begin with average players and no recruiting actions", () => {
   const state = createFictionalLeague("low-tier-foundation", 12);
   const lowProgram = Object.values(state.programs).find((program) => program.tier === "LOW");
@@ -126,11 +151,13 @@ test("facility upgrades spend budget and weekly finances are recorded", () => {
   const state = activeLeague("program-finances", 4);
   const openingBudget = state.programs["program-1"].budget;
   const openingLevel = state.programs["program-1"].facilities.TRAINING;
+  const upgradeCost = { 1: 350_000, 2: 750_000, 3: 1_500_000, 4: 3_000_000 }[openingLevel];
+  assert.ok(upgradeCost);
   const result = advanceWeek(state, [{ type: "UPGRADE_FACILITY", programId: "program-1", facility: "TRAINING" }]);
   const finance = result.events.find((event) => event.type === "WEEKLY_FINANCES" && event.programId === "program-1");
   assert.ok(finance);
   assert.equal(result.state.programs["program-1"].facilities.TRAINING, openingLevel + 1);
-  assert.equal(result.state.programs["program-1"].budget, openingBudget - 3_000_000 + finance.net);
+  assert.equal(result.state.programs["program-1"].budget, openingBudget - upgradeCost + finance.net);
   assert.ok(result.state.eventHistory.some((event) => event.type === "FACILITY_UPGRADED"));
 });
 
