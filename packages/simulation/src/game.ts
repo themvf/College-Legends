@@ -83,6 +83,10 @@ const TEMPO: Readonly<Record<OffensiveTempo, { drives: number; fatigue: number }
 
 const STARTER_COUNTS: Readonly<Record<Position, number>> = { QB: 1, RB: 2, WR: 3, TE: 1, OL: 5, DL: 4, LB: 3, DB: 4, K: 1, P: 1 };
 
+/** Execution at this level is par; above it is a bonus, below it a penalty. */
+export const EXECUTION_BASELINE = 0.55;
+export const EXECUTION_COMPETENCE_WEIGHT = 9;
+
 const YARDS_LOST_PER_SACK = 6.5;
 const FIELD_GOAL_MINIMUM_POSITION = 65;
 
@@ -92,6 +96,8 @@ export interface TeamSide {
   plan: GamePlan;
   /** Contribution from staff assigned to game preparation. */
   prepBonus: number;
+  /** How well each side of the plan was installed this week, as a band. */
+  execution: { offense: { low: number; high: number }; defense: { low: number; high: number } };
 }
 
 export interface PlayResult {
@@ -117,6 +123,7 @@ export interface SideResult {
   scoreline: Scoreline;
   statLines: PlayerGameStatLine[];
   units: TeamUnitRatings;
+  executed: { offense: number; defense: number };
   runPlays: number;
   passPlays: number;
   giveaways: number;
@@ -194,17 +201,35 @@ export function unitRatingsFromLineup(lineup: readonly Player[], prepBonus = 0):
   };
 }
 
-/** Unit ratings after the standing game plan is applied. */
-export function plannedUnitRatings(units: TeamUnitRatings, plan: GamePlan): TeamUnitRatings {
+/**
+ * Unit ratings after the standing game plan is applied.
+ *
+ * Execution decides how much of the plan actually survives to Saturday. A
+ * scheme installed at 40% delivers 40% of what it promises, which is what makes
+ * preparation matter independently of which call was chosen.
+ */
+export function plannedUnitRatings(
+  units: TeamUnitRatings,
+  plan: GamePlan,
+  execution: { offense: number; defense: number } = { offense: 1, defense: 1 }
+): TeamUnitRatings {
   const balance = RUN_PASS_BALANCE[plan.runPassBalance];
   const priority = DEFENSIVE_PRIORITY[plan.defensivePriority];
   const posture = DEFENSIVE_POSTURE[plan.defensivePosture];
   const pressure = PASS_RUSH_PRESSURE[plan.pressure];
+  const offense = clamp(execution.offense, 0, 1);
+  const defense = clamp(execution.defense, 0, 1);
+  // Execution is competence as well as emphasis. A well-drilled team busts fewer
+  // assignments whatever it has called, and a team that never practised is worse
+  // than its ratings — without this, installing a balanced plan is pure cost,
+  // because a balanced plan has no emphasis deltas for execution to scale.
+  const offenseCompetence = (offense - EXECUTION_BASELINE) * EXECUTION_COMPETENCE_WEIGHT;
+  const defenseCompetence = (defense - EXECUTION_BASELINE) * EXECUTION_COMPETENCE_WEIGHT;
   return {
-    rushOffense: units.rushOffense + balance.rushOffense,
-    passOffense: units.passOffense + balance.passOffense,
-    rushDefense: units.rushDefense + priority.rushDefense + posture.rushDefense,
-    passDefense: units.passDefense + priority.passDefense + posture.passDefense + pressure.passDefense
+    rushOffense: units.rushOffense + balance.rushOffense * offense + offenseCompetence,
+    passOffense: units.passOffense + balance.passOffense * offense + offenseCompetence,
+    rushDefense: units.rushDefense + (priority.rushDefense + posture.rushDefense) * defense + defenseCompetence,
+    passDefense: units.passDefense + (priority.passDefense + posture.passDefense + pressure.passDefense) * defense + defenseCompetence
   };
 }
 
@@ -465,6 +490,7 @@ interface SideState {
   frontSeven: Player[];
   kicker: Player | undefined;
   punter: Player | undefined;
+  executed: { offense: number; defense: number };
   /** Baselines already baked into the unit ratings, so an individual's
    *  deviation from his room is what a touch is actually worth. */
   backBaseline: number;
@@ -479,17 +505,26 @@ interface SideState {
   driveLog: DriveLogEntry[];
 }
 
-function buildSideState(side: TeamSide, opponentProgramId: string, context: StatLineContext): SideState {
+function buildSideState(side: TeamSide, opponentProgramId: string, context: StatLineContext, rng: AddressableRng): SideState {
   const lines = new Map<string, PlayerGameStatLine>();
   for (const player of side.lineup) {
     const depth = side.lineup.filter((other) => other.position === player.position).indexOf(player);
     lines.set(player.id, emptyStatLine(context, player, side.programId, opponentProgramId, depth === 0));
   }
   const units = unitRatingsFromLineup(side.lineup, side.prepBonus);
+  // A week's install lands somewhere inside its band. Better coaching narrows
+  // the band, so a good staff is more predictable as well as better.
+  const draw = (band: { low: number; high: number }, key: string): number =>
+    Number((band.low + rng.at(`${side.programId}:${key}`) * Math.max(0, band.high - band.low)).toFixed(3));
+  const executed = {
+    offense: draw(side.execution.offense, "offensive-execution"),
+    defense: draw(side.execution.defense, "defensive-execution")
+  };
   return {
     side,
     units,
-    planned: plannedUnitRatings(units, side.plan),
+    executed,
+    planned: plannedUnitRatings(units, side.plan, executed),
     lines,
     quarterback: byPosition(side.lineup, "QB")[0],
     backs: byPosition(side.lineup, "RB"),
@@ -901,6 +936,7 @@ function finalizeSide(
     scoreline: state.scoreline,
     statLines: [...state.lines.values()],
     units: state.units,
+    executed: state.executed,
     runPlays: state.runPlays,
     passPlays: state.passPlays,
     giveaways: state.giveaways,
@@ -962,8 +998,8 @@ export function resolveGame(
   homeFieldAdvantage: number,
   rng: AddressableRng
 ): GameResult {
-  const homeState = buildSideState(home, away.programId, context);
-  const awayState = buildSideState(away, home.programId, context);
+  const homeState = buildSideState(home, away.programId, context, rng.fork("execution"));
+  const awayState = buildSideState(away, home.programId, context, rng.fork("execution"));
   for (const unit of Object.keys(homeState.planned) as TeamUnit[]) {
     homeState.planned[unit] += homeFieldAdvantage;
   }

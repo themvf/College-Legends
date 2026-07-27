@@ -20,7 +20,11 @@ import {
   weeklyDecisions,
   MAXIMUM_TICKET_PRICE,
   MAXIMUM_WEEKLY_ADVERTISING,
-  MINIMUM_TICKET_PRICE
+  MINIMUM_TICKET_PRICE,
+  MAXIMUM_REPS_PER_SIDE,
+  planExecution,
+  staffCandidatesFor,
+  staffModifiers
 } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
@@ -555,4 +559,130 @@ test("strategy presets round-trip through the game plan", () => {
   // The default plan must be a named strategy, not "Custom".
   assert.ok(matchingPreset(state.gamePlans[programId], OFFENSIVE_PRESETS), "the opening offense should have a name");
   assert.ok(matchingPreset(state.gamePlans[programId], DEFENSIVE_PRESETS), "the opening defense should have a name");
+});
+
+test("installing the plan is worth real points and costs real reps", () => {
+  const state = beginSeason(createFictionalLeague("plan-install", 24));
+  const programId = "program-1";
+
+  // Reps raise the band with diminishing returns; the installer sets its width.
+  const none = planExecution(state, programId, "OFFENSE", 0);
+  const some = planExecution(state, programId, "OFFENSE", 6);
+  const full = planExecution(state, programId, "OFFENSE", MAXIMUM_REPS_PER_SIDE);
+  assert.ok(some.expected > none.expected, "reps must raise expected execution");
+  assert.ok(full.expected > some.expected, "more reps must raise it further");
+  assert.ok(
+    full.expected - some.expected < some.expected - none.expected,
+    "reps must show diminishing returns"
+  );
+  assert.ok(none.high > none.low, "execution must be a band, never a point value");
+
+  // Sending the coordinator away hands the job to the head coach at a discount.
+  const stripped = structuredClone(state);
+  for (const member of Object.values(stripped.staff)) {
+    if (member.programId === programId && member.role === "OFFENSIVE_COORDINATOR") member.assignment = "RECRUITING";
+  }
+  const covered = planExecution(stripped, programId, "OFFENSE", 6);
+  assert.ok(
+    covered.expected < some.expected,
+    `losing the coordinator must cost execution (${covered.expected} vs ${some.expected})`
+  );
+  assert.ok(covered.limits.length > 0, "the screen must say why execution dropped");
+
+  // The whole board cannot be bought: full install on both sides starves scouting.
+  const pool = state.preparation[programId].weeklyPoints;
+  assert.ok(
+    MAXIMUM_REPS_PER_SIDE * 2 > pool - scoutingCost("TENDENCIES"),
+    `installing both sides fully (${MAXIMUM_REPS_PER_SIDE * 2}) must not leave room for scouting out of ${pool}`
+  );
+
+  // Reps are actually charged, and they tire the roster.
+  const before = state.preparation[programId].points;
+  const result = advanceWeek(state, [
+    { type: "SET_PRACTICE_REPS", programId, side: "OFFENSE", reps: 6 },
+    { type: "SET_PRACTICE_REPS", programId, side: "DEFENSE", reps: 6 }
+  ]);
+  const spent = result.events.filter((event) => event.type === "PRACTICE_REPS_SET" && event.programId === programId);
+  assert.equal(spent.length, 2);
+  assert.equal(spent.reduce((total, event) => total + event.pointsSpent, 0), 12);
+  assert.ok(before >= 12, "a week must afford a moderate install");
+
+  const rested = advanceWeek(state).state;
+  const fatigueOf = (source) => Object.values(source.players)
+    .filter((player) => player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP")
+    .reduce((total, player) => total + player.fatigue, 0);
+  assert.ok(fatigueOf(result.state) > fatigueOf(rested), "practising must tire the roster");
+});
+
+test("a better-executed plan wins more games than the same plan unprepared", () => {
+  // Execution is competence as well as emphasis: without a flat competence term,
+  // installing a balanced plan was pure cost, because a balanced plan has no
+  // emphasis deltas for execution to scale.
+  const measure = (reps) => {
+    let state = beginSeason(createFictionalLeague("execution-value", 24));
+    const programId = "program-1";
+    let scored = 0;
+    let conceded = 0;
+    let games = 0;
+    for (let week = 0; week < 10; week += 1) {
+      const result = advanceWeek(state, [
+        { type: "SET_PRACTICE_REPS", programId, side: "OFFENSE", reps },
+        { type: "SET_PRACTICE_REPS", programId, side: "DEFENSE", reps }
+      ]);
+      state = result.state;
+      for (const event of result.events) {
+        if (event.type !== "GAME_COMPLETED") continue;
+        if (event.homeProgramId !== programId && event.awayProgramId !== programId) continue;
+        const atHome = event.homeProgramId === programId;
+        scored += atHome ? event.homeScore : event.awayScore;
+        conceded += atHome ? event.awayScore : event.homeScore;
+        games += 1;
+      }
+    }
+    return { margin: (scored - conceded) / Math.max(1, games), games };
+  };
+
+  const unprepared = measure(0);
+  const drilled = measure(MAXIMUM_REPS_PER_SIDE);
+  assert.ok(unprepared.games >= 8 && drilled.games >= 8, "both runs need a full slate");
+  assert.ok(
+    drilled.margin > unprepared.margin,
+    `a drilled plan must beat an unprepared one (${drilled.margin.toFixed(1)} vs ${unprepared.margin.toFixed(1)})`
+  );
+});
+
+test("staff cards post what they change and can be replaced", () => {
+  const state = beginSeason(createFictionalLeague("staff-market", 24));
+  const programId = "program-1";
+  const coordinator = Object.values(state.staff)
+    .find((member) => member.programId === programId && member.role === "OFFENSIVE_COORDINATOR");
+  assert.ok(coordinator);
+
+  const modifiers = staffModifiers(coordinator);
+  assert.ok(modifiers.length >= 2, "a coordinator card must post more than one number");
+  assert.ok(modifiers.every((modifier) => modifier.label && modifier.value), "every modifier needs a label and a value");
+
+  const candidates = staffCandidatesFor(state, programId, coordinator.id);
+  assert.equal(candidates.length, 3);
+  assert.ok(candidates.every((candidate) => candidate.role === coordinator.role), "candidates must fit the post");
+  assert.ok(candidates.every((candidate) => candidate.salary > 0 && candidate.signingCost > 0), "a hire must cost something");
+  assert.ok(
+    candidates[0].rating >= candidates[2].rating,
+    "candidates should be presented best first"
+  );
+  // Deterministic: the market must not re-roll every time it is opened.
+  assert.deepEqual(staffCandidatesFor(state, programId, coordinator.id), candidates);
+
+  const target = candidates[0];
+  const result = advanceWeek(state, [
+    { type: "REPLACE_STAFF", programId, staffId: coordinator.id, candidateId: target.id }
+  ]);
+  const hired = result.events.find((event) => event.type === "STAFF_REPLACED" && event.programId === programId);
+  assert.ok(hired, "the replacement should be recorded");
+  assert.equal(hired.rating, target.rating);
+  assert.equal(result.state.staff[coordinator.id], undefined, "the outgoing coach should be gone");
+  assert.ok(
+    Object.values(result.state.staff).some((member) => member.programId === programId && member.name === target.name),
+    "the arriving coach should be on staff"
+  );
 });

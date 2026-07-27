@@ -4,6 +4,7 @@ import { AddressableRng } from "./rng.js";
 import { DEFAULT_GAME_PLAN, OFFENSIVE_IDENTITY_LABELS, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
 import { opponentScoutingReport, preparationWeeklyPoints, projectedGamePlan, scheduledOpponent, scoutingCost, SCOUTING_TIERS } from "./scouting.js";
 import { advertisingReach, DEFENSIVE_PRESETS, developmentCandidates, fairTicketPrice, matchingPreset, MAXIMUM_TICKET_PRICE, MAXIMUM_WEEKLY_ADVERTISING, MINIMUM_TICKET_PRICE, OFFENSIVE_PRESETS, pricingGoodwill, projectGate } from "./business.js";
+import { MAXIMUM_REPS_PER_SIDE, planExecution, repsFatigue, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
 
 export { DEFAULT_GAME_PLAN, DEFENSIVE_IDENTITY_LABELS, GAME_PLAN_OPTIONS, IDENTITY_BASE_DEFENSE, IDENTITY_BASE_PLAN, intendedGamePlan, OFFENSIVE_IDENTITY_LABELS, plannedUnitRatings, projectUnitEdges, unitLabel, unitRatingsFromLineup } from "./game.js";
 export {
@@ -20,6 +21,7 @@ export {
   ticketDemandMultiplier
 } from "./business.js";
 export type { GateProjection, StrategyPreset } from "./business.js";
+export { MAXIMUM_REPS_PER_SIDE, planExecution, planInstaller, repsFatigue, staffModifiers, staffSalary } from "./installation.js";
 export {
   filmGamesAvailable,
   preparationWeeklyPoints,
@@ -381,7 +383,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
     };
     state.developmentSpotlights[id] = null;
     state.gamePlans[id] = { ...DEFAULT_GAME_PLAN };
-    state.preparation[id] = { points: 0, weeklyPoints: 0, scoutedTiers: [], scoutedOpponentId: null };
+    state.preparation[id] = { points: 0, weeklyPoints: 0, scoutedTiers: [], scoutedOpponentId: null, offensiveReps: 0, defensiveReps: 0 };
     for (const [staffIndex, role] of STAFF_ROLES.entries()) {
       const staffId = `${id}-staff-${staffIndex + 1}`;
       const personOrdinal = index * (STARTING_ROSTER_SIZE + STAFF_ROLES.length) + staffIndex;
@@ -391,7 +393,9 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
         name: nameFor(personOrdinal),
         role,
         rating: Math.round(rng.between(`${staffId}:rating`, baseline - 4, baseline + 7)),
-        salary: Math.round(rng.between(`${staffId}:salary`, 140_000, tier === "POWER" ? 1_400_000 : 650_000)),
+        // Priced by the same formula the hiring market uses, so a replacement is
+        // never both better and cheaper by accident.
+        salary: staffSalary(Math.round(rng.between(`${staffId}:rating`, baseline - 4, baseline + 7)), role),
         assignment: role === "STRENGTH_COACH" ? "PLAYER_DEVELOPMENT" : "GAME_PREP"
       };
     }
@@ -700,6 +704,7 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   resolveRecruitingMarket(state, rng.fork("recruiting-market"), events);
   recoverPlayers(state, rng.fork("recovery"), events);
   developPlayers(state, rng.fork("development"), events);
+  applyPracticeFatigue(state);
   resolveScheduledGames(state, rng.fork("games"), events);
   const playerBrandImpact = processPlayerBrands(state, rng.fork("player-brands"), events);
   processInjuries(state, rng.fork("injuries"), events);
@@ -727,7 +732,9 @@ function refreshPreparation(state: GameState, events: GameEvent[]): void {
       points: weeklyPoints,
       weeklyPoints,
       scoutedTiers: [],
-      scoutedOpponentId: scheduledOpponent(state, programId)
+      scoutedOpponentId: scheduledOpponent(state, programId),
+      offensiveReps: 0,
+      defensiveReps: 0
     };
     events.push({ type: "PREP_POINTS_ADDED", season: state.season, week: state.week, programId, pointsAdded: weeklyPoints });
   }
@@ -936,6 +943,77 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         tier: command.tier,
         pointsSpent: cost,
         confidence: scoutingReport(state, program.id).confidence
+      });
+      continue;
+    }
+    if (command.type === "SET_PRACTICE_REPS") {
+      const preparation = state.preparation[program.id];
+      const reps = Math.round(command.reps);
+      if (!preparation || !Number.isFinite(reps) || reps < 0 || reps > MAXIMUM_REPS_PER_SIDE) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: `Practice reps must be between 0 and ${MAXIMUM_REPS_PER_SIDE}.` });
+        continue;
+      }
+      const current = command.side === "OFFENSE" ? preparation.offensiveReps : preparation.defensiveReps;
+      const cost = reps - current;
+      if (cost > preparation.points) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Not enough preparation left this week for those reps." });
+        continue;
+      }
+      preparation.points -= cost;
+      if (command.side === "OFFENSE") preparation.offensiveReps = reps;
+      else preparation.defensiveReps = reps;
+      events.push({
+        type: "PRACTICE_REPS_SET",
+        season: state.season,
+        week: state.week,
+        programId: program.id,
+        side: command.side,
+        reps,
+        pointsSpent: cost,
+        expectedExecution: planExecution(state, program.id, command.side).expected
+      });
+      continue;
+    }
+    if (command.type === "REPLACE_STAFF") {
+      const outgoing = state.staff[command.staffId];
+      if (!outgoing || outgoing.programId !== program.id) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That post does not belong to this program." });
+        continue;
+      }
+      const candidate = staffCandidatesFor(state, program.id, command.staffId)
+        .find((option) => option.id === command.candidateId);
+      if (!candidate) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That candidate is no longer available." });
+        continue;
+      }
+      if (program.budget < candidate.signingCost) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The program cannot afford that signing cost." });
+        continue;
+      }
+      program.budget -= candidate.signingCost;
+      const arrivingId = `${program.id}-staff-${candidate.id.replace(/[^A-Za-z0-9]/g, "-")}`;
+      delete state.staff[command.staffId];
+      state.staff[arrivingId] = {
+        id: arrivingId,
+        programId: program.id,
+        name: candidate.name,
+        role: candidate.role,
+        rating: candidate.rating,
+        salary: candidate.salary,
+        assignment: outgoing.assignment
+      };
+      events.push({
+        type: "STAFF_REPLACED",
+        season: state.season,
+        week: state.week,
+        programId: program.id,
+        departingStaffId: command.staffId,
+        arrivingStaffId: arrivingId,
+        name: candidate.name,
+        role: candidate.role,
+        rating: candidate.rating,
+        salary: candidate.salary,
+        signingCost: candidate.signingCost
       });
       continue;
     }
@@ -1344,6 +1422,23 @@ function playerDevelopmentIntensity(state: Readonly<GameState>, player: Readonly
   return spotlight.target.position === player.position ? 0.55 : 1;
 }
 
+/**
+ * Practice reps tire the roster. Without a cost, a maximum install every week
+ * would be free and the reps dial would not be a decision.
+ */
+function applyPracticeFatigue(state: GameState): void {
+  for (const programId of Object.keys(state.programs)) {
+    const preparation = state.preparation?.[programId];
+    if (!preparation) continue;
+    const added = repsFatigue(preparation.offensiveReps + preparation.defensiveReps) / 2;
+    if (added <= 0) continue;
+    for (const player of Object.values(state.players)) {
+      if (player.programId !== programId || player.eligibility.rosterStatus !== "SCHOLARSHIP") continue;
+      player.fatigue = clamp(Number((player.fatigue + added).toFixed(1)), 0, 100);
+    }
+  }
+}
+
 function developPlayers(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
   const rules = state.identity.balanceConfiguration.weeklyDevelopment;
   for (const player of Object.values(state.players)) {
@@ -1490,6 +1585,20 @@ export function weeklyDecisions(state: Readonly<GameState>, programId: string): 
   return decisions;
 }
 
+/** Replacements available for a post, with what each costs and changes. */
+export function staffCandidatesFor(state: Readonly<GameState>, programId: string, staffId: string) {
+  const nameRng = new AddressableRng(state.identity.rootSeed).fork("league-generation", "fictional-names");
+  const firstNameOffset = Math.floor(nameRng.between("first-offset", 0, 96));
+  const lastNameOffset = Math.floor(nameRng.between("last-offset", 0, 160));
+  return staffCandidates(state, programId, staffId, (ordinal) =>
+    fictionalPersonName(200_000 + ordinal, firstNameOffset, lastNameOffset));
+}
+
+/** The posted modifiers on a staff card. */
+export function staffCardModifiers(member: Pick<StaffMember, "rating" | "role">) {
+  return staffModifiers(member);
+}
+
 /** What this program currently knows about the week's opponent. */
 export function scoutingReport(state: Readonly<GameState>, programId: string): OpponentScoutingReport {
   return opponentScoutingReport(state, programId, { unitRatings: (id) => programUnitRatings(state, id) });
@@ -1602,7 +1711,11 @@ function teamSide(state: Readonly<GameState>, programId: string): TeamSide {
     plan: state.gamePlans?.[programId] ?? { ...DEFAULT_GAME_PLAN },
     prepBonus: Object.values(state.staff)
       .filter((staff) => staff.programId === programId && staff.assignment === "GAME_PREP")
-      .reduce((total, staff) => total + gamePrepContribution(staff), 0)
+      .reduce((total, staff) => total + gamePrepContribution(staff), 0),
+    execution: {
+      offense: planExecution(state, programId, "OFFENSE"),
+      defense: planExecution(state, programId, "DEFENSE")
+    }
   };
 }
 
@@ -1668,6 +1781,8 @@ function commitGameResult(
       sacksAgainst: side.sacksAgainst,
       leadBackShare: side.leadBackShare,
       topTargetShare: side.topTargetShare,
+      offensiveExecution: side.executed.offense,
+      defensiveExecution: side.executed.defense,
       notes: gamePlanNotes(side, opposingSide)
     });
   }

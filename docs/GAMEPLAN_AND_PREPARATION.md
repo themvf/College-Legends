@@ -186,8 +186,17 @@ decisions they cannot learn from.
 4. ~~Named strategy presets, so the seven emphasis axes collapse to one
    offensive and one defensive choice.~~ **Done** — `OFFENSIVE_PRESETS`,
    `DEFENSIVE_PRESETS`, and the "This Week" screen.
-5. Playbook installation as a staged project, then play concepts.
-6. Coordinator delegation and the `AUTO_GAMEPLAN` card.
+5. ~~Plan installation as a weekly build: who installs it, how many reps, and an
+   execution band that decides how much of the plan lands.~~ **Done** —
+   `packages/simulation/src/installation.ts`.
+6. Playbook identity as a staged multi-week project, then play concepts.
+7. Coordinator delegation and the `AUTO_GAMEPLAN` card.
+
+The lesson from stage 5: a multiplier needs something to multiply. Execution
+first scaled only the emphasis deltas, and a balanced plan has none — so
+preparing a balanced plan cost fatigue and bought nothing, and a fully-installed
+season finished behind an unprepared one. Any future quality term needs a flat
+competence component as well as a scaling one.
 
 Each stage is playable on its own, and each one adds decisions without waiting
 on the stage after it.

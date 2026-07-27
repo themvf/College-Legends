@@ -35,6 +35,10 @@ import {
   MAXIMUM_WEEKLY_ADVERTISING,
   MAXIMUM_TICKET_PRICE,
   MINIMUM_TICKET_PRICE,
+  MAXIMUM_REPS_PER_SIDE,
+  planExecution,
+  staffModifiers,
+  staffCandidatesFor,
   SCOUTING_TIER_DESCRIPTIONS,
   SCOUTING_TIER_LABELS,
   scoutingCost,
@@ -127,7 +131,9 @@ export function App(): ReactElement {
   const queue = (command: GameCommand): void => {
     // Scouting settles now: a report read after the game cannot shape the plan.
     if (command.type === "SCOUT_OPPONENT") { prepare(command); return; }
-    const key = command.type === "SET_TICKET_PRICE" ? "ticket-price"
+    const key = command.type === "SET_PRACTICE_REPS" ? `reps:${command.side}`
+      : command.type === "REPLACE_STAFF" ? `replace:${command.staffId}`
+      : command.type === "SET_TICKET_PRICE" ? "ticket-price"
       : command.type === "SET_ADVERTISING" ? "advertising"
       : command.type === "SET_GAME_PLAN" ? `game-plan:${Object.keys(command.plan).sort().join(",")}`
       : command.type === "SET_DEVELOPMENT_SPOTLIGHT" ? "development-spotlight"
@@ -173,6 +179,8 @@ export function App(): ReactElement {
 
 function commandKey(command: GameCommand): string {
   if (command.type === "SCOUT_OPPONENT") return `scout:${command.tier}`;
+  if (command.type === "SET_PRACTICE_REPS") return `reps:${command.side}`;
+  if (command.type === "REPLACE_STAFF") return `replace:${command.staffId}`;
   if (command.type === "SET_TICKET_PRICE") return "ticket-price";
   if (command.type === "SET_ADVERTISING") return "advertising";
   if (command.type === "SET_GAME_PLAN") return `game-plan:${Object.keys(command.plan).sort().join(",")}`;
@@ -624,14 +632,63 @@ function Divisions({ game }: { game: GameView }): ReactElement {
 }
 
 function Staff({ game, pending, onQueue }: { game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
-  const staff = Object.values(game.state.staff).filter((item) => item.programId === game.playerProgramId);
-  return <section className="panel table-panel"><SectionHeading eyebrow="Coaching staff" title="Weekly assignment decision tree" detail="Coach rating and role determine the exact payoff. Moving a coach creates an opportunity cost because they stop contributing to their previous assignment." />
-    <div className="data-table staff-table"><div className="data-row data-header"><span>Coach</span><span>Role</span><span>Rating</span><span>Salary</span><span>Assignment</span></div>{staff.map((member) => {
-      const queued = pending.find((item): item is Extract<GameCommand, { type: "ASSIGN_STAFF" }> => item.type === "ASSIGN_STAFF" && item.staffId === member.id);
-      const assignment = queued?.assignment ?? member.assignment;
-      return <div className="data-row decision-row" key={member.id}><strong data-label="Coach">{member.name}</strong><span data-label="Role">{label(member.role)}</span><span data-label="Rating">{member.rating}</span><span data-label="Salary">{money(member.salary)}</span><div className="decision-control"><select aria-label={`Assignment for ${member.name}`} value={assignment} onChange={(event) => onQueue({ type: "ASSIGN_STAFF", programId: game.playerProgramId, staffId: member.id, assignment: event.target.value as StaffAssignment })}>{staffAssignments.map((option) => <option value={option} key={option}>{label(option)}</option>)}</select>
-        <div className="payoff-strip"><b>Weekly payoff</b><span>{staffAssignmentPayoff(member, assignment)}</span><small>Choosing this removes this coach’s contribution from every other area.</small></div></div></div>;
-    })}</div></section>;
+  const programId = game.playerProgramId;
+  const program = game.state.programs[programId]!;
+  const staff = Object.values(game.state.staff).filter((item) => item.programId === programId);
+  const [openMarket, setOpenMarket] = useState<string>();
+
+  return <section className="screen staff-screen">
+    <article className="panel">
+      <p className="eyebrow">Coaching staff · {money(staff.reduce((sum, member) => sum + member.salary, 0))} a year</p>
+      <h2>Every post states what it changes</h2>
+      <p className="muted">Coordinators only install the game plan while they are on game preparation. Moving one elsewhere hands the job to the head coach at a discount.</p>
+    </article>
+
+    {staff.map((member) => {
+      const queuedAssignment = pending.find((item): item is Extract<GameCommand, { type: "ASSIGN_STAFF" }> =>
+        item.type === "ASSIGN_STAFF" && item.staffId === member.id);
+      const assignment = queuedAssignment?.assignment ?? member.assignment;
+      const queuedReplacement = pending.find((item): item is Extract<GameCommand, { type: "REPLACE_STAFF" }> =>
+        item.type === "REPLACE_STAFF" && item.staffId === member.id);
+      const candidates = openMarket === member.id ? staffCandidatesFor(game.state, programId, member.id) : [];
+      return <article className="panel staff-card" key={member.id}>
+        <div className="staff-head">
+          <div>
+            <p className="eyebrow">{label(member.role)}</p>
+            <h2>{member.name}</h2>
+            <p className="muted">{member.rating} rated · {money(member.salary)} a year</p>
+          </div>
+          <button className="replace-button" onClick={() => setOpenMarket(openMarket === member.id ? undefined : member.id)}>
+            {openMarket === member.id ? "Close" : "Replace"}
+          </button>
+        </div>
+        <div className="snapshot-list">{staffModifiers(member).map((modifier) =>
+          <p key={modifier.label}><span>{modifier.label}</span><strong>{modifier.value}</strong></p>)}
+        </div>
+        <label className="assignment-row">
+          <span>Assignment</span>
+          <select aria-label={`Assignment for ${member.name}`} value={assignment}
+            onChange={(event) => onQueue({ type: "ASSIGN_STAFF", programId, staffId: member.id, assignment: event.target.value as StaffAssignment })}>
+            {staffAssignments.map((option) => <option value={option} key={option}>{label(option)}</option>)}
+          </select>
+        </label>
+        <p className="muted">{staffAssignmentPayoff(member, assignment)}</p>
+        {queuedReplacement && <p className="attention">Replacement queued; it resolves when the week is advanced.</p>}
+        {candidates.length > 0 && <div className="plan-options">{candidates.map((candidate) => {
+          const affordable = program.budget >= candidate.signingCost;
+          return <button className="plan-option" key={candidate.id} disabled={!affordable}
+            onClick={() => { onQueue({ type: "REPLACE_STAFF", programId, staffId: member.id, candidateId: candidate.id }); setOpenMarket(undefined); }}>
+            <strong>{candidate.name} · {candidate.rating} rated</strong>
+            <span className="effect">{money(candidate.salary)} a year · {money(candidate.signingCost)} to sign</span>
+            <span className="tradeoff">
+              {candidate.rating > member.rating ? `+${candidate.rating - member.rating} on ${member.name}` : `${candidate.rating - member.rating} on ${member.name}`}
+              {affordable ? "" : " · cannot afford the signing cost"}
+            </span>
+          </button>;
+        })}</div>}
+      </article>;
+    })}
+  </section>;
 }
 
 function Finances({ game, pending, onQueue }: { game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
@@ -1021,6 +1078,14 @@ function GamePlanScreen({ game, pending, onQueue }: {
   const scouting = scoutingReport(game.state, programId);
   const preparation = game.state.preparation?.[programId];
   const remaining = preparation?.points ?? 0;
+  const queuedReps = (["OFFENSE", "DEFENSE"] as const).reduce((total, side) => {
+    const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_PRACTICE_REPS" }> =>
+      command.type === "SET_PRACTICE_REPS" && command.side === side);
+    if (!queued) return total;
+    const saved = side === "OFFENSE" ? preparation?.offensiveReps ?? 0 : preparation?.defensiveReps ?? 0;
+    return total + (queued.reps - saved);
+  }, 0);
+  const remainingPrep = remaining - queuedReps;
 
   return <section className="screen game-plan">
     {scouting.opponentProgramId && <article className="panel">
@@ -1096,6 +1161,34 @@ function GamePlanScreen({ game, pending, onQueue }: {
       </table>
       <ul className="plan-notes">{lastReport.notes.map((note) => <li key={note}>{note}</li>)}</ul>
     </article>}
+    <article className="panel">
+      <p className="eyebrow">Installing the plan · {remainingPrep} of {preparation?.weeklyPoints ?? 0} prep left</p>
+      <h2>How much of it actually lands</h2>
+      <p className="muted">A plan is built during the week, not just chosen. Reps raise how much of it survives to Saturday; who installs it sets the floor and how much it swings.</p>
+      {(["OFFENSE", "DEFENSE"] as const).map((side) => {
+        const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_PRACTICE_REPS" }> =>
+          command.type === "SET_PRACTICE_REPS" && command.side === side);
+        const saved = side === "OFFENSE" ? preparation?.offensiveReps ?? 0 : preparation?.defensiveReps ?? 0;
+        const reps = queued?.reps ?? saved;
+        const current = planExecution(game.state, programId, side, reps);
+        const without = planExecution(game.state, programId, side, 0);
+        return <div className="install-row" key={side}>
+          <p className="plan-label">{side === "OFFENSE" ? "Offensive install" : "Defensive install"} · {current.installerName} ({current.installerRating})</p>
+          <div className="execution-bar" aria-label={`${side} execution band`}>
+            <span className="execution-band" style={{ left: `${current.low * 100}%`, width: `${Math.max(2, (current.high - current.low) * 100)}%` }} />
+            <span className="execution-par" style={{ left: "55%" }} />
+          </div>
+          <p className="execution-summary">
+            <strong>{current.summary}</strong>
+            {reps > 0 && <span className="muted"> — was {without.summary} with no reps</span>}
+          </p>
+          <input type="range" min={0} max={MAXIMUM_REPS_PER_SIDE} value={reps}
+            onChange={(event) => onQueue({ type: "SET_PRACTICE_REPS", programId, side, reps: Number(event.target.value) })} />
+          <p className="muted">{reps} rep{reps === 1 ? "" : "s"} · costs {reps} prep · {(reps * 0.22).toFixed(1)} roster fatigue</p>
+          {current.limits.map((limit) => <p className="attention" key={limit}>{limit}</p>)}
+        </div>;
+      })}
+    </article>
     <article className="panel">
       <p className="eyebrow">This week's matchups</p>
       <h2>What the plan is worth</h2>

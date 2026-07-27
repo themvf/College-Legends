@@ -148,6 +148,45 @@ export interface PreparationProgramState {
   /** Tiers bought against this week's opponent. Cleared at every new week. */
   scoutedTiers: ScoutingTier[];
   scoutedOpponentId: ProgramId | null;
+  /** Reps spent installing each side of the plan. Cleared at every new week. */
+  offensiveReps: number;
+  defensiveReps: number;
+}
+
+/**
+ * How well a side of the game plan will actually be run. A plan is built during
+ * the week, not merely chosen: who installs it and how many reps it gets decide
+ * how much of the chosen emphasis survives to Saturday.
+ */
+export interface PlanExecution {
+  side: "OFFENSE" | "DEFENSE";
+  installerStaffId: string | null;
+  installerName: string;
+  installerRating: number;
+  reps: number;
+  /** Execution lands somewhere in this band; better coaching narrows it. */
+  low: number;
+  high: number;
+  expected: number;
+  summary: string;
+  limits: string[];
+}
+
+/** A posted modifier on a staff card, in the spirit of a salaried specialist. */
+export interface StaffModifier {
+  label: string;
+  value: string;
+}
+
+/** A hireable replacement, with what they cost and what they change. */
+export interface StaffCandidate {
+  id: string;
+  name: string;
+  role: StaffRole;
+  rating: number;
+  salary: number;
+  signingCost: number;
+  modifiers: StaffModifier[];
 }
 
 /** Why a weekly decision is worth revisiting. Absent when nothing has changed. */
@@ -433,6 +472,8 @@ export type GameCommand =
   | { type: "SCOUT_OPPONENT"; programId: ProgramId; tier: ScoutingTier }
   | { type: "SET_TICKET_PRICE"; programId: ProgramId; price: number }
   | { type: "SET_ADVERTISING"; programId: ProgramId; spend: number }
+  | { type: "SET_PRACTICE_REPS"; programId: ProgramId; side: "OFFENSE" | "DEFENSE"; reps: number }
+  | { type: "REPLACE_STAFF"; programId: ProgramId; staffId: string; candidateId: string }
   | { type: "SCHEDULE_MARQUEE_HOME_GAME"; programId: ProgramId; opponentProgramId: ProgramId };
 
 export type GameEvent =
@@ -579,6 +620,8 @@ export type GameEvent =
       schoolFanLift: number;
     }
   | { type: "OPPONENT_SCOUTED"; season: Season; week: number; programId: ProgramId; opponentProgramId: ProgramId; tier: ScoutingTier; pointsSpent: number; confidence: number }
+  | { type: "PRACTICE_REPS_SET"; season: Season; week: number; programId: ProgramId; side: "OFFENSE" | "DEFENSE"; reps: number; pointsSpent: number; expectedExecution: number }
+  | { type: "STAFF_REPLACED"; season: Season; week: number; programId: ProgramId; departingStaffId: string; arrivingStaffId: string; name: string; role: StaffRole; rating: number; salary: number; signingCost: number }
   | { type: "TICKET_PRICE_SET"; season: Season; week: number; programId: ProgramId; price: number; fairPrice: number }
   | { type: "ADVERTISING_SET"; season: Season; week: number; programId: ProgramId; spend: number }
   | { type: "PREP_POINTS_ADDED"; season: Season; week: number; programId: ProgramId; pointsAdded: number }
@@ -604,6 +647,8 @@ export type GameEvent =
       sacksAgainst: number;
       leadBackShare: number;
       topTargetShare: number;
+      offensiveExecution: number;
+      defensiveExecution: number;
       notes: string[];
     }
   | { type: "WEEKLY_FINANCES"; season: Season; week: number; programId: ProgramId; revenue: number; expenses: number; net: number }

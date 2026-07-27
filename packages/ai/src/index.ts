@@ -1,5 +1,5 @@
-import type { DevelopmentFocus, GamePlan, GameState, GameCommand, Position, Prospect, ScoutingTier } from "@college-legends/model";
-import { intendedGamePlan, programUnitRatings, scheduledOpponent, scoutingCost, SCOUTING_TIERS } from "@college-legends/simulation";
+import type { DevelopmentFocus, GamePlan, GameState, GameCommand, Position, Prospect } from "@college-legends/model";
+import { intendedGamePlan, MAXIMUM_REPS_PER_SIDE, programUnitRatings, scheduledOpponent, scoutingCost, SCOUTING_TIERS } from "@college-legends/simulation";
 
 /**
  * Rivals answer the same game-plan questions the player does, from what a
@@ -25,20 +25,35 @@ function planGamePlan(state: Readonly<GameState>, programId: string, opponentId:
   );
 }
 
-/** Rivals spend preparation too, buying the cheap reports before the dear ones. */
-function planScouting(state: Readonly<GameState>, programId: string): ScoutingTier[] {
+/**
+ * Rivals face the same squeeze the player does: a week of attention buys either
+ * information about the opponent or reps installing their own plan. They keep
+ * most of it for installation and buy the cheapest useful report with the rest.
+ */
+function planPreparation(state: Readonly<GameState>, programId: string): GameCommand[] {
   const preparation = state.preparation?.[programId];
   if (!preparation || !scheduledOpponent(state, programId)) return [];
   let points = preparation.points;
-  const ordered: ScoutingTier[] = [];
+  const commands: GameCommand[] = [];
+
+  // Install first — a plan that is not practised is worth less than knowing
+  // what the opponent will do with theirs.
+  for (const side of ["OFFENSE", "DEFENSE"] as const) {
+    const current = side === "OFFENSE" ? preparation.offensiveReps : preparation.defensiveReps;
+    const target = Math.min(MAXIMUM_REPS_PER_SIDE, current + Math.floor(points * 0.35));
+    if (target <= current) continue;
+    commands.push({ type: "SET_PRACTICE_REPS", programId, side, reps: target });
+    points -= target - current;
+  }
+
   for (const tier of SCOUTING_TIERS) {
     if (preparation.scoutedTiers.includes(tier)) continue;
     const cost = scoutingCost(tier);
     if (points < cost) continue;
-    ordered.push(tier);
+    commands.push({ type: "SCOUT_OPPONENT", programId, tier });
     points -= cost;
   }
-  return ordered;
+  return commands;
 }
 
 function upcomingOpponent(state: Readonly<GameState>, programId: string): string | null {
@@ -56,9 +71,7 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
     if (program.id === excludedProgramId) return [];
     const commands: GameCommand[] = [];
 
-    for (const tier of planScouting(state, program.id)) {
-      commands.push({ type: "SCOUT_OPPONENT", programId: program.id, tier });
-    }
+    commands.push(...planPreparation(state, program.id));
 
     const desired = planGamePlan(state, program.id, upcomingOpponent(state, program.id));
     const current = state.gamePlans?.[program.id];

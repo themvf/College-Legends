@@ -362,6 +362,58 @@ bought report is a read rather than a lookup.
 report, so a bought report describes the plan that is actually run rather than a
 parallel guess that could drift away from it.
 
+## Installing the game plan
+
+The game plan used to be pure selection: pick a preset, and the outcome came
+entirely from roster ratings. There was no way to make *this week's* version of
+a plan better than last week's. It is now built during the week.
+
+Two inputs decide **execution** — how much of the plan survives to Saturday:
+
+- **Who installs it.** The coordinator does it, but only while assigned to
+  `GAME_PREP`; move him and the head coach covers at 82% of his rating. That is
+  what finally makes the staff-assignment decision worth caring about.
+- **Practice reps**, 0-12 a side, bought with the same weekly attention that pays
+  for scouting. Diminishing returns, and they tire the roster.
+
+Execution is a **band**, not a number, and better coaching narrows it as well as
+raising it. Measured against a par opponent over 500 games a cell:
+
+| install | margin | win rate |
+|---|---|---|
+| none, 40-61% | −0.7 | 47.2% |
+| par, 50-60% | +0.4 | 49.4% |
+| 6 reps, 58-79% | +3.4 | 52.4% |
+| 12 reps, 66-87% | +5.7 | 56.4% |
+
+A *committed* plan gains more from a full install (+6.5) than a balanced one,
+because emphasis deltas scale by execution too — committing to a scheme is worse
+than balance when you cannot install it and better when you can.
+
+**Execution is competence, not only emphasis.** The first build scaled emphasis
+deltas alone, and the neutral plan's deltas are all zero — so installing a
+balanced plan was pure fatigue for no gain, and a full-install season finished
+*worse* than an unprepared one. `EXECUTION_COMPETENCE_WEIGHT` adds a flat term
+against a 0.55 baseline: a drilled team busts fewer assignments whatever it has
+called, and an unprepared one is worse than its ratings.
+
+Installing both sides fully costs 24 of a ~25-point pool, so **a full install
+means no scouting at all**. That is the squeeze, and it is what finally makes
+preparation capacity an economy rather than a scouting budget with one sink.
+
+### Staff cards
+
+Coordinators used to contribute `rating x 1.4 / 100` — about 1.1 rating points —
+and nothing else. Each post now states what it changes ("installs the offensive
+plan at 51% before reps", "week-to-week swing ±10%") and offers three
+replacements with a rating, a salary, and a signing cost.
+
+`staffSalary()` is shared by league creation and the hiring market. Incumbent
+salaries used to be drawn at random and uncorrelated with rating, so the market
+routinely offered coaches who were both better *and* cheaper — replacing was a
+free lunch. Pricing both from one formula makes an upgrade cost what it is
+worth: +12 rating on a head coach runs about +$540k a year plus $395k to sign.
+
 ## The weekly decision loop
 
 Advancing a week is meant to be a ritual rather than a button. Five decisions
@@ -429,8 +481,9 @@ be replaced.
 2. ~~Re-tune stat bands against the fixed RNG; reconcile score to box score~~ — done.
 3. ~~Unit-level ratings, drive resolution, and the emphasis calls~~ — done.
 4. ~~Prep capacity and opponent scouting~~ — done.
-5. Playbook installation as a staged project, then play concepts, then
-   coordinator delegation — see `docs/GAMEPLAN_AND_PREPARATION.md`.
+5. ~~Plan installation, coordinator cards, and an execution band~~ — done.
+   Playbook identity as a staged multi-week project, play concepts, and
+   coordinator delegation remain — see `docs/GAMEPLAN_AND_PREPARATION.md`.
 6. ~~Ticket pricing and advertising~~ — done; see "The weekly decision loop".
    Still open from finding 3: media rights, sponsorship, merchandise, recurring
    facility costs, and an insolvency check. `weeklyRevenue` and `weeklyExpenses`
