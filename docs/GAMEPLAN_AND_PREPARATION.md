@@ -180,14 +180,23 @@ decisions they cannot learn from.
 2. ~~Weekly emphasis commands plus the matchup table, with projections and the
    plan report.~~ **Done** — the `SET_GAME_PLAN` command, `GAME_PLAN_OPTIONS`,
    `projectGamePlan`, and the `GAME_PLAN_REPORT` event.
-3. Prep capacity, opponent scouting tiers, and the AI spending prep like a
-   rival.
+3. ~~Prep capacity, opponent scouting tiers, and the AI spending prep like a
+   rival.~~ **Done** — `packages/simulation/src/scouting.ts`, the
+   `SCOUT_OPPONENT` command, and `prepareWeek`.
 4. Playbook installation as a staged project, then play concepts.
 5. Coordinator delegation and the `AUTO_GAMEPLAN` card.
 
 Each stage is playable on its own, and each one adds decisions without waiting
 on the stage after it.
 
-Rivals already set their own plans from their personnel and the opponent's film,
-but they cannot read the player's chosen calls. Countering a plan the opponent
-has not revealed is exactly what scouting sells in stage 3.
+Two lessons from stage 3 that apply to the stages left.
+
+**Information has to be taken away before it can be sold.** The matchup
+projection was handing over the opponent's exact unit ratings for free, which was
+the personnel tier given away. Check what a screen already reveals before
+pricing it.
+
+**A pre-week decision has to resolve pre-week.** Scouting bought through the
+normal command queue would only have resolved during `advanceWeek`, so the
+report would have arrived after the game it was meant to inform. `prepareWeek`
+exists for that reason, and playbook installation will need the same treatment.

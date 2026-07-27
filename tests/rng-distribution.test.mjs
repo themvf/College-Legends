@@ -1,6 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AddressableRng, advanceWeek, beginSeason, createFictionalLeague } from "../packages/simulation/dist/index.js";
+import {
+  AddressableRng,
+  advanceWeek,
+  beginSeason,
+  createFictionalLeague,
+  prepareWeek,
+  projectGamePlan,
+  scoutingCost,
+  scoutingReport,
+  SCOUTING_TIERS
+} from "../packages/simulation/dist/index.js";
+import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 /**
  * Correctness of a single draw belongs in the determinism tests. These are the
@@ -317,4 +328,109 @@ test("a game plan is a standing instruction and is reported after the game", () 
   const next = advanceWeek(state);
   assert.equal(next.state.gamePlans[programId].runPassBalance, "PASS_HEAVY");
   assert.equal(next.events.some((event) => event.type === "GAME_PLAN_SET" && event.programId === programId), false);
+});
+
+test("rival programs have lasting, distinguishable identities", () => {
+  // Scouting has nothing to sell if every rival plays the same way. Before
+  // scheme identity existed the league ran 91-100% identical on every offensive
+  // axis, and the one axis that varied flipped most weeks.
+  let state = beginSeason(createFictionalLeague("rival-identity", 24));
+  const programs = Object.keys(state.programs);
+  const axes = ["runPassBalance", "backfieldUsage", "targetDistribution", "tempo", "defensivePosture", "pressure"];
+  const seen = Object.fromEntries(axes.map((axis) => [axis, {}]));
+  let churn = 0;
+  let samples = 0;
+
+  for (let week = 0; week < 8; week += 1) {
+    const before = structuredClone(state.gamePlans);
+    state = advanceWeek(state, planWeeklyCommands(state)).state;
+    for (const programId of programs) {
+      for (const axis of axes) {
+        const value = state.gamePlans[programId][axis];
+        seen[axis][value] = (seen[axis][value] ?? 0) + 1;
+        if (before[programId][axis] !== value) churn += 1;
+        samples += 1;
+      }
+    }
+  }
+
+  for (const axis of axes) {
+    const share = Math.max(...Object.values(seen[axis])) / (samples / axes.length);
+    assert.ok(share < 0.8, `${axis} is ${(share * 100).toFixed(0)}% one value — nothing to scout`);
+  }
+  // Identity has to persist, or a tendency read is stale before it is used.
+  assert.ok(churn / samples < 0.2, `plans changed ${(churn / samples * 100).toFixed(0)}% of the time — too unstable to scout`);
+});
+
+test("week one is a real test: nothing is free, and film changes what a report is worth", () => {
+  let state = beginSeason(createFictionalLeague("week-one-scouting", 24));
+  const programId = "program-1";
+  assert.equal(state.week, 1);
+
+  const blind = scoutingReport(state, programId);
+  assert.ok(blind.opponentProgramId, "week one should have an opponent");
+  assert.equal(blind.filmGames, 0, "no games have been played yet");
+  assert.equal(blind.identity, null, "identity must be bought");
+  assert.equal(blind.units, null, "unit ratings must be bought");
+  assert.equal(blind.tendencies, null, "their calls must be bought");
+  // The free projection must not leak the opponent's true ratings.
+  for (const edge of projectGamePlan(state, programId)) {
+    assert.equal(edge.opposingRating, null, `${edge.unit} leaked an unscouted opponent rating`);
+  }
+
+  // The whole board costs more than a week of preparation provides.
+  const pool = state.preparation[programId].weeklyPoints;
+  const everything = SCOUTING_TIERS.reduce((total, tier) => total + scoutingCost(tier), 0);
+  assert.ok(pool > 0, "a program must be able to prepare in week one");
+  assert.ok(everything > pool, `all three tiers cost ${everything} but a week provides ${pool} — scouting must force a choice`);
+
+  // Buying resolves immediately, before the week is advanced.
+  const bought = prepareWeek(state, [
+    { type: "SCOUT_OPPONENT", programId, tier: "TENDENCIES" },
+    { type: "SCOUT_OPPONENT", programId, tier: "PERSONNEL" }
+  ]);
+  const informed = scoutingReport(bought.state, programId);
+  assert.ok(informed.identity, "tendencies should reveal their identity");
+  assert.equal(informed.units?.length, 4, "personnel should estimate all four units");
+  assert.equal(informed.tendencies, null, "the unbought tier stays locked");
+  assert.equal(bought.state.preparation[programId].points, pool - scoutingCost("TENDENCIES") - scoutingCost("PERSONNEL"));
+
+  // Estimates are ranges that contain something, never exact numbers.
+  for (const unit of informed.units) {
+    assert.ok(unit.high > unit.low, `${unit.unit} came back as a point estimate rather than a range`);
+  }
+
+  const overspend = prepareWeek(bought.state, [{ type: "SCOUT_OPPONENT", programId, tier: "GAME_PLAN" }]);
+  assert.ok(
+    overspend.events.some((event) => event.type === "COMMAND_REJECTED"),
+    "a program must not be able to buy every report in one week"
+  );
+
+  // Film accumulates, and a later report is worth more than an opening-week one.
+  let later = state;
+  for (let week = 0; week < 5; week += 1) later = advanceWeek(later, planWeeklyCommands(later)).state;
+  const withFilm = scoutingReport(later, programId);
+  assert.ok(withFilm.filmGames > 0, "film should accumulate as the season is played");
+  assert.ok(
+    withFilm.confidence > blind.confidence,
+    `film should sharpen a report (${blind.confidence}% blind vs ${withFilm.confidence}% with film)`
+  );
+});
+
+test("the top scouting tier reports likelihoods, never certainty", () => {
+  let state = beginSeason(createFictionalLeague("scouting-likelihoods", 24));
+  const programId = "program-1";
+  // Reach a week with film so the report is as sharp as it gets.
+  for (let week = 0; week < 6; week += 1) state = advanceWeek(state, planWeeklyCommands(state)).state;
+  state = prepareWeek(state, [{ type: "SCOUT_OPPONENT", programId, tier: "GAME_PLAN" }]).state;
+
+  const report = scoutingReport(state, programId);
+  assert.ok(report.tendencies?.length, "the game-plan tier should report tendencies");
+  for (const tendency of report.tendencies) {
+    const total = tendency.options.reduce((sum, option) => sum + option.probability, 0);
+    assert.ok(Math.abs(total - 1) < 0.02, `${tendency.axis} probabilities sum to ${total.toFixed(2)}`);
+    const top = Math.max(...tendency.options.map((option) => option.probability));
+    assert.ok(top > 0.34, `${tendency.axis} carries no signal at all`);
+    assert.ok(top < 0.95, `${tendency.axis} reports certainty at ${top} — it must stay a read`);
+  }
 });

@@ -1,9 +1,11 @@
 import type {
   BackfieldUsage,
+  DefensiveIdentity,
   DefensivePosture,
   DefensivePriority,
   GamePlan,
   MatchupOutcome,
+  OffensiveIdentity,
   OffensiveTempo,
   PassRushPressure,
   Player,
@@ -11,6 +13,7 @@ import type {
   PlayType,
   Position,
   RunPassBalance,
+  SchemeIdentity,
   TargetDistribution,
   TeamUnit,
   TeamUnitRatings
@@ -208,6 +211,77 @@ export function plannedUnitRatings(units: TeamUnitRatings, plan: GamePlan): Team
 /** A single number for rankings and comparisons, now that four exist. */
 export function overallStrength(units: TeamUnitRatings): number {
   return (units.rushOffense + units.passOffense + units.rushDefense + units.passDefense) / 4;
+}
+
+/**
+ * The plan a program runs when nothing about the matchup argues otherwise.
+ * Identity is what makes a rival recognisable across a season — and therefore
+ * what a scouting report has to sell. Without it every program plays the same
+ * way and a tendency report says nothing.
+ */
+export const IDENTITY_BASE_PLAN: Readonly<Record<OffensiveIdentity, Pick<GamePlan, "runPassBalance" | "backfieldUsage" | "targetDistribution" | "tempo">>> = {
+  POWER_RUN: { runPassBalance: "RUN_HEAVY", backfieldUsage: "FEATURE_BACK", targetDistribution: "SPREAD_IT", tempo: "CONTROL_CLOCK" },
+  PRO_BALANCED: { runPassBalance: "BALANCED", backfieldUsage: "FEATURE_BACK", targetDistribution: "SPREAD_IT", tempo: "NORMAL" },
+  SPREAD_PASS: { runPassBalance: "PASS_HEAVY", backfieldUsage: "COMMITTEE", targetDistribution: "FEED_THE_STAR", tempo: "HURRY_UP" }
+};
+
+export const IDENTITY_BASE_DEFENSE: Readonly<Record<DefensiveIdentity, Pick<GamePlan, "defensivePosture" | "pressure">>> = {
+  AGGRESSIVE: { defensivePosture: "TAKEAWAY_HUNT", pressure: "HEAVY_BLITZ" },
+  DISCIPLINED: { defensivePosture: "CONTAIN", pressure: "SITUATIONAL" },
+  CONSERVATIVE: { defensivePosture: "BEND_DONT_BREAK", pressure: "COVERAGE_FIRST" }
+};
+
+export const OFFENSIVE_IDENTITY_LABELS: Readonly<Record<OffensiveIdentity, string>> = {
+  POWER_RUN: "Power run",
+  PRO_BALANCED: "Pro balanced",
+  SPREAD_PASS: "Spread pass"
+};
+
+export const DEFENSIVE_IDENTITY_LABELS: Readonly<Record<DefensiveIdentity, string>> = {
+  AGGRESSIVE: "Aggressive",
+  DISCIPLINED: "Disciplined",
+  CONSERVATIVE: "Conservative"
+};
+
+/**
+ * What a program intends to call this week: its identity, bent by the matchup
+ * and its own condition. Deliberately shared by the rival planner and the
+ * scouting report so a bought report describes the plan that is actually run.
+ */
+export function intendedGamePlan(
+  identity: SchemeIdentity,
+  units: TeamUnitRatings,
+  opponentUnits: TeamUnitRatings | null,
+  fatigue: number,
+  trailing: boolean,
+  opponentIdentity: SchemeIdentity | null = null
+): GamePlan {
+  const base: GamePlan = {
+    ...IDENTITY_BASE_PLAN[identity.offense],
+    ...IDENTITY_BASE_DEFENSE[identity.defense],
+    defensivePriority: "BALANCED"
+  };
+  // Defensive priority is the read, and what it reads is what the opponent
+  // actually does — their identity first, their personnel second. Keying it to
+  // raw ratings alone left almost every defense balanced, which is the same as
+  // having no read at all.
+  const identityTilt = opponentIdentity === null ? 0
+    : opponentIdentity.offense === "SPREAD_PASS" ? 3
+      : opponentIdentity.offense === "POWER_RUN" ? -3 : 0;
+  const personnelTilt = opponentUnits ? opponentUnits.passOffense - opponentUnits.rushOffense : 0;
+  const opponentTilt = identityTilt + personnelTilt;
+  base.defensivePriority = opponentTilt > 1.2 ? "STOP_THE_PASS" : opponentTilt < -1.2 ? "STOP_THE_RUN" : "BALANCED";
+  // A tired roster slows down whatever it would rather do.
+  if (fatigue > 55 && base.tempo === "HURRY_UP") base.tempo = "NORMAL";
+  else if (fatigue > 70) base.tempo = "CONTROL_CLOCK";
+  // A badly overmatched unit abandons its identity rather than lose with it.
+  if (opponentUnits) {
+    if (units.rushOffense - opponentUnits.rushDefense < -6 && base.runPassBalance === "RUN_HEAVY") base.runPassBalance = "BALANCED";
+    if (units.passOffense - opponentUnits.passDefense < -6 && base.runPassBalance === "PASS_HEAVY") base.runPassBalance = "BALANCED";
+  }
+  // Trailing programs gamble for the ball regardless of temperament.
+  if (trailing && base.defensivePosture === "BEND_DONT_BREAK") base.defensivePosture = "CONTAIN";
+  return base;
 }
 
 export interface GamePlanOption {

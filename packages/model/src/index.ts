@@ -29,6 +29,11 @@ export type DefensivePriority = "STOP_THE_RUN" | "BALANCED" | "STOP_THE_PASS";
 export type DefensivePosture = "TAKEAWAY_HUNT" | "CONTAIN" | "BEND_DONT_BREAK";
 export type PassRushPressure = "HEAVY_BLITZ" | "SITUATIONAL" | "COVERAGE_FIRST";
 export type PlayType = "RUN" | "PASS";
+/** A program's lasting football identity. Rivals are recognisable because of it,
+ *  and it is what an opponent scouting report has to reveal. */
+export type OffensiveIdentity = "POWER_RUN" | "PRO_BALANCED" | "SPREAD_PASS";
+export type DefensiveIdentity = "AGGRESSIVE" | "DISCIPLINED" | "CONSERVATIVE";
+export type ScoutingTier = "TENDENCIES" | "PERSONNEL" | "GAME_PLAN";
 export type SeasonAwardType =
   | "PLAYER_OF_THE_YEAR"
   | "OFFENSIVE_PLAYER_OF_THE_YEAR"
@@ -126,6 +131,54 @@ export interface GamePlan {
   defensivePriority: DefensivePriority;
   defensivePosture: DefensivePosture;
   pressure: PassRushPressure;
+}
+
+export interface SchemeIdentity {
+  offense: OffensiveIdentity;
+  defense: DefensiveIdentity;
+}
+
+/**
+ * Weekly preparation. Points are attention rather than savings: they refresh
+ * each week and do not bank, so a week not spent is a week wasted.
+ */
+export interface PreparationProgramState {
+  points: number;
+  weeklyPoints: number;
+  /** Tiers bought against this week's opponent. Cleared at every new week. */
+  scoutedTiers: ScoutingTier[];
+  scoutedOpponentId: ProgramId | null;
+}
+
+/** One axis of an opponent's likely calls, as probabilities that never reach certainty. */
+export interface ScoutedTendency {
+  axis: string;
+  label: string;
+  options: { value: string; label: string; probability: number }[];
+}
+
+export interface ScoutedUnit {
+  unit: TeamUnit;
+  /** A range, not a number: better scouting narrows it but never removes it. */
+  low: number;
+  high: number;
+}
+
+export interface OpponentScoutingReport {
+  opponentProgramId: ProgramId | null;
+  tiers: ScoutingTier[];
+  /** Games of film available this season. Week 1 has none, which widens everything. */
+  filmGames: number;
+  confidence: number;
+  record: string;
+  nationalRank: number | null;
+  /** Public reputation, known without paying. */
+  reputation: string | null;
+  identity: SchemeIdentity | null;
+  units: ScoutedUnit[] | null;
+  keyPlayers: { playerId: PlayerId; name: string; position: Position; note: string }[] | null;
+  tendencies: ScoutedTendency[] | null;
+  notes: string[];
 }
 
 /** How one team's plan fared against the other's, for the weekly plan report. */
@@ -270,6 +323,7 @@ export interface Program {
   localPress: number;
   nationalPress: number;
   nationalRank: number;
+  schemeIdentity: SchemeIdentity;
   weeklyRevenue: number;
   weeklyExpenses: number;
   facilities: Record<FacilityType, number>;
@@ -316,6 +370,7 @@ export interface GameState {
   developmentSpotlights: Record<ProgramId, DevelopmentSpotlight | null>;
   /** Standing weekly preparation per program; persists until changed. */
   gamePlans: Record<ProgramId, GamePlan>;
+  preparation: Record<ProgramId, PreparationProgramState>;
   staff: Record<string, StaffMember>;
   depthCharts: Record<ProgramId, DepthChart>;
   playerGameStats: PlayerGameStatLine[];
@@ -349,6 +404,7 @@ export type GameCommand =
   | { type: "UPGRADE_FACILITY"; programId: ProgramId; facility: FacilityType }
   | { type: "SET_PLAYER_MEDIA_ACTION"; programId: ProgramId; playerId: PlayerId; action: PlayerMediaAction }
   | { type: "SET_GAME_PLAN"; programId: ProgramId; plan: Partial<GamePlan> }
+  | { type: "SCOUT_OPPONENT"; programId: ProgramId; tier: ScoutingTier }
   | { type: "SCHEDULE_MARQUEE_HOME_GAME"; programId: ProgramId; opponentProgramId: ProgramId };
 
 export type GameEvent =
@@ -494,6 +550,8 @@ export type GameEvent =
       personalFanChange: number;
       schoolFanLift: number;
     }
+  | { type: "OPPONENT_SCOUTED"; season: Season; week: number; programId: ProgramId; opponentProgramId: ProgramId; tier: ScoutingTier; pointsSpent: number; confidence: number }
+  | { type: "PREP_POINTS_ADDED"; season: Season; week: number; programId: ProgramId; pointsAdded: number }
   | { type: "GAME_PLAN_SET"; season: Season; week: number; programId: ProgramId; plan: GamePlan; changed: (keyof GamePlan)[] }
   | {
       /** What each side called, and what the calls were worth. */

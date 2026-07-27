@@ -1,44 +1,44 @@
-import type { DevelopmentFocus, GamePlan, GameState, GameCommand, Position, Prospect, TeamUnitRatings } from "@college-legends/model";
-import { programUnitRatings } from "@college-legends/simulation";
+import type { DevelopmentFocus, GamePlan, GameState, GameCommand, Position, Prospect, ScoutingTier } from "@college-legends/model";
+import { intendedGamePlan, programUnitRatings, scheduledOpponent, scoutingCost, SCOUTING_TIERS } from "@college-legends/simulation";
 
 /**
- * Rivals answer the same game-plan questions the player does, using what a
- * coaching staff could reasonably know: their own personnel and the opponent's
- * film. They do not read the player's chosen plan — countering a call the
- * opponent has not revealed is what scouting will buy in a later stage.
+ * Rivals answer the same game-plan questions the player does, from what a
+ * coaching staff could know: their own identity and personnel, and the
+ * opponent's film. They call `intendedGamePlan` — the same function the
+ * player's scouting report reads — so a bought report describes the plan that
+ * is actually run rather than a parallel guess.
  */
 function planGamePlan(state: Readonly<GameState>, programId: string, opponentId: string | null): GamePlan {
-  const units = programUnitRatings(state, programId);
-  const opponent: TeamUnitRatings | null = opponentId ? programUnitRatings(state, opponentId) : null;
+  const program = state.programs[programId]!;
   const roster = Object.values(state.players).filter((player) =>
     player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP"
   );
-  const best = (position: Position): number[] => roster
-    .filter((player) => player.position === position)
-    .map((player) => player.overall)
-    .sort((left, right) => right - left);
-  const backs = best("RB");
-  const receivers = best("WR");
+  const fatigue = roster.reduce((total, player) => total + player.fatigue, 0) / Math.max(1, roster.length);
+  const opponent = opponentId ? state.programs[opponentId] : null;
+  return intendedGamePlan(
+    program.schemeIdentity,
+    programUnitRatings(state, programId),
+    opponentId ? programUnitRatings(state, opponentId) : null,
+    fatigue,
+    program.losses > program.wins,
+    opponent?.schemeIdentity ?? null
+  );
+}
 
-  // Attack with whichever unit is stronger, and defend whichever one the
-  // opponent leans on.
-  const offensiveTilt = units.passOffense - units.rushOffense;
-  const opponentTilt = opponent ? opponent.passOffense - opponent.rushOffense : 0;
-  const tired = roster.reduce((total, player) => total + player.fatigue, 0) / Math.max(1, roster.length);
-
-  return {
-    runPassBalance: offensiveTilt > 1.5 ? "PASS_HEAVY" : offensiveTilt < -1.5 ? "RUN_HEAVY" : "BALANCED",
-    // A clear lead back is worth featuring; an even room is worth resting.
-    backfieldUsage: backs.length >= 2 && backs[0]! - backs[1]! >= 4 && tired < 45 ? "FEATURE_BACK" : "COMMITTEE",
-    targetDistribution: receivers.length >= 2 && receivers[0]! - receivers[1]! >= 5 ? "FEED_THE_STAR" : "SPREAD_IT",
-    tempo: tired > 55 ? "CONTROL_CLOCK" : offensiveTilt > 3 ? "HURRY_UP" : "NORMAL",
-    defensivePriority: opponentTilt > 1.5 ? "STOP_THE_PASS" : opponentTilt < -1.5 ? "STOP_THE_RUN" : "BALANCED",
-    // Trailing programs gamble for the ball; comfortable ones protect a lead.
-    defensivePosture: state.programs[programId]!.losses > state.programs[programId]!.wins ? "TAKEAWAY_HUNT" : "CONTAIN",
-    pressure: opponent && units.passDefense - opponent.passOffense < -2 ? "COVERAGE_FIRST"
-      : opponent && units.passDefense - opponent.passOffense > 3 ? "HEAVY_BLITZ"
-        : "SITUATIONAL"
-  };
+/** Rivals spend preparation too, buying the cheap reports before the dear ones. */
+function planScouting(state: Readonly<GameState>, programId: string): ScoutingTier[] {
+  const preparation = state.preparation?.[programId];
+  if (!preparation || !scheduledOpponent(state, programId)) return [];
+  let points = preparation.points;
+  const ordered: ScoutingTier[] = [];
+  for (const tier of SCOUTING_TIERS) {
+    if (preparation.scoutedTiers.includes(tier)) continue;
+    const cost = scoutingCost(tier);
+    if (points < cost) continue;
+    ordered.push(tier);
+    points -= cost;
+  }
+  return ordered;
 }
 
 function upcomingOpponent(state: Readonly<GameState>, programId: string): string | null {
@@ -55,6 +55,10 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
   return Object.values(state.programs).flatMap((program) => {
     if (program.id === excludedProgramId) return [];
     const commands: GameCommand[] = [];
+
+    for (const tier of planScouting(state, program.id)) {
+      commands.push({ type: "SCOUT_OPPONENT", programId: program.id, tier });
+    }
 
     const desired = planGamePlan(state, program.id, upcomingOpponent(state, program.id));
     const current = state.gamePlans?.[program.id];

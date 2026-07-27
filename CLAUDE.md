@@ -256,10 +256,9 @@ unlocks, tiered opponent scouting, offensive and defensive emphasis calls
 or the pass, hunting turnovers), prep-point capacity, and coordinators who can
 be delegated the call.
 
-Stage one of that work is **done**: unit-level resolution plus the offensive and
-defensive emphasis calls. See "Unit resolution and the emphasis layer" below.
-Playbook installation, play concepts, opponent scouting, prep capacity, and
-coordinator delegation remain.
+Stages one and two are **done**: unit-level resolution with the emphasis calls,
+then preparation capacity and opponent scouting. See the two sections below.
+Playbook installation, play concepts, and coordinator delegation remain.
 
 ## Unit resolution and the emphasis layer
 
@@ -316,18 +315,65 @@ Two deviations are known and deliberate rather than tuned away:
   matter, and the league mixes power and low-tier programs inside divisions in a
   way real conferences do not.
 
+## Preparation and opponent scouting
+
+Three things had to be true before scouting could sell anything.
+
+**Rivals needed identities.** Measured before the change, the league ran
+`BALANCED` 91%, `COMMITTEE` 100%, `SPREAD_IT` 100%, `NORMAL` tempo 100% — every
+program played the same way, and the one axis that varied (`pressure`) flipped
+58% of weeks. A tendency report on that league says nothing. Programs now carry
+a `schemeIdentity` assigned at creation, and `intendedGamePlan` starts from it.
+After: run/pass runs 55/24/22, tempo 38/38/25, and `pressure` churns 4% of weeks
+instead of 58%. Defensive priority reads the *opponent's identity* first and
+personnel second, which is what makes a tendencies report actionable.
+
+**The projection was giving it away.** `projectGamePlan` returned the opponent's
+exact unit ratings for free, which is precisely the `PERSONNEL` tier. It also
+folded in their *stored* plan — last week's — while the game was played with
+this week's, so week 1 showed every opponent as fully balanced while they
+actually called something else. The opponent side is now filled in only from a
+bought report, from the scouted range rather than the true rating, and never
+assumes a specific call.
+
+**Scouting had to resolve before the plan.** A report read after the game cannot
+inform the game plan. `prepareWeek` resolves scouting immediately, ahead of
+`advanceWeek`; preparation is seeded in `beginSeason` and refreshed at the end of
+each `advanceWeek`, so it is already available when the player is asked to plan.
+
+| Tier | Cost | Reveals |
+|---|---|---|
+| (free) | 0 | Record, ranking, reputation |
+| `TENDENCIES` | 8 | Their scheme identity |
+| `PERSONNEL` | 14 | The four unit ratings as ranges, plus their best players |
+| `GAME_PLAN` | 22 | Likelihoods for each of their calls this week |
+
+A week provides roughly 25 prep points against 44 for the full board, so
+scouting always costs something else. Points are attention: they refresh weekly
+and never bank.
+
+Precision comes from staff, facilities, and **film**, which is what gives the
+opening week its own shape. Week 1 has no film and runs about 49% confidence
+with ranges roughly ten points wide; by week 6 that is about 76% and the ranges
+tighten. The top tier reports probabilities that never reach certainty, so a
+bought report is a read rather than a lookup.
+
+`intendedGamePlan` is deliberately shared by the rival planner and the scouting
+report, so a bought report describes the plan that is actually run rather than a
+parallel guess that could drift away from it.
+
 ## Suggested order of work
 
 1. ~~RNG finalizer plus a distribution test~~ — done.
 2. ~~Re-tune stat bands against the fixed RNG; reconcile score to box score~~ — done.
 3. ~~Unit-level ratings, drive resolution, and the emphasis calls~~ — done.
-4. The rest of the game-plan layer, in the order set out in
-   `docs/GAMEPLAN_AND_PREPARATION.md`: prep capacity and opponent scouting,
-   then playbook installation and play concepts, then coordinator delegation.
-5. Make revenue a function of fame; add recurring costs and an insolvency check.
-   Coordinator salaries from step 4 give this its first real payroll pressure.
-6. Add an offseason phase — unblocks marquee scheduling every year, signing day,
+4. ~~Prep capacity and opponent scouting~~ — done.
+5. Playbook installation as a staged project, then play concepts, then
+   coordinator delegation — see `docs/GAMEPLAN_AND_PREPARATION.md`.
+6. Make revenue a function of fame; add recurring costs and an insolvency check.
+   Coordinator salaries from step 5 give this its first real payroll pressure.
+7. Add an offseason phase — unblocks marquee scheduling every year, signing day,
    the portal as an input, coach hiring, and expectations/firing.
-7. Performance and save size before any iOS work. A week advance measures 6.9
+8. Performance and save size before any iOS work. A week advance measures 6.9
    seconds in the browser at the full 72-program league; the cost is the
    recruiting market and the AI planner, not game resolution.

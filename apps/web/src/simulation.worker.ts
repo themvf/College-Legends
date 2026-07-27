@@ -2,7 +2,7 @@
 import type { CareerPath, GameCommand, GameState, ProgramId } from "@college-legends/model";
 import { CAREER_PATHS } from "@college-legends/content";
 import { planWeeklyCommands } from "@college-legends/ai";
-import { advanceWeek, beginSeason, createFictionalLeague } from "@college-legends/simulation";
+import { advanceWeek, beginSeason, createFictionalLeague, prepareWeek } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 
 let activeState: GameState | undefined;
@@ -32,6 +32,12 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       const historyLength = activeState.eventHistory.length;
       activeState = beginSeason(activeState, request.commands);
       reply({ type: "COMPLETE", requestId: request.requestId, state: activeState, events: activeState.eventHistory.slice(historyLength) });
+      return;
+    }
+    if (request.type === "PREPARE") {
+      const result = prepareWeek(activeState, request.commands);
+      activeState = result.state;
+      reply({ type: "COMPLETE", requestId: request.requestId, state: activeState, events: result.events });
       return;
     }
     const aiCommands = planWeeklyCommands(activeState, request.playerProgramId);

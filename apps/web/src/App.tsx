@@ -22,6 +22,13 @@ import type {
 import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
 import {
   DEFAULT_GAME_PLAN,
+  DEFENSIVE_IDENTITY_LABELS,
+  OFFENSIVE_IDENTITY_LABELS,
+  SCOUTING_TIERS,
+  SCOUTING_TIER_DESCRIPTIONS,
+  SCOUTING_TIER_LABELS,
+  scoutingCost,
+  scoutingReport,
   GAME_PLAN_OPTIONS,
   projectGamePlan,
   unitLabel,
@@ -103,7 +110,13 @@ export function App(): ReactElement {
     setScreen("DASHBOARD");
     send({ type: "BEGIN_SEASON", requestId: nextRequestId(), playerProgramId: game.playerProgramId, commands: pendingCommands });
   };
+  const prepare = (command: GameCommand): void => {
+    if (!game) return;
+    send({ type: "PREPARE", requestId: nextRequestId(), playerProgramId: game.playerProgramId, commands: [command] });
+  };
   const queue = (command: GameCommand): void => {
+    // Scouting settles now: a report read after the game cannot shape the plan.
+    if (command.type === "SCOUT_OPPONENT") { prepare(command); return; }
     const key = command.type === "SET_GAME_PLAN" ? `game-plan:${Object.keys(command.plan).sort().join(",")}`
       : command.type === "SET_DEVELOPMENT_SPOTLIGHT" ? "development-spotlight"
       : command.type === "SET_PLAYER_MEDIA_ACTION" ? "featured-media"
@@ -147,6 +160,7 @@ export function App(): ReactElement {
 }
 
 function commandKey(command: GameCommand): string {
+  if (command.type === "SCOUT_OPPONENT") return `scout:${command.tier}`;
   if (command.type === "SET_GAME_PLAN") return `game-plan:${Object.keys(command.plan).sort().join(",")}`;
   if (command.type === "SET_DEVELOPMENT_SPOTLIGHT") return "development-spotlight";
   if (command.type === "SET_PLAYER_MEDIA_ACTION") return "featured-media";
@@ -871,7 +885,58 @@ function GamePlanScreen({ game, pending, onQueue }: {
     .find((event): event is Extract<GameEvent, { type: "GAME_PLAN_REPORT" }> =>
       event.type === "GAME_PLAN_REPORT" && event.programId === programId);
 
+  const scouting = scoutingReport(game.state, programId);
+  const preparation = game.state.preparation?.[programId];
+  const remaining = preparation?.points ?? 0;
+
   return <section className="screen game-plan">
+    {scouting.opponentProgramId && <article className="panel">
+      <p className="eyebrow">Preparation · {remaining} of {preparation?.weeklyPoints ?? 0} left this week</p>
+      <h2>Scouting {game.state.programs[scouting.opponentProgramId]?.name}</h2>
+      <p className="muted">
+        {scouting.record} · #{scouting.nationalRank} · {scouting.reputation} — known without paying.
+        {" "}Reports are {scouting.confidence}% reliable{scouting.filmGames === 0
+          ? " with no film on them yet."
+          : ` from ${scouting.filmGames} game${scouting.filmGames === 1 ? "" : "s"} of film.`}
+      </p>
+      <div className="plan-options">{SCOUTING_TIERS.map((tier) => {
+        const owned = scouting.tiers.includes(tier);
+        const cost = scoutingCost(tier);
+        const affordable = owned || remaining >= cost;
+        return <button
+          className={owned ? "plan-option owned" : "plan-option"}
+          key={tier}
+          disabled={owned || !affordable}
+          onClick={() => onQueue({ type: "SCOUT_OPPONENT", programId, tier })}
+        >
+          <strong>{SCOUTING_TIER_LABELS[tier]} · {cost} prep</strong>
+          <span className="effect">{SCOUTING_TIER_DESCRIPTIONS[tier]}</span>
+          <span className="tradeoff">{owned ? "Ordered" : affordable ? "Available" : "Not enough preparation left"}</span>
+        </button>;
+      })}</div>
+      {scouting.identity && <p className="scout-line">
+        <span>Identity</span>
+        <strong>{OFFENSIVE_IDENTITY_LABELS[scouting.identity.offense]} offense · {DEFENSIVE_IDENTITY_LABELS[scouting.identity.defense]} defense</strong>
+      </p>}
+      {scouting.units && <table className="stat-table matchup-table">
+        <thead><tr><th>Their unit</th><th>Estimated range</th></tr></thead>
+        <tbody>{scouting.units.map((unit) =>
+          <tr key={unit.unit}><td>{unitLabel(unit.unit)}</td><td>{unit.low.toFixed(1)} – {unit.high.toFixed(1)}</td></tr>)}
+        </tbody>
+      </table>}
+      {scouting.keyPlayers && <p className="muted">Key men: {scouting.keyPlayers.map((player) => `${player.name} (${player.position})`).join(", ")}</p>}
+      {scouting.tendencies && <div className="tendencies">{scouting.tendencies.map((tendency) =>
+        <div className="plan-row" key={tendency.axis}>
+          <p className="plan-label">{gamePlanLabels[tendency.axis as keyof GamePlan] ?? tendency.axis}</p>
+          <div className="likelihood-bar">{tendency.options.map((option) =>
+            <span className="likelihood" key={option.value}>
+              {option.label} <strong>{Math.round(option.probability * 100)}%</strong>
+            </span>)}
+          </div>
+        </div>)}
+      </div>}
+      <ul className="plan-notes">{scouting.notes.map((note) => <li key={note}>{note}</li>)}</ul>
+    </article>}
     {lastReport && <article className="panel">
       <p className="eyebrow">Last week vs {game.state.programs[lastReport.opponentProgramId]?.abbreviation ?? "opponent"}</p>
       <h2>What the calls were worth</h2>
@@ -902,14 +967,16 @@ function GamePlanScreen({ game, pending, onQueue }: {
       <p className="eyebrow">This week's matchups</p>
       <h2>What the plan is worth</h2>
       <p className="muted">{opponentScheduled
-        ? "Ratings include your plan and the opponent's. Every call concedes something — the right one depends on what they do."
-        : "No opponent is scheduled this week, so only your own unit ratings are shown."}</p>
+        ? "Their side is the scouted estimate, not a certainty. Every call concedes something — the right one depends on what they do."
+        : scouting.opponentProgramId
+          ? "Buy the personnel report to see what you are up against."
+          : "No opponent is scheduled this week, so only your own unit ratings are shown."}</p>
       <div className="unit-grid">{edges.map((edge) =>
         <div className={`unit-card ${edge.edge === null ? "" : edge.edge >= 2 ? "good" : edge.edge <= -2 ? "bad" : "even"}`} key={edge.unit}>
           <p className="unit-name">{unitLabel(edge.unit)}</p>
           <p className="unit-rating">{edge.rating.toFixed(1)}</p>
-          {edge.opposingRating !== null && <p className="muted">vs {edge.opposingRating.toFixed(1)}</p>}
-          <p className="unit-verdict">{edge.verdict}{edge.edge !== null && ` (${edge.edge > 0 ? "+" : ""}${edge.edge})`}</p>
+          <p className="muted">{edge.opposingRating === null ? "opponent unscouted" : `vs ${edge.opposingRating.toFixed(1)}`}</p>
+          <p className="unit-verdict">{edge.edge === null ? "—" : `${edge.verdict} (${edge.edge > 0 ? "+" : ""}${edge.edge})`}</p>
         </div>)}
       </div>
     </article>

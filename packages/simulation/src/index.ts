@@ -1,9 +1,21 @@
-import type { AwardCandidate, DepthChart, GamePlan, MatchupOutcome, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffAssignment, StaffMember, StaffRole } from "@college-legends/model";
+import type { AwardCandidate, DefensiveIdentity, DepthChart, GamePlan, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffAssignment, StaffMember, StaffRole } from "@college-legends/model";
 import { FICTIONAL_PROGRAMS, fictionalPersonName } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
 import { DEFAULT_GAME_PLAN, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
+import { opponentScoutingReport, preparationWeeklyPoints, projectedGamePlan, scheduledOpponent, scoutingCost, SCOUTING_TIERS } from "./scouting.js";
 
-export { DEFAULT_GAME_PLAN, GAME_PLAN_OPTIONS, plannedUnitRatings, projectUnitEdges, unitLabel, unitRatingsFromLineup } from "./game.js";
+export { DEFAULT_GAME_PLAN, DEFENSIVE_IDENTITY_LABELS, GAME_PLAN_OPTIONS, IDENTITY_BASE_DEFENSE, IDENTITY_BASE_PLAN, intendedGamePlan, OFFENSIVE_IDENTITY_LABELS, plannedUnitRatings, projectUnitEdges, unitLabel, unitRatingsFromLineup } from "./game.js";
+export {
+  filmGamesAvailable,
+  preparationWeeklyPoints,
+  scheduledOpponent,
+  scoutingConfidence,
+  scoutingCost,
+  SCOUTING_COSTS,
+  SCOUTING_TIER_DESCRIPTIONS,
+  SCOUTING_TIER_LABELS,
+  SCOUTING_TIERS
+} from "./scouting.js";
 export type { GamePlanOption, UnitEdge } from "./game.js";
 
 export { AddressableRng } from "./rng.js";
@@ -306,7 +318,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
   const nameFor = (ordinal: number): string => fictionalPersonName(ordinal, firstNameOffset, lastNameOffset);
   const state: GameState = {
     identity: { rootSeed, balanceConfiguration: { version: "0.1.0", weeklyDevelopment: { base: 0.012, workEthicWeight: 0.022, fatigueFloor: 0.62, maximum: 0.09 }, game: { homeFieldAdvantage: 2.8 } }, simulationVersion: "0.1.0" },
-    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, developmentSpotlights: {}, gamePlans: {}, staff: {}, depthCharts: {}, playerGameStats: [], schedule: [], seasonHistory: [], eventHistory: []
+    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, staff: {}, depthCharts: {}, playerGameStats: [], schedule: [], seasonHistory: [], eventHistory: []
   };
   const rosterPositions = Object.entries(ROSTER_COMPOSITION).flatMap(([position, count]) =>
     Array.from({ length: count }, () => position as Position)
@@ -339,6 +351,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       localPress: tier === "POWER" ? 82 : tier === "MID" ? 55 : 32,
       nationalPress: tier === "POWER" ? 80 : tier === "MID" ? 38 : 12,
       nationalRank: index + 1,
+      schemeIdentity: assignSchemeIdentity(rng, id),
       weeklyRevenue: tier === "POWER" ? 1_200_000 : tier === "MID" ? 520_000 : 210_000,
       weeklyExpenses: tier === "POWER" ? 940_000 : tier === "MID" ? 430_000 : 185_000,
       facilities: { TRAINING: facilityLevel, STADIUM: facilityLevel, ACADEMICS: facilityLevel, RECRUITING: facilityLevel }
@@ -351,6 +364,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
     };
     state.developmentSpotlights[id] = null;
     state.gamePlans[id] = { ...DEFAULT_GAME_PLAN };
+    state.preparation[id] = { points: 0, weeklyPoints: 0, scoutedTiers: [], scoutedOpponentId: null };
     for (const [staffIndex, role] of STAFF_ROLES.entries()) {
       const staffId = `${id}-staff-${staffIndex + 1}`;
       const personOrdinal = index * (STARTING_ROSTER_SIZE + STAFF_ROLES.length) + staffIndex;
@@ -399,6 +413,22 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
   return state;
 }
 
+const OFFENSIVE_IDENTITIES: readonly OffensiveIdentity[] = ["POWER_RUN", "PRO_BALANCED", "SPREAD_PASS"];
+const DEFENSIVE_IDENTITIES: readonly DefensiveIdentity[] = ["AGGRESSIVE", "DISCIPLINED", "CONSERVATIVE"];
+
+/**
+ * Programs are given a lasting football identity at creation. It is what makes
+ * a rival recognisable from season to season, and it is what an opponent
+ * scouting report has to sell — a league where everyone plays the same way has
+ * nothing worth scouting.
+ */
+function assignSchemeIdentity(rng: AddressableRng, programId: string): SchemeIdentity {
+  return {
+    offense: OFFENSIVE_IDENTITIES[Math.floor(rng.between(`${programId}:offensive-identity`, 0, OFFENSIVE_IDENTITIES.length - 0.0001))]!,
+    defense: DEFENSIVE_IDENTITIES[Math.floor(rng.between(`${programId}:defensive-identity`, 0, DEFENSIVE_IDENTITIES.length - 0.0001))]!
+  };
+}
+
 function createPlayerRatings(overall: number, position: Position, rng: AddressableRng, path: string): PlayerRatings {
   const rating = (name: PlayerRating, offset = 0): number =>
     clamp(Number((overall + offset + rng.between(`${path}:${name}`, -4, 4)).toFixed(1)), 40, 99);
@@ -434,6 +464,8 @@ export function beginSeason(input: Readonly<GameState>, commands: readonly GameC
       recruiting.weeklyPoints = recruitingWeeklyPoints(state, program.id);
       recruiting.points = recruiting.weeklyPoints;
     }
+    refreshPreparation(state, events);
+    state.eventHistory.push(...events.filter((event) => event.type === "PREP_POINTS_ADDED"));
   }
   return state;
 }
@@ -633,6 +665,8 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   }
   state.developmentSpotlights ??= {};
   state.gamePlans ??= {};
+  state.preparation ??= {};
+  const events: GameEvent[] = [];
   for (const programId of Object.keys(state.programs)) {
     state.developmentSpotlights[programId] = null;
     // A game plan is a standing instruction, so it carries week to week.
@@ -644,7 +678,6 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
       player.mediaAction = "FOOTBALL_FOCUS";
     }
   }
-  const events: GameEvent[] = [];
   const rng = new AddressableRng(state.identity.rootSeed).fork(String(state.season), String(state.week));
   resolveCommands(state, commands, rng.fork("commands"), events);
   resolveRecruitingMarket(state, rng.fork("recruiting-market"), events);
@@ -658,6 +691,45 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   if (state.week < 14) replenishRecruitingPoints(state, events);
   state.week += 1;
   if (state.week > 14) rolloverSeason(state, events);
+  refreshPreparation(state, events);
+  state.eventHistory.push(...events);
+  if (state.eventHistory.length > 10_000) state.eventHistory = state.eventHistory.slice(-10_000);
+  return { state, events };
+}
+
+/**
+ * Refreshes every program's preparation for the week about to be played.
+ * Preparation is attention rather than savings: it never banks, and last week's
+ * scouting is worthless against a new opponent.
+ */
+function refreshPreparation(state: GameState, events: GameEvent[]): void {
+  state.preparation ??= {};
+  for (const programId of Object.keys(state.programs)) {
+    const weeklyPoints = preparationWeeklyPoints(state, programId);
+    state.preparation[programId] = {
+      points: weeklyPoints,
+      weeklyPoints,
+      scoutedTiers: [],
+      scoutedOpponentId: scheduledOpponent(state, programId)
+    };
+    events.push({ type: "PREP_POINTS_ADDED", season: state.season, week: state.week, programId, pointsAdded: weeklyPoints });
+  }
+}
+
+/**
+ * The preparation phase, which resolves before the week is advanced.
+ *
+ * Scouting has to settle immediately: a report the player only reads after the
+ * game has been played cannot inform the game plan, which is the entire point
+ * of buying it. Everything else still waits for `advanceWeek`.
+ */
+export function prepareWeek(input: Readonly<GameState>, commands: readonly GameCommand[] = []): SimulationResult {
+  const state = clone<GameState>(input);
+  const events: GameEvent[] = [];
+  const preparationCommands = commands.filter((command) => command.type === "SCOUT_OPPONENT");
+  if (preparationCommands.length > 0) {
+    resolveCommands(state, preparationCommands, new AddressableRng(state.identity.rootSeed).fork("preparation", String(state.season), String(state.week)), events);
+  }
   state.eventHistory.push(...events);
   if (state.eventHistory.length > 10_000) state.eventHistory = state.eventHistory.slice(-10_000);
   return { state, events };
@@ -812,6 +884,41 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         target: clone(command.target),
         playerIds: targetPlayers.map((player) => player.id).sort(),
         intensity
+      });
+      continue;
+    }
+    if (command.type === "SCOUT_OPPONENT") {
+      const preparation = state.preparation[program.id];
+      const opponentId = scheduledOpponent(state, program.id);
+      if (!preparation || !opponentId) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "There is no opponent to scout this week." });
+        continue;
+      }
+      if (!SCOUTING_TIERS.includes(command.tier)) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That scouting report does not exist." });
+        continue;
+      }
+      if (preparation.scoutedTiers.includes(command.tier)) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That report has already been ordered this week." });
+        continue;
+      }
+      const cost = scoutingCost(command.tier);
+      if (preparation.points < cost) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Not enough preparation left this week for that report." });
+        continue;
+      }
+      preparation.points -= cost;
+      preparation.scoutedTiers.push(command.tier);
+      preparation.scoutedTiers.sort();
+      events.push({
+        type: "OPPONENT_SCOUTED",
+        season: state.season,
+        week: state.week,
+        programId: program.id,
+        opponentProgramId: opponentId,
+        tier: command.tier,
+        pointsSpent: cost,
+        confidence: scoutingReport(state, program.id).confidence
       });
       continue;
     }
@@ -1224,21 +1331,34 @@ export function programUnitRatings(state: Readonly<GameState>, programId: string
   return unitRatingsFromLineup(lineup, prepBonus);
 }
 
+/** What this program currently knows about the week's opponent. */
+export function scoutingReport(state: Readonly<GameState>, programId: string): OpponentScoutingReport {
+  return opponentScoutingReport(state, programId, { unitRatings: (id) => programUnitRatings(state, id) });
+}
+
 /**
- * This week's four matchups for a program, with the opponent's plan folded in
- * when one is scheduled. Lets the game-plan screen show what a call is worth
- * before the week is advanced.
+ * This week's four matchups for a program.
+ *
+ * The opponent's side is only filled in once the personnel report has been
+ * bought, and then from the scouted range rather than the true rating. Handing
+ * over exact opposing ratings for free would give away the very thing scouting
+ * exists to sell.
  */
 export function projectGamePlan(state: Readonly<GameState>, programId: string): UnitEdge[] {
-  const game = state.schedule.find((item) =>
-    item.week === state.week && !item.played && (item.homeProgramId === programId || item.awayProgramId === programId)
-  );
-  const opponentId = game ? (game.homeProgramId === programId ? game.awayProgramId : game.homeProgramId) : null;
+  const report = scoutingReport(state, programId);
+  const opponentId = report.opponentProgramId;
+  const scoutedUnits = report.units;
+  let opponentUnits: TeamUnitRatings | null = null;
+  if (opponentId && scoutedUnits) {
+    opponentUnits = Object.fromEntries(scoutedUnits.map((unit) => [unit.unit, (unit.low + unit.high) / 2])) as TeamUnitRatings;
+  }
   return projectUnitEdges(
     programUnitRatings(state, programId),
     state.gamePlans?.[programId] ?? { ...DEFAULT_GAME_PLAN },
-    opponentId ? programUnitRatings(state, opponentId) : null,
-    opponentId ? state.gamePlans?.[opponentId] ?? { ...DEFAULT_GAME_PLAN } : null
+    opponentUnits,
+    // Their plan is only knowable through the game-plan report, and even then as
+    // likelihoods — so the matchup projection never assumes a specific call.
+    opponentUnits && opponentId ? { ...DEFAULT_GAME_PLAN } : null
   );
 }
 

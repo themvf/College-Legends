@@ -3,7 +3,9 @@ import type { CareerPath, GameCommand, GameEvent, GameState, ProgramId } from "@
 export type WorkerRequest =
   | { type: "CREATE_GAME"; requestId: string; careerPath: CareerPath; seed: string }
   | { type: "BEGIN_SEASON"; requestId: string; playerProgramId: ProgramId; commands: GameCommand[] }
-  | { type: "ADVANCE_WEEK"; requestId: string; playerProgramId: ProgramId; commands: GameCommand[] };
+  | { type: "ADVANCE_WEEK"; requestId: string; playerProgramId: ProgramId; commands: GameCommand[] }
+  /** Scouting resolves before the week is advanced, so the report can inform the plan. */
+  | { type: "PREPARE"; requestId: string; playerProgramId: ProgramId; commands: GameCommand[] };
 
 export type WorkerResponse =
   | { type: "READY"; requestId: string; state: GameState; playerProgramId: ProgramId; events: GameEvent[] }
