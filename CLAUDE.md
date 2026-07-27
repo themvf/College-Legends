@@ -362,6 +362,67 @@ bought report is a read rather than a lookup.
 report, so a bought report describes the plan that is actually run rather than a
 parallel guess that could drift away from it.
 
+## The weekly decision loop
+
+Advancing a week is meant to be a ritual rather than a button. Five decisions
+sit in front of it, all reachable from the "This Week" screen:
+
+1. **Ticket price** — the gate
+2. **Advertising** — the fan base
+3. **Development focus** — one of three curated players
+4. **Offensive strategy** — a named preset
+5. **Defensive strategy** — a named preset
+
+**All five persist.** Re-entering them every week would be roughly two hundred
+identical decisions a career, so each carries over and `weeklyDecisions()`
+returns the current value plus an `attention` string only when something has
+gone stale — attendance projected down on last time, a stadium bigger than the
+following, nobody being developed, an unscouted opponent, a run-first opponent
+against a defense not committed to stopping it.
+
+**Presets, not seven toggles.** `OFFENSIVE_PRESETS` and `DEFENSIVE_PRESETS` set
+every underlying emphasis axis at once, and `matchingPreset()` names the current
+plan or reports "Custom". The individual toggles still live on the Game Plan
+screen — a preset is a shortcut through the same decision space, not a
+replacement for it. The default plan deliberately matches a named preset on both
+sides so a new game never opens on "Custom".
+
+### The gate
+
+Ticket revenue used to be `attendance * 44` with the price hard-coded. It is now
+a demand curve around `fairTicketPrice()`, which rises with prestige, fan
+support, ranking, and the draw of the opponent. Measured over a season for the
+same mid-tier program:
+
+| policy | season gate | fans | fan support | budget |
+|---|---|---|---|---|
+| 0.55x fair | $8.35M | 75,475 | 80 | +$13.9M |
+| fair | **$13.85M** | 75,475 | 80 | **+$19.0M** |
+| 1.6x fair | $9.77M | 66,061 | 7 | +$12.5M |
+
+Two things make that a real decision rather than a solved one. The demand floor
+is only 6% of capacity — a generous floor let a program gouge past the demand
+curve and back into profit, which made maximum price strictly optimal. And
+over-pricing costs *followers*, not merely a satisfaction number, which then
+lowers what the program can charge later.
+
+The same two decisions land differently by career path, which falls out of the
+capacity clamp rather than being authored: Dynasty Builder opens with 27k fans
+against a 36k stadium and has a volume problem, while Championship Mandate is
+sold out regardless and has only a pricing lever.
+
+Advertising is deliberately **not** weekly arbitrage. Reach scales with the
+square root of spend, and a maximum spend costs more in the week than it returns
+at the gate — the return is the followers it compounds into.
+
+### Development candidates
+
+`developmentCandidates()` returns three players for three different reasons:
+the most improvable (`RISING`), the biggest brand (`STAR`), and the closest to
+breaking down (`AT_RISK`). The point is a trade rather than a ranking — build
+the future, feed the brand that pays the gate, or protect an asset that cannot
+be replaced.
+
 ## Suggested order of work
 
 1. ~~RNG finalizer plus a distribution test~~ — done.
@@ -370,8 +431,10 @@ parallel guess that could drift away from it.
 4. ~~Prep capacity and opponent scouting~~ — done.
 5. Playbook installation as a staged project, then play concepts, then
    coordinator delegation — see `docs/GAMEPLAN_AND_PREPARATION.md`.
-6. Make revenue a function of fame; add recurring costs and an insolvency check.
-   Coordinator salaries from step 5 give this its first real payroll pressure.
+6. ~~Ticket pricing and advertising~~ — done; see "The weekly decision loop".
+   Still open from finding 3: media rights, sponsorship, merchandise, recurring
+   facility costs, and an insolvency check. `weeklyRevenue` and `weeklyExpenses`
+   are still stored constants.
 7. Add an offseason phase — unblocks marquee scheduling every year, signing day,
    the portal as an input, coach hiring, and expectations/firing.
 8. Performance and save size before any iOS work. A week advance measures 6.9

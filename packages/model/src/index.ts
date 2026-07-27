@@ -150,6 +150,27 @@ export interface PreparationProgramState {
   scoutedOpponentId: ProgramId | null;
 }
 
+/** Why a weekly decision is worth revisiting. Absent when nothing has changed. */
+export interface DecisionAlert {
+  id: "TICKET_PRICE" | "ADVERTISING" | "DEVELOPMENT" | "OFFENSE" | "DEFENSE";
+  label: string;
+  current: string;
+  detail: string;
+  /** Set when something has changed enough that the current setting deserves a look. */
+  attention: string | null;
+}
+
+/** A player worth this week's development attention, and what he is for. */
+export interface DevelopmentCandidate {
+  playerId: PlayerId;
+  name: string;
+  position: Position;
+  overall: number;
+  reason: "RISING" | "STAR" | "AT_RISK";
+  headline: string;
+  detail: string;
+}
+
 /** One axis of an opponent's likely calls, as probabilities that never reach certainty. */
 export interface ScoutedTendency {
   axis: string;
@@ -324,6 +345,11 @@ export interface Program {
   nationalPress: number;
   nationalRank: number;
   schemeIdentity: SchemeIdentity;
+  /** Price of a home-game ticket. Demand falls as it rises above what the
+   *  program's standing justifies, and goodwill falls with it. */
+  ticketPrice: number;
+  /** Weekly marketing spend. Buys attendance now and fan base later. */
+  advertisingSpend: number;
   weeklyRevenue: number;
   weeklyExpenses: number;
   facilities: Record<FacilityType, number>;
@@ -405,6 +431,8 @@ export type GameCommand =
   | { type: "SET_PLAYER_MEDIA_ACTION"; programId: ProgramId; playerId: PlayerId; action: PlayerMediaAction }
   | { type: "SET_GAME_PLAN"; programId: ProgramId; plan: Partial<GamePlan> }
   | { type: "SCOUT_OPPONENT"; programId: ProgramId; tier: ScoutingTier }
+  | { type: "SET_TICKET_PRICE"; programId: ProgramId; price: number }
+  | { type: "SET_ADVERTISING"; programId: ProgramId; spend: number }
   | { type: "SCHEDULE_MARQUEE_HOME_GAME"; programId: ProgramId; opponentProgramId: ProgramId };
 
 export type GameEvent =
@@ -551,6 +579,8 @@ export type GameEvent =
       schoolFanLift: number;
     }
   | { type: "OPPONENT_SCOUTED"; season: Season; week: number; programId: ProgramId; opponentProgramId: ProgramId; tier: ScoutingTier; pointsSpent: number; confidence: number }
+  | { type: "TICKET_PRICE_SET"; season: Season; week: number; programId: ProgramId; price: number; fairPrice: number }
+  | { type: "ADVERTISING_SET"; season: Season; week: number; programId: ProgramId; spend: number }
   | { type: "PREP_POINTS_ADDED"; season: Season; week: number; programId: ProgramId; pointsAdded: number }
   | { type: "GAME_PLAN_SET"; season: Season; week: number; programId: ProgramId; plan: GamePlan; changed: (keyof GamePlan)[] }
   | {
@@ -598,6 +628,10 @@ export type GameEvent =
       featuredPlayerRating: number | null;
       attendance: number;
       capacity: number;
+      ticketPrice: number;
+      fairTicketPrice: number;
+      advertisingSpend: number;
+      advertisingFans: number;
       ticketRevenue: number;
       concessionRevenue: number;
       localPressChange: number;

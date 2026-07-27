@@ -1,10 +1,25 @@
-import type { AwardCandidate, DefensiveIdentity, DepthChart, GamePlan, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffAssignment, StaffMember, StaffRole } from "@college-legends/model";
+import type { AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffAssignment, StaffMember, StaffRole } from "@college-legends/model";
 import { FICTIONAL_PROGRAMS, fictionalPersonName } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
-import { DEFAULT_GAME_PLAN, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
+import { DEFAULT_GAME_PLAN, OFFENSIVE_IDENTITY_LABELS, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
 import { opponentScoutingReport, preparationWeeklyPoints, projectedGamePlan, scheduledOpponent, scoutingCost, SCOUTING_TIERS } from "./scouting.js";
+import { advertisingReach, DEFENSIVE_PRESETS, developmentCandidates, fairTicketPrice, matchingPreset, MAXIMUM_TICKET_PRICE, MAXIMUM_WEEKLY_ADVERTISING, MINIMUM_TICKET_PRICE, OFFENSIVE_PRESETS, pricingGoodwill, projectGate } from "./business.js";
 
 export { DEFAULT_GAME_PLAN, DEFENSIVE_IDENTITY_LABELS, GAME_PLAN_OPTIONS, IDENTITY_BASE_DEFENSE, IDENTITY_BASE_PLAN, intendedGamePlan, OFFENSIVE_IDENTITY_LABELS, plannedUnitRatings, projectUnitEdges, unitLabel, unitRatingsFromLineup } from "./game.js";
+export {
+  advertisingReach,
+  DEFENSIVE_PRESETS,
+  developmentCandidates,
+  fairTicketPrice,
+  matchingPreset,
+  MAXIMUM_TICKET_PRICE,
+  MAXIMUM_WEEKLY_ADVERTISING,
+  MINIMUM_TICKET_PRICE,
+  OFFENSIVE_PRESETS,
+  projectGate,
+  ticketDemandMultiplier
+} from "./business.js";
+export type { GateProjection, StrategyPreset } from "./business.js";
 export {
   filmGamesAvailable,
   preparationWeeklyPoints,
@@ -352,6 +367,8 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       nationalPress: tier === "POWER" ? 80 : tier === "MID" ? 38 : 12,
       nationalRank: index + 1,
       schemeIdentity: assignSchemeIdentity(rng, id),
+      ticketPrice: tier === "POWER" ? 58 : tier === "MID" ? 42 : 28,
+      advertisingSpend: 0,
       weeklyRevenue: tier === "POWER" ? 1_200_000 : tier === "MID" ? 520_000 : 210_000,
       weeklyExpenses: tier === "POWER" ? 940_000 : tier === "MID" ? 430_000 : 185_000,
       facilities: { TRAINING: facilityLevel, STADIUM: facilityLevel, ACADEMICS: facilityLevel, RECRUITING: facilityLevel }
@@ -922,6 +939,39 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       });
       continue;
     }
+    if (command.type === "SET_TICKET_PRICE") {
+      const price = Math.round(command.price);
+      if (!Number.isFinite(price) || price < MINIMUM_TICKET_PRICE || price > MAXIMUM_TICKET_PRICE) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: `Set a ticket price between $${MINIMUM_TICKET_PRICE} and $${MAXIMUM_TICKET_PRICE}.` });
+        continue;
+      }
+      program.ticketPrice = price;
+      const game = state.schedule.find((item) => item.week === state.week && !item.played && item.homeProgramId === program.id);
+      const opponent = game ? state.programs[game.awayProgramId] ?? null : null;
+      events.push({
+        type: "TICKET_PRICE_SET",
+        season: state.season,
+        week: state.week,
+        programId: program.id,
+        price,
+        fairPrice: fairTicketPrice(program, opponent, game?.matchupType === "MARQUEE")
+      });
+      continue;
+    }
+    if (command.type === "SET_ADVERTISING") {
+      const spend = Math.round(command.spend);
+      if (!Number.isFinite(spend) || spend < 0 || spend > MAXIMUM_WEEKLY_ADVERTISING) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: `Advertising must be between $0 and $${MAXIMUM_WEEKLY_ADVERTISING.toLocaleString()} a week.` });
+        continue;
+      }
+      if (spend > program.budget) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The program cannot afford that advertising spend." });
+        continue;
+      }
+      program.advertisingSpend = spend;
+      events.push({ type: "ADVERTISING_SET", season: state.season, week: state.week, programId: program.id, spend });
+      continue;
+    }
     if (command.type === "SET_GAME_PLAN") {
       const current = state.gamePlans[program.id] ?? { ...DEFAULT_GAME_PLAN };
       const changed = (Object.keys(command.plan) as (keyof GamePlan)[])
@@ -1329,6 +1379,115 @@ export function programUnitRatings(state: Readonly<GameState>, programId: string
     .filter((staff) => staff.programId === programId && staff.assignment === "GAME_PREP")
     .reduce((total, staff) => total + gamePrepContribution(staff), 0);
   return unitRatingsFromLineup(lineup, prepBonus);
+}
+
+/**
+ * The five decisions the player settles before advancing, each with its current
+ * value and a flag when something has changed enough to deserve a fresh look.
+ *
+ * Everything persists week to week deliberately. Forcing all five to be re-entered
+ * every week would be two hundred identical decisions a career; the value is in
+ * knowing *which* one has gone stale.
+ */
+export function weeklyDecisions(state: Readonly<GameState>, programId: string): DecisionAlert[] {
+  const program = state.programs[programId];
+  if (!program) return [];
+  const game = state.schedule.find((item) =>
+    item.week === state.week && !item.played && (item.homeProgramId === programId || item.awayProgramId === programId)
+  );
+  const atHome = game?.homeProgramId === programId;
+  const opponentId = game ? (atHome ? game.awayProgramId : game.homeProgramId) : null;
+  const opponent = opponentId ? state.programs[opponentId] ?? null : null;
+  const capacity = stadiumCapacity(program.facilities.STADIUM);
+  const gate = projectGate(program, opponent, capacity, game?.matchupType === "MARQUEE");
+  const plan = state.gamePlans?.[programId] ?? { ...DEFAULT_GAME_PLAN };
+  const report = scoutingReport(state, programId);
+  const spotlight = state.developmentSpotlights?.[programId] ?? null;
+
+  const lastHomeRecap = [...state.eventHistory]
+    .reverse()
+    .find((event): event is Extract<GameEvent, { type: "WEEKLY_RECAP" }> =>
+      event.type === "WEEKLY_RECAP" && event.programId === programId && event.homeGame && event.attendance > 0);
+
+  const money = (value: number): string => `$${Math.round(value).toLocaleString()}`;
+  const decisions: DecisionAlert[] = [];
+
+  decisions.push({
+    id: "TICKET_PRICE",
+    label: "Ticket price",
+    current: money(program.ticketPrice),
+    detail: atHome
+      ? `${gate.attendance.toLocaleString()} of ${capacity.toLocaleString()} seats at ${money(program.ticketPrice)} — ${money(gate.ticketRevenue)} gate. A comparable programme charges ${money(gate.fairPrice)}.`
+      : `Away this week, so no gate. A comparable programme charges ${money(gate.fairPrice)}.`,
+    attention: !atHome ? null
+      : gate.soldOut && program.ticketPrice < gate.fairPrice
+        ? `Sold out and under-priced — ${money(gate.fairPrice)} is what this matchup will bear.`
+        : program.ticketPrice > gate.fairPrice * 1.15
+          ? "Priced well above what this programme's standing supports; the stands and the goodwill are both thinning."
+          : lastHomeRecap && gate.attendance < lastHomeRecap.attendance * 0.9
+            ? `Projected attendance is down on the ${lastHomeRecap.attendance.toLocaleString()} who came last time.`
+            : null
+  });
+
+  decisions.push({
+    id: "ADVERTISING",
+    label: "Advertising",
+    current: program.advertisingSpend > 0 ? `${money(program.advertisingSpend)}/wk` : "None",
+    detail: `Reaching ${gate.advertisingFans.toLocaleString()} new followers a week${atHome ? ` and ${advertisingReach(program.advertisingSpend).attendance.toLocaleString()} extra through the gate` : ""}.`,
+    attention: program.advertisingSpend === 0 && program.fanBase < capacity * 1.4
+      ? "The stadium is bigger than the following. Marketing is the cheapest way to fill it."
+      : program.advertisingSpend > program.budget * 0.25
+        ? "Marketing is eating a quarter of the budget."
+        : null
+  });
+
+  const candidates = developmentCandidates(state, programId);
+  const spotlightName = spotlight?.target.type === "PLAYER"
+    ? state.players[spotlight.target.playerId]?.name ?? "a player"
+    : spotlight?.target.type === "POSITION" ? `the ${spotlight.target.position} room` : null;
+  decisions.push({
+    id: "DEVELOPMENT",
+    label: "Development focus",
+    current: spotlightName ?? "Nobody",
+    detail: candidates.length
+      ? `${candidates.map((candidate) => `${candidate.name} (${candidate.headline.toLowerCase()})`).join(", ")}.`
+      : "No eligible players this week.",
+    attention: spotlight ? null : "Nobody is being developed this week."
+  });
+
+  const counteredOffense = report.identity && (
+    (plan.runPassBalance === "RUN_HEAVY" && report.identity.defense === "DISCIPLINED")
+    || (plan.runPassBalance === "PASS_HEAVY" && report.identity.defense === "CONSERVATIVE")
+  );
+  decisions.push({
+    id: "OFFENSE",
+    label: "Offensive strategy",
+    current: matchingPreset(plan, OFFENSIVE_PRESETS)?.label ?? "Custom",
+    detail: opponent
+      ? `Against ${opponent.name}${report.identity ? ` — a ${OFFENSIVE_IDENTITY_LABELS[report.identity.offense].toLowerCase()} programme` : ", unscouted"}.`
+      : "No opponent scheduled.",
+    attention: !opponent ? null
+      : counteredOffense ? "Their defensive temperament is built to take away what you are calling."
+        : report.identity === null ? "You have not scouted them, so this is a guess."
+          : null
+  });
+
+  decisions.push({
+    id: "DEFENSE",
+    label: "Defensive strategy",
+    current: matchingPreset(plan, DEFENSIVE_PRESETS)?.label ?? "Custom",
+    detail: report.identity
+      ? `They run a ${OFFENSIVE_IDENTITY_LABELS[report.identity.offense].toLowerCase()} offense.`
+      : opponent ? "Their offensive identity is unscouted." : "No opponent scheduled.",
+    attention: !opponent ? null
+      : report.identity?.offense === "POWER_RUN" && plan.defensivePriority !== "STOP_THE_RUN"
+        ? "They are a running programme and you are not committed to stopping it."
+        : report.identity?.offense === "SPREAD_PASS" && plan.defensivePriority !== "STOP_THE_PASS"
+          ? "They throw it and you are not committed to stopping that."
+          : null
+  });
+
+  return decisions;
 }
 
 /** What this program currently knows about the week's opponent. */
@@ -1751,23 +1910,32 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
       localPressChange += -2;
       nationalPressChange += marqueeGame ? -2 : rankedOpponent ? -1 : 0;
     }
-    const fanChange = teamResultFanChange + brandImpact.schoolFanLift;
+    const capacity = stadiumCapacity(program.facilities.STADIUM);
+    // Price and marketing decide the gate. Advertising still buys followers on a
+    // bye or on the road, but there is no ticket revenue without a home game.
+    const playedAtHome = Boolean(homeGame && game?.played);
+    const gate = projectGate(program, opponent, capacity, marqueeGame);
+    const advertisingFans = gate.advertisingFans;
+    const goodwill = pricingGoodwill(program.ticketPrice, fairTicketPrice(program, opponent, marqueeGame));
+    // Over-pricing costs followers, not merely a satisfaction score — otherwise
+    // gouging is free and the price decision has only an upside.
+    const goodwillFanLoss = goodwill < 0 ? Math.round(fansBefore * goodwill * 0.002) : 0;
+    const fanChange = teamResultFanChange + brandImpact.schoolFanLift + advertisingFans + goodwillFanLoss;
     program.fanBase = Math.max(5_000, program.fanBase + fanChange);
-    program.fanSupport = clamp(Math.round(program.fanSupport + fanChange / Math.max(1, fansBefore) * 35), 1, 100);
+    program.fanSupport = clamp(
+      Math.round(program.fanSupport + fanChange / Math.max(1, fansBefore) * 35 + goodwill),
+      1,
+      100
+    );
     program.localPress = clamp(program.localPress + localPressChange, 0, 100);
     program.nationalPress = clamp(program.nationalPress + nationalPressChange, 0, 100);
 
-    const capacity = stadiumCapacity(program.facilities.STADIUM);
-    const opponentDraw = opponent ? opponent.fanBase * 0.045 + (rankedOpponent ? 5_000 : 0) + (marqueeGame ? 7_500 : 0) : 0;
-    const attendance = homeGame && game?.played
-      ? Math.round(clamp(fansBefore * 0.62 + opponentDraw, capacity * 0.35, capacity))
-      : 0;
-    const stadiumModifier = 1 + Math.max(0, program.facilities.STADIUM - 1) * 0.08;
-    const ticketRevenue = Math.round(attendance * 44 * stadiumModifier);
-    const concessionRevenue = Math.round(attendance * 17 * stadiumModifier);
+    const attendance = playedAtHome ? gate.attendance : 0;
+    const ticketRevenue = playedAtHome ? gate.ticketRevenue : 0;
+    const concessionRevenue = playedAtHome ? gate.concessionRevenue : 0;
     const revenue = program.weeklyRevenue + ticketRevenue + concessionRevenue;
     const staffPayroll = Object.values(state.staff).filter((staff) => staff.programId === program.id).reduce((sum, staff) => sum + staff.salary / 52, 0);
-    const expenses = Math.round(program.weeklyExpenses + staffPayroll);
+    const expenses = Math.round(program.weeklyExpenses + staffPayroll + program.advertisingSpend);
     const net = Math.round(revenue - expenses);
     program.budget += net;
     events.push({ type: "WEEKLY_FINANCES", season: state.season, week: state.week, programId: program.id, revenue: Math.round(revenue), expenses, net });
@@ -1792,6 +1960,10 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
       featuredPlayerRating: brandImpact.featuredPlayerRating,
       attendance,
       capacity,
+      ticketPrice: program.ticketPrice,
+      fairTicketPrice: gate.fairPrice,
+      advertisingSpend: program.advertisingSpend,
+      advertisingFans,
       ticketRevenue,
       concessionRevenue,
       localPressChange,

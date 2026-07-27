@@ -183,8 +183,11 @@ decisions they cannot learn from.
 3. ~~Prep capacity, opponent scouting tiers, and the AI spending prep like a
    rival.~~ **Done** — `packages/simulation/src/scouting.ts`, the
    `SCOUT_OPPONENT` command, and `prepareWeek`.
-4. Playbook installation as a staged project, then play concepts.
-5. Coordinator delegation and the `AUTO_GAMEPLAN` card.
+4. ~~Named strategy presets, so the seven emphasis axes collapse to one
+   offensive and one defensive choice.~~ **Done** — `OFFENSIVE_PRESETS`,
+   `DEFENSIVE_PRESETS`, and the "This Week" screen.
+5. Playbook installation as a staged project, then play concepts.
+6. Coordinator delegation and the `AUTO_GAMEPLAN` card.
 
 Each stage is playable on its own, and each one adds decisions without waiting
 on the stage after it.

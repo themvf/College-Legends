@@ -9,7 +9,18 @@ import {
   projectGamePlan,
   scoutingCost,
   scoutingReport,
-  SCOUTING_TIERS
+  SCOUTING_TIERS,
+  DEFENSIVE_PRESETS,
+  OFFENSIVE_PRESETS,
+  developmentCandidates,
+  fairTicketPrice,
+  matchingPreset,
+  projectGate,
+  stadiumCapacity,
+  weeklyDecisions,
+  MAXIMUM_TICKET_PRICE,
+  MAXIMUM_WEEKLY_ADVERTISING,
+  MINIMUM_TICKET_PRICE
 } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
@@ -433,4 +444,115 @@ test("the top scouting tier reports likelihoods, never certainty", () => {
     assert.ok(top > 0.34, `${tendency.axis} carries no signal at all`);
     assert.ok(top < 0.95, `${tendency.axis} reports certainty at ${top} — it must stay a read`);
   }
+});
+
+test("ticket pricing has a real optimum that gouging cannot beat", () => {
+  const state = beginSeason(createFictionalLeague("ticket-pricing", 24));
+  for (const tier of ["LOW", "MID", "POWER"]) {
+    const program = Object.values(state.programs).find((candidate) => candidate.tier === tier);
+    const opponent = Object.values(state.programs).find((candidate) => candidate.id !== program.id);
+    const capacity = stadiumCapacity(program.facilities.STADIUM);
+    const fair = fairTicketPrice(program, opponent, false);
+
+    const gateAt = (price) => projectGate(program, opponent, capacity, false, price, 0).ticketRevenue;
+    const cheap = gateAt(Math.max(MINIMUM_TICKET_PRICE, Math.round(fair * 0.4)));
+    const atFair = gateAt(fair);
+    const gouge = gateAt(MAXIMUM_TICKET_PRICE);
+
+    assert.ok(atFair > cheap, `${tier}: under-pricing should leave money on the table (${atFair} vs ${cheap})`);
+    // Without a demand floor low enough to bite, revenue rises again at extreme
+    // prices and gouging becomes strictly optimal.
+    assert.ok(atFair > gouge, `${tier}: gouging at $${MAXIMUM_TICKET_PRICE} beat fair pricing (${gouge} vs ${atFair})`);
+
+    // Attendance must fall monotonically as price rises.
+    let previous = Infinity;
+    for (let price = MINIMUM_TICKET_PRICE; price <= MAXIMUM_TICKET_PRICE; price += 10) {
+      const attendance = projectGate(program, opponent, capacity, false, price, 0).attendance;
+      assert.ok(attendance <= previous, `${tier}: attendance rose when the price went up at $${price}`);
+      previous = attendance;
+    }
+  }
+});
+
+test("advertising is an investment in the fan base, not weekly arbitrage", () => {
+  const state = beginSeason(createFictionalLeague("advertising", 24));
+  const program = Object.values(state.programs).find((candidate) => candidate.tier === "LOW");
+  const opponent = Object.values(state.programs).find((candidate) => candidate.id !== program.id);
+  const capacity = stadiumCapacity(program.facilities.STADIUM);
+  const fair = fairTicketPrice(program, opponent, false);
+
+  const none = projectGate(program, opponent, capacity, false, fair, 0);
+  const some = projectGate(program, opponent, capacity, false, fair, 25_000);
+  const lots = projectGate(program, opponent, capacity, false, fair, MAXIMUM_WEEKLY_ADVERTISING);
+
+  assert.ok(some.advertisingFans > 0, "spending should reach new followers");
+  assert.ok(lots.advertisingFans > some.advertisingFans, "more spend should reach more people");
+  // Diminishing returns: sixteen times the spend must not buy sixteen times the reach.
+  assert.ok(
+    lots.advertisingFans < some.advertisingFans * (MAXIMUM_WEEKLY_ADVERTISING / 25_000),
+    "advertising should show diminishing returns"
+  );
+  // If a big spend paid for itself in the same week it would be free money.
+  assert.ok(lots.net < none.net, "maximum spend should cost more this week than it returns at the gate");
+});
+
+test("the five weekly decisions persist and only flag what has gone stale", () => {
+  let state = beginSeason(createFictionalLeague("weekly-decisions", 24));
+  const programId = "program-1";
+
+  const opening = weeklyDecisions(state, programId);
+  assert.deepEqual(
+    opening.map((decision) => decision.id),
+    ["TICKET_PRICE", "ADVERTISING", "DEVELOPMENT", "OFFENSE", "DEFENSE"]
+  );
+  assert.ok(opening.every((decision) => decision.current.length > 0), "every decision must show its current value");
+  assert.ok(
+    opening.some((decision) => decision.attention),
+    "an untouched program should have something worth looking at"
+  );
+
+  // Settings carry over rather than being re-entered every week.
+  const result = advanceWeek(state, [
+    { type: "SET_TICKET_PRICE", programId, price: 37 },
+    { type: "SET_ADVERTISING", programId, spend: 20_000 },
+    { type: "SET_GAME_PLAN", programId, plan: OFFENSIVE_PRESETS[0].plan }
+  ]);
+  state = result.state;
+  assert.equal(state.programs[programId].ticketPrice, 37);
+  assert.equal(state.programs[programId].advertisingSpend, 20_000);
+
+  const next = weeklyDecisions(state, programId);
+  assert.equal(next.find((decision) => decision.id === "TICKET_PRICE").current, "$37");
+  assert.equal(next.find((decision) => decision.id === "ADVERTISING").current, "$20,000/wk");
+  assert.equal(next.find((decision) => decision.id === "OFFENSE").current, OFFENSIVE_PRESETS[0].label);
+
+  const afterAnotherWeek = advanceWeek(state).state;
+  assert.equal(afterAnotherWeek.programs[programId].ticketPrice, 37, "price must not reset each week");
+  assert.equal(afterAnotherWeek.programs[programId].advertisingSpend, 20_000, "advertising must not reset each week");
+});
+
+test("development offers three distinct players for three distinct reasons", () => {
+  const state = beginSeason(createFictionalLeague("development-candidates", 24));
+  const candidates = developmentCandidates(state, "program-1");
+  assert.equal(candidates.length, 3);
+  assert.equal(new Set(candidates.map((candidate) => candidate.playerId)).size, 3, "candidates must be different players");
+  assert.deepEqual(candidates.map((candidate) => candidate.reason), ["RISING", "STAR", "AT_RISK"]);
+  assert.ok(candidates.every((candidate) => candidate.headline && candidate.detail), "each candidate must explain itself");
+});
+
+test("strategy presets round-trip through the game plan", () => {
+  let state = beginSeason(createFictionalLeague("strategy-presets", 12));
+  const programId = "program-1";
+  for (const preset of [...OFFENSIVE_PRESETS, ...DEFENSIVE_PRESETS]) {
+    const applied = advanceWeek(state, [{ type: "SET_GAME_PLAN", programId, plan: preset.plan }]).state;
+    const plan = applied.gamePlans[programId];
+    for (const [axis, value] of Object.entries(preset.plan)) {
+      assert.equal(plan[axis], value, `${preset.label} did not set ${axis}`);
+    }
+    const presets = OFFENSIVE_PRESETS.includes(preset) ? OFFENSIVE_PRESETS : DEFENSIVE_PRESETS;
+    assert.equal(matchingPreset(plan, presets)?.id, preset.id, `${preset.label} was not recognised after being applied`);
+  }
+  // The default plan must be a named strategy, not "Custom".
+  assert.ok(matchingPreset(state.gamePlans[programId], OFFENSIVE_PRESETS), "the opening offense should have a name");
+  assert.ok(matchingPreset(state.gamePlans[programId], DEFENSIVE_PRESETS), "the opening defense should have a name");
 });

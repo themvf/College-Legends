@@ -25,6 +25,16 @@ import {
   DEFENSIVE_IDENTITY_LABELS,
   OFFENSIVE_IDENTITY_LABELS,
   SCOUTING_TIERS,
+  DEFENSIVE_PRESETS,
+  OFFENSIVE_PRESETS,
+  developmentCandidates,
+  matchingPreset,
+  projectGate,
+  stadiumCapacity as capacityForLevel,
+  weeklyDecisions,
+  MAXIMUM_WEEKLY_ADVERTISING,
+  MAXIMUM_TICKET_PRICE,
+  MINIMUM_TICKET_PRICE,
   SCOUTING_TIER_DESCRIPTIONS,
   SCOUTING_TIER_LABELS,
   scoutingCost,
@@ -50,11 +60,11 @@ import {
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 
 type GameView = { state: GameState; playerProgramId: ProgramId; events: GameEvent[] };
-type Screen = "DASHBOARD" | "GAME_PLAN" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CHART" | "PLAYER_STATS" | "HONORS" | "DEVELOPMENT" | "PLAYER_MEDIA" | "SCHEDULE" | "DIVISIONS" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
+type Screen = "DASHBOARD" | "THIS_WEEK" | "GAME_PLAN" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CHART" | "PLAYER_STATS" | "HONORS" | "DEVELOPMENT" | "PLAYER_MEDIA" | "SCHEDULE" | "DIVISIONS" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
 
 const careerOrder: CareerPath[] = ["DYNASTY_BUILDER", "PROGRAM_RISER", "CHAMPIONSHIP_MANDATE"];
 const positionOrder: Player["position"][] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
-const screens: Screen[] = ["DASHBOARD", "GAME_PLAN", "WEEKLY_RECAPS", "ROSTER", "DEPTH_CHART", "PLAYER_STATS", "HONORS", "DEVELOPMENT", "PLAYER_MEDIA", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
+const screens: Screen[] = ["DASHBOARD", "THIS_WEEK", "GAME_PLAN", "WEEKLY_RECAPS", "ROSTER", "DEPTH_CHART", "PLAYER_STATS", "HONORS", "DEVELOPMENT", "PLAYER_MEDIA", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
 const developmentFocuses: DevelopmentFocus[] = ["BALANCED", "TECHNIQUE", "STRENGTH", "CONDITIONING"];
 const spotlightFocuses: Exclude<DevelopmentFocus, "BALANCED">[] = ["TECHNIQUE", "STRENGTH", "CONDITIONING"];
 const playerMediaActions: PlayerMediaAction[] = ["FOOTBALL_FOCUS", "MEDIA_DAY", "SOCIAL_MEDIA", "COMMUNITY_APPEARANCE"];
@@ -117,7 +127,9 @@ export function App(): ReactElement {
   const queue = (command: GameCommand): void => {
     // Scouting settles now: a report read after the game cannot shape the plan.
     if (command.type === "SCOUT_OPPONENT") { prepare(command); return; }
-    const key = command.type === "SET_GAME_PLAN" ? `game-plan:${Object.keys(command.plan).sort().join(",")}`
+    const key = command.type === "SET_TICKET_PRICE" ? "ticket-price"
+      : command.type === "SET_ADVERTISING" ? "advertising"
+      : command.type === "SET_GAME_PLAN" ? `game-plan:${Object.keys(command.plan).sort().join(",")}`
       : command.type === "SET_DEVELOPMENT_SPOTLIGHT" ? "development-spotlight"
       : command.type === "SET_PLAYER_MEDIA_ACTION" ? "featured-media"
       : command.type === "ASSIGN_STAFF" ? `staff:${command.staffId}`
@@ -161,6 +173,8 @@ export function App(): ReactElement {
 
 function commandKey(command: GameCommand): string {
   if (command.type === "SCOUT_OPPONENT") return `scout:${command.tier}`;
+  if (command.type === "SET_TICKET_PRICE") return "ticket-price";
+  if (command.type === "SET_ADVERTISING") return "advertising";
   if (command.type === "SET_GAME_PLAN") return `game-plan:${Object.keys(command.plan).sort().join(",")}`;
   if (command.type === "SET_DEVELOPMENT_SPOTLIGHT") return "development-spotlight";
   if (command.type === "SET_PLAYER_MEDIA_ACTION") return "featured-media";
@@ -230,6 +244,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQ
         {item === "RECRUITING" && isReview ? "Recruiting · Locked" : label(item)}
       </button>)}</nav>
     {screen === "DASHBOARD" && <ProgramDashboard game={game} roster={roster} />}
+    {screen === "THIS_WEEK" && <ThisWeek game={game} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "GAME_PLAN" && <GamePlanScreen game={game} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "WEEKLY_RECAPS" && <WeeklyRecaps game={game} />}
     {screen === "ROSTER" && <Roster roster={roster} />}
@@ -870,6 +885,124 @@ const gamePlanLabels: Record<keyof GamePlan, string> = {
   pressure: "Pass rush"
 };
 
+function ThisWeek({ game, pending, onQueue }: {
+  game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void;
+}): ReactElement {
+  const programId = game.playerProgramId;
+  const program = game.state.programs[programId]!;
+  const decisions = weeklyDecisions(game.state, programId);
+  const alert = (id: string) => decisions.find((decision) => decision.id === id);
+
+  const queuedPrice = pending.find((command): command is Extract<GameCommand, { type: "SET_TICKET_PRICE" }> => command.type === "SET_TICKET_PRICE")?.price;
+  const queuedSpend = pending.find((command): command is Extract<GameCommand, { type: "SET_ADVERTISING" }> => command.type === "SET_ADVERTISING")?.spend;
+  const price = queuedPrice ?? program.ticketPrice;
+  const spend = queuedSpend ?? program.advertisingSpend;
+
+  const fixture = game.state.schedule.find((item) =>
+    item.week === game.state.week && !item.played && (item.homeProgramId === programId || item.awayProgramId === programId));
+  const atHome = fixture?.homeProgramId === programId;
+  const opponent = fixture ? game.state.programs[atHome ? fixture.awayProgramId : fixture.homeProgramId] ?? null : null;
+  const capacity = capacityForLevel(program.facilities.STADIUM);
+  const gate = projectGate(program, opponent, capacity, fixture?.matchupType === "MARQUEE", price, spend);
+
+  const plan: GamePlan = { ...(game.state.gamePlans?.[programId] ?? DEFAULT_GAME_PLAN),
+    ...Object.assign({}, ...pending.filter((command) => command.type === "SET_GAME_PLAN").map((command) => (command as Extract<GameCommand, { type: "SET_GAME_PLAN" }>).plan)) };
+  const candidates = developmentCandidates(game.state, programId);
+  const spotlight = pending.find((command): command is Extract<GameCommand, { type: "SET_DEVELOPMENT_SPOTLIGHT" }> => command.type === "SET_DEVELOPMENT_SPOTLIGHT")
+    ?? (game.state.developmentSpotlights?.[programId] ? undefined : undefined);
+  const spotlightPlayerId = spotlight?.target.type === "PLAYER" ? spotlight.target.playerId : null;
+
+  const Header = ({ id, title }: { id: string; title: string }): ReactElement => {
+    const info = alert(id);
+    return <><p className="eyebrow">{title}{info?.attention && <span className="attention-dot" aria-label="Needs attention"> ●</span>}</p>
+      {info?.attention && <p className="attention">{info.attention}</p>}</>;
+  };
+
+  return <section className="screen this-week">
+    <article className="panel">
+      <p className="eyebrow">Week {game.state.week}</p>
+      <h2>{opponent ? `${atHome ? "Hosting" : "At"} ${opponent.name}` : "No game this week"}</h2>
+      <p className="muted">Five decisions carry over from last week. Only the ones marked need a fresh look.</p>
+      <ul className="decision-list">{decisions.map((decision) =>
+        <li className={decision.attention ? "attention-row" : ""} key={decision.id}>
+          <span>{decision.label}</span><strong>{decision.current}</strong>
+        </li>)}
+      </ul>
+    </article>
+
+    <article className="panel">
+      <Header id="TICKET_PRICE" title="1 · Ticket price" />
+      <h2>{money(price)} a seat</h2>
+      <input type="range" min={MINIMUM_TICKET_PRICE} max={MAXIMUM_TICKET_PRICE} value={price}
+        onChange={(event) => onQueue({ type: "SET_TICKET_PRICE", programId, price: Number(event.target.value) })} />
+      <div className="snapshot-list">
+        <p><span>Comparable programmes charge</span><strong>{money(gate.fairPrice)}</strong></p>
+        <p><span>Projected attendance</span><strong>{atHome ? `${gate.attendance.toLocaleString()} / ${capacity.toLocaleString()}${gate.soldOut ? " · sold out" : ""}` : "away week"}</strong></p>
+        <p><span>Gate</span><strong>{atHome ? money(gate.ticketRevenue) : "away week"}</strong></p>
+      </div>
+    </article>
+
+    <article className="panel">
+      <Header id="ADVERTISING" title="2 · Advertising" />
+      <h2>{spend > 0 ? `${money(spend)} this week` : "No spend"}</h2>
+      <input type="range" min={0} max={MAXIMUM_WEEKLY_ADVERTISING} step={5_000} value={spend}
+        onChange={(event) => onQueue({ type: "SET_ADVERTISING", programId, spend: Number(event.target.value) })} />
+      <div className="snapshot-list">
+        <p><span>New followers a week</span><strong>{gate.advertisingFans.toLocaleString()}</strong></p>
+        <p><span>Extra through the gate</span><strong>{atHome ? `${Math.max(0, gate.attendance - projectGate(program, opponent, capacity, false, price, 0).attendance).toLocaleString()}` : "—"}</strong></p>
+        <p><span>Net this week</span><strong>{atHome ? money(gate.net) : money(-spend)}</strong></p>
+      </div>
+    </article>
+
+    <article className="panel">
+      <Header id="DEVELOPMENT" title="3 · Development focus" />
+      <h2>Who gets the week</h2>
+      <div className="plan-options">{candidates.map((candidate) =>
+        <button className={spotlightPlayerId === candidate.playerId ? "plan-option active" : "plan-option"}
+          key={candidate.playerId}
+          onClick={() => onQueue({
+            type: "SET_DEVELOPMENT_SPOTLIGHT", programId,
+            target: { type: "PLAYER", playerId: candidate.playerId },
+            focus: candidate.reason === "AT_RISK" ? "CONDITIONING" : candidate.reason === "STAR" ? "TECHNIQUE" : "TECHNIQUE"
+          })}>
+          <strong>{candidate.name} · {candidate.position} · {candidate.overall}</strong>
+          <span className="effect">{candidate.headline}</span>
+          <span className="tradeoff">{candidate.detail}</span>
+        </button>)}
+      </div>
+    </article>
+
+    <article className="panel">
+      <Header id="OFFENSE" title="4 · Offensive strategy" />
+      <h2>{matchingPreset(plan, OFFENSIVE_PRESETS)?.label ?? "Custom"}</h2>
+      <div className="plan-options">{OFFENSIVE_PRESETS.map((preset) =>
+        <button className={matchingPreset(plan, OFFENSIVE_PRESETS)?.id === preset.id ? "plan-option active" : "plan-option"}
+          key={preset.id}
+          onClick={() => onQueue({ type: "SET_GAME_PLAN", programId, plan: preset.plan })}>
+          <strong>{preset.label}</strong>
+          <span className="effect">{preset.effect}</span>
+          <span className="tradeoff">{preset.tradeoff}</span>
+        </button>)}
+      </div>
+    </article>
+
+    <article className="panel">
+      <Header id="DEFENSE" title="5 · Defensive strategy" />
+      <h2>{matchingPreset(plan, DEFENSIVE_PRESETS)?.label ?? "Custom"}</h2>
+      <div className="plan-options">{DEFENSIVE_PRESETS.map((preset) =>
+        <button className={matchingPreset(plan, DEFENSIVE_PRESETS)?.id === preset.id ? "plan-option active" : "plan-option"}
+          key={preset.id}
+          onClick={() => onQueue({ type: "SET_GAME_PLAN", programId, plan: preset.plan })}>
+          <strong>{preset.label}</strong>
+          <span className="effect">{preset.effect}</span>
+          <span className="tradeoff">{preset.tradeoff}</span>
+        </button>)}
+      </div>
+      <p className="muted">Fine-tune the individual calls on the Game Plan screen.</p>
+    </article>
+  </section>;
+}
+
 function GamePlanScreen({ game, pending, onQueue }: {
   game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void;
 }): ReactElement {
@@ -1006,7 +1139,11 @@ function GamePlanScreen({ game, pending, onQueue }: {
 function label(value: string): string { return value.toLowerCase().split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" "); }
 function money(value: number): string {
   const absolute = Math.abs(value);
-  const amount = absolute >= 1_000_000 ? `$${(absolute / 1_000_000).toFixed(1)}M` : `$${Math.round(absolute / 1_000)}K`;
+  // Ticket prices are tens of dollars, so the compact form has to keep exact
+  // amounts below a thousand rather than rounding them all to $0K.
+  const amount = absolute >= 1_000_000 ? `$${(absolute / 1_000_000).toFixed(1)}M`
+    : absolute >= 1_000 ? `$${Math.round(absolute / 1_000)}K`
+      : `$${Math.round(absolute)}`;
   return value < 0 ? `-${amount}` : amount;
 }
 function signedMoney(value: number): string { return `${value > 0 ? "+" : ""}${money(value)}`; }
