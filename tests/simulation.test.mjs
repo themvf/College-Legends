@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, PLAYER_STAT_BANDS, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
+import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -270,7 +270,7 @@ test("weekly player statistics use plausible bands with real variance and persis
   while (state.season === season) state = advanceWeek(state).state;
   const quarterbackLines = state.playerGameStats.filter((line) => line.season === season && line.position === "QB");
   assert.ok(quarterbackLines.length >= 90);
-  assert.ok(quarterbackLines.every((line) => line.passingAttempts >= PLAYER_STAT_BANDS.qbAttempts.minimum && line.passingAttempts <= PLAYER_STAT_BANDS.qbAttempts.maximum));
+  assert.ok(quarterbackLines.every((line) => line.passingAttempts >= 8 && line.passingAttempts <= 60));
   const attempts = quarterbackLines.map((line) => line.passingAttempts);
   const mean = attempts.reduce((sum, value) => sum + value, 0) / attempts.length;
   const standardDeviation = Math.sqrt(attempts.reduce((sum, value) => sum + (value - mean) ** 2, 0) / attempts.length);

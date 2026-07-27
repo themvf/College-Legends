@@ -268,3 +268,22 @@ dd { margin:0; font-weight:700; text-align:right; }
   .depth-actions { grid-column:1/-1; }
   .depth-actions button:last-child { margin-left:auto; }
 }
+
+.unit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-top: 0.75rem; }
+.unit-card { border: 1px solid var(--line, #2a2f3a); border-radius: 10px; padding: 0.75rem; background: rgba(255, 255, 255, 0.02); }
+.unit-card.good { border-color: #3f8f5f; }
+.unit-card.bad { border-color: #9a4747; }
+.unit-card .unit-name { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.7; margin: 0; }
+.unit-card .unit-rating { font-size: 1.6rem; font-weight: 700; margin: 0.2rem 0 0; }
+.unit-card .unit-verdict { font-size: 0.8rem; margin: 0.35rem 0 0; }
+.plan-row { margin-top: 1rem; }
+.plan-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.7; margin: 0 0 0.4rem; }
+.plan-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.5rem; }
+.plan-option { display: flex; flex-direction: column; gap: 0.25rem; text-align: left; padding: 0.65rem 0.75rem; border-radius: 10px;
+  border: 1px solid var(--line, #2a2f3a); background: rgba(255, 255, 255, 0.02); color: inherit; cursor: pointer; }
+.plan-option.active { border-color: #6ea8fe; background: rgba(110, 168, 254, 0.12); }
+.plan-option .effect { font-size: 0.8rem; opacity: 0.85; }
+.plan-option .tradeoff { font-size: 0.78rem; opacity: 0.6; }
+.matchup-table { margin-top: 0.75rem; width: 100%; }
+.plan-notes { margin: 0.75rem 0 0; padding-left: 1.1rem; }
+.plan-notes li { font-size: 0.85rem; opacity: 0.85; margin-bottom: 0.25rem; }

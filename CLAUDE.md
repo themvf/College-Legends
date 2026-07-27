@@ -142,21 +142,12 @@ from 53.5% to 59.7% against a real 57-60%, measured pooled over 1,440 games.
 Rates vary by several points between generated leagues, so the distribution
 suite pools four independent leagues rather than trusting one season.
 
-Two things remain open here.
-
-**Margins are still fat-tailed.** One-score games run about 27% against a real
-35%, and blowouts about 27% against a real 20%. Possessions are independent
-Bernoulli trials with no game script, so nothing reproduces the negative
-feedback of real games — trailing teams gaining possessions, leaders draining
-clock. Closing this needs game-script modelling, not more constant tuning.
-
-**Individual stats still do not affect who wins.** The score comes from a
-team-strength average in which the quarterback is 1 of 25 starters plus a small
-arm bonus; real football puts the quarterback at 30-40% of team quality. The
-larger fix is to drive the score *from* the box score — allocate possessions to
-positional units and sum to a score — which makes developing a star quarterback
-matter competitively and turns the stat bands into a validated output instead of
-an input. Deliberately not attempted; it is a design decision, not a bug.
+Both of the questions left open here were settled by the unit-resolution work
+below: box scores are now emitted by drive simulation rather than reconciled
+against it, and individual quality decides games. `simulateGameScore`,
+`recordGameStats`, and the stat bands described above no longer exist — the
+numbers in this section are the targets that work was calibrated against, kept
+because they document where the rates came from.
 
 ### 3. Money and fame loops do not exist
 
@@ -225,8 +216,6 @@ prospects-by-status) instead of `Object.values().filter()`.
 
 ### 7. Smaller items
 
-- `balanceConfiguration.game.upsetNoise` and `weeklyDevelopment.coachWeight` are
-  declared and shipped but never read.
 - Position-group spotlight (0.55 intensity x 12 players = 6.6x total output)
   strictly dominates the single-player spotlight (1.0x). The individual option
   is never worth taking.
@@ -267,26 +256,78 @@ unlocks, tiered opponent scouting, offensive and defensive emphasis calls
 or the pass, hunting turnovers), prep-point capacity, and coordinators who can
 be delegated the call.
 
-**That work is blocked on unit-level game resolution.** `teamStrength` averages
-all 25 starters into one scalar and `simulateGameScore` reads only the
-difference between two such scalars, so there is no rushing offense or pass
-defense for any of these decisions to modify. Splitting team strength into
-rushOffense, passOffense, rushDefense, and passDefense — and resolving each
-possession as a called play against the matching unit — is a prerequisite, not
-a follow-up. It also resolves the open question from the box-score work, since
-box scores then fall out of play resolution instead of being fitted to a final
-score.
+Stage one of that work is **done**: unit-level resolution plus the offensive and
+defensive emphasis calls. See "Unit resolution and the emphasis layer" below.
+Playbook installation, play concepts, opponent scouting, prep capacity, and
+coordinator delegation remain.
+
+## Unit resolution and the emphasis layer
+
+`packages/simulation/src/game.ts` resolves games drive by drive against four
+ratings — `rushOffense`, `passOffense`, `rushDefense`, `passDefense` — each
+built from the position groups that produce it. Scores, box scores, and the
+plan report are all outputs of the same play loop, so they cannot disagree.
+
+Calibrated per team-game against real FBS rates:
+
+| | sim | real |
+|---|---|---|
+| plays / yards | 70 / 404 | 70 / 390 |
+| pass attempts, completion %, yards | 33.2 / 64.8% / 238 | 31 / 63% / 235 |
+| rush attempts / yards | 36.5 / 165 | 36 / 155 |
+| touchdowns / field goals | 3.3 / 1.1 | 3.5 / 1.2 |
+| interceptions / sacks | 0.9 / 2.2 | 0.8 / 2.2 |
+| drive: plays / yards / TD rate | 5.9 / 34 / 28% | 5.9 / 32.5 / 29% |
+
+Three mechanisms carry that calibration, and none is a fudge factor:
+
+- **Fourth down is a decision.** Offenses kick in range, gamble on short
+  yardage, and otherwise punt. Letting them snap all four downs stretched drives
+  to eight plays.
+- **Drive rhythm.** Each first down makes the next play slightly easier. Real
+  punting drives gain about ten yards while scoring drives gain seventy; without
+  a compounding term every drive drifts to the same mid-field stall.
+- **Individual quality inside the unit.** A ball carrier's or receiver's
+  deviation from his own room's baseline shifts the play. Without it a committee
+  cost nothing and always beat featuring a star.
+
+Every emphasis is a trade, measured over 400-game samples per cell:
+
+| offense \ defense | STOP_THE_RUN | BALANCED | STOP_THE_PASS |
+|---|---|---|---|
+| RUN_HEAVY | 25.2 | 26.8 | 26.7 |
+| BALANCED | 25.5 | 26.4 | 25.3 |
+| PASS_HEAVY | 27.2 | 26.8 | 24.5 |
+
+`TAKEAWAY_HUNT` wins the ball 1.7x as often and concedes yards for it.
+`HEAVY_BLITZ` gets 3.6 sacks a game against 1.3 for `COVERAGE_FIRST`, and gives
+up more explosive plays. `FEATURE_BACK` gives the lead back 68% of carries and
+three times the fatigue of a committee. `FEED_THE_STAR` moves the top receiver
+from 31% to 48% of targets and raises interceptions by half. `HURRY_UP` adds
+possessions **for both teams**, so it helps the better offense and burns the
+thinner roster.
+
+Two deviations are known and deliberate rather than tuned away:
+
+- **Punts run near 5.7 against a real 4.2.** There is no game clock, so drives
+  that would expire at the half become punts instead.
+- **Margins stay fat-tailed** — roughly 24% one-score games against a real 35%.
+  Unit ratings are deliberately sensitive, which is what makes a game plan
+  matter, and the league mixes power and low-tier programs inside divisions in a
+  way real conferences do not.
 
 ## Suggested order of work
 
 1. ~~RNG finalizer plus a distribution test~~ — done.
 2. ~~Re-tune stat bands against the fixed RNG; reconcile score to box score~~ — done.
-3. Unit-level ratings and possession resolution — the prerequisite for every
-   game-plan decision, and the fix for stats not affecting who wins.
-4. The game-plan decision layer, in the staged order set out in
-   `docs/GAMEPLAN_AND_PREPARATION.md`.
+3. ~~Unit-level ratings, drive resolution, and the emphasis calls~~ — done.
+4. The rest of the game-plan layer, in the order set out in
+   `docs/GAMEPLAN_AND_PREPARATION.md`: prep capacity and opponent scouting,
+   then playbook installation and play concepts, then coordinator delegation.
 5. Make revenue a function of fame; add recurring costs and an insolvency check.
    Coordinator salaries from step 4 give this its first real payroll pressure.
 6. Add an offseason phase — unblocks marquee scheduling every year, signing day,
    the portal as an input, coach hiring, and expectations/firing.
-7. Performance and save size before any iOS work.
+7. Performance and save size before any iOS work. A week advance measures 6.9
+   seconds in the browser at the full 72-program league; the cost is the
+   recruiting market and the AI planner, not game resolution.

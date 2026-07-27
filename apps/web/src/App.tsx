@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import type {
   AwardCandidate,
+  GamePlan,
   CareerPath,
   DevelopmentFocus,
   DivisionId,
@@ -20,6 +21,10 @@ import type {
 } from "@college-legends/model";
 import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
 import {
+  DEFAULT_GAME_PLAN,
+  GAME_PLAN_OPTIONS,
+  projectGamePlan,
+  unitLabel,
   developmentPayoff,
   facilityPayoff,
   marqueeGameOptions,
@@ -38,11 +43,11 @@ import {
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 
 type GameView = { state: GameState; playerProgramId: ProgramId; events: GameEvent[] };
-type Screen = "DASHBOARD" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CHART" | "PLAYER_STATS" | "HONORS" | "DEVELOPMENT" | "PLAYER_MEDIA" | "SCHEDULE" | "DIVISIONS" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
+type Screen = "DASHBOARD" | "GAME_PLAN" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CHART" | "PLAYER_STATS" | "HONORS" | "DEVELOPMENT" | "PLAYER_MEDIA" | "SCHEDULE" | "DIVISIONS" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
 
 const careerOrder: CareerPath[] = ["DYNASTY_BUILDER", "PROGRAM_RISER", "CHAMPIONSHIP_MANDATE"];
 const positionOrder: Player["position"][] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
-const screens: Screen[] = ["DASHBOARD", "WEEKLY_RECAPS", "ROSTER", "DEPTH_CHART", "PLAYER_STATS", "HONORS", "DEVELOPMENT", "PLAYER_MEDIA", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
+const screens: Screen[] = ["DASHBOARD", "GAME_PLAN", "WEEKLY_RECAPS", "ROSTER", "DEPTH_CHART", "PLAYER_STATS", "HONORS", "DEVELOPMENT", "PLAYER_MEDIA", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
 const developmentFocuses: DevelopmentFocus[] = ["BALANCED", "TECHNIQUE", "STRENGTH", "CONDITIONING"];
 const spotlightFocuses: Exclude<DevelopmentFocus, "BALANCED">[] = ["TECHNIQUE", "STRENGTH", "CONDITIONING"];
 const playerMediaActions: PlayerMediaAction[] = ["FOOTBALL_FOCUS", "MEDIA_DAY", "SOCIAL_MEDIA", "COMMUNITY_APPEARANCE"];
@@ -99,7 +104,8 @@ export function App(): ReactElement {
     send({ type: "BEGIN_SEASON", requestId: nextRequestId(), playerProgramId: game.playerProgramId, commands: pendingCommands });
   };
   const queue = (command: GameCommand): void => {
-    const key = command.type === "SET_DEVELOPMENT_SPOTLIGHT" ? "development-spotlight"
+    const key = command.type === "SET_GAME_PLAN" ? `game-plan:${Object.keys(command.plan).sort().join(",")}`
+      : command.type === "SET_DEVELOPMENT_SPOTLIGHT" ? "development-spotlight"
       : command.type === "SET_PLAYER_MEDIA_ACTION" ? "featured-media"
       : command.type === "ASSIGN_STAFF" ? `staff:${command.staffId}`
       : command.type === "UPGRADE_FACILITY" ? `facility:${command.facility}`
@@ -141,6 +147,7 @@ export function App(): ReactElement {
 }
 
 function commandKey(command: GameCommand): string {
+  if (command.type === "SET_GAME_PLAN") return `game-plan:${Object.keys(command.plan).sort().join(",")}`;
   if (command.type === "SET_DEVELOPMENT_SPOTLIGHT") return "development-spotlight";
   if (command.type === "SET_PLAYER_MEDIA_ACTION") return "featured-media";
   if (command.type === "ASSIGN_STAFF") return `staff:${command.staffId}`;
@@ -209,6 +216,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQ
         {item === "RECRUITING" && isReview ? "Recruiting · Locked" : label(item)}
       </button>)}</nav>
     {screen === "DASHBOARD" && <ProgramDashboard game={game} roster={roster} />}
+    {screen === "GAME_PLAN" && <GamePlanScreen game={game} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "WEEKLY_RECAPS" && <WeeklyRecaps game={game} />}
     {screen === "ROSTER" && <Roster roster={roster} />}
     {screen === "DEPTH_CHART" && <DepthChart game={game} roster={roster} pending={pendingCommands} onQueue={onQueue} />}
@@ -833,6 +841,101 @@ function eligibilityClass(player: Player): string {
   const redshirtPrefix = player.eligibility.redshirtStatus === "USED" && player.eligibility.seasonsEnrolled > player.eligibility.seasonsParticipated ? "RS " : "";
   return `${redshirtPrefix}${className(player.eligibility.seasonsParticipated)}`;
 }
+
+const gamePlanSections: { title: string; keys: (keyof GamePlan)[] }[] = [
+  { title: "Offense", keys: ["runPassBalance", "backfieldUsage", "targetDistribution", "tempo"] },
+  { title: "Defense", keys: ["defensivePriority", "defensivePosture", "pressure"] }
+];
+const gamePlanLabels: Record<keyof GamePlan, string> = {
+  runPassBalance: "Run / pass balance",
+  backfieldUsage: "Backfield",
+  targetDistribution: "Targets",
+  tempo: "Tempo",
+  defensivePriority: "Defensive priority",
+  defensivePosture: "Posture",
+  pressure: "Pass rush"
+};
+
+function GamePlanScreen({ game, pending, onQueue }: {
+  game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void;
+}): ReactElement {
+  const programId = game.playerProgramId;
+  const saved = game.state.gamePlans?.[programId] ?? { ...DEFAULT_GAME_PLAN };
+  const queued = pending.filter((command): command is Extract<GameCommand, { type: "SET_GAME_PLAN" }> => command.type === "SET_GAME_PLAN");
+  const plan: GamePlan = { ...saved, ...Object.assign({}, ...queued.map((command) => command.plan)) };
+  const edges = projectGamePlan(game.state, programId);
+  const opponentScheduled = edges.some((edge) => edge.edge !== null);
+
+  const lastReport = [...game.events]
+    .reverse()
+    .find((event): event is Extract<GameEvent, { type: "GAME_PLAN_REPORT" }> =>
+      event.type === "GAME_PLAN_REPORT" && event.programId === programId);
+
+  return <section className="screen game-plan">
+    {lastReport && <article className="panel">
+      <p className="eyebrow">Last week vs {game.state.programs[lastReport.opponentProgramId]?.abbreviation ?? "opponent"}</p>
+      <h2>What the calls were worth</h2>
+      <div className="snapshot-list">
+        <p><span>Play mix</span><strong>{lastReport.runPlays} run · {lastReport.passPlays} pass</strong></p>
+        <p><span>Turnover margin</span><strong>{lastReport.takeaways} won · {lastReport.giveaways} lost</strong></p>
+        <p><span>Sacks</span><strong>{lastReport.sacksFor} for · {lastReport.sacksAgainst} against</strong></p>
+        <p><span>Lead back carries</span><strong>{Math.round(lastReport.leadBackShare * 100)}%</strong></p>
+        <p><span>Top receiver targets</span><strong>{Math.round(lastReport.topTargetShare * 100)}%</strong></p>
+      </div>
+      <table className="stat-table matchup-table">
+        <thead><tr><th>Unit</th><th>You</th><th>Them</th><th>Plays</th><th>Yards</th><th>Y/P</th><th>TD</th></tr></thead>
+        <tbody>{lastReport.matchups.map((matchup) =>
+          <tr key={matchup.unit}>
+            <td>{unitLabel(matchup.unit)}</td>
+            <td>{matchup.rating.toFixed(1)}</td>
+            <td>{matchup.opposingRating.toFixed(1)}</td>
+            <td>{matchup.plays}</td>
+            <td>{matchup.yards}</td>
+            <td>{matchup.yardsPerPlay.toFixed(1)}</td>
+            <td>{matchup.touchdowns}</td>
+          </tr>)}
+        </tbody>
+      </table>
+      <ul className="plan-notes">{lastReport.notes.map((note) => <li key={note}>{note}</li>)}</ul>
+    </article>}
+    <article className="panel">
+      <p className="eyebrow">This week's matchups</p>
+      <h2>What the plan is worth</h2>
+      <p className="muted">{opponentScheduled
+        ? "Ratings include your plan and the opponent's. Every call concedes something — the right one depends on what they do."
+        : "No opponent is scheduled this week, so only your own unit ratings are shown."}</p>
+      <div className="unit-grid">{edges.map((edge) =>
+        <div className={`unit-card ${edge.edge === null ? "" : edge.edge >= 2 ? "good" : edge.edge <= -2 ? "bad" : "even"}`} key={edge.unit}>
+          <p className="unit-name">{unitLabel(edge.unit)}</p>
+          <p className="unit-rating">{edge.rating.toFixed(1)}</p>
+          {edge.opposingRating !== null && <p className="muted">vs {edge.opposingRating.toFixed(1)}</p>}
+          <p className="unit-verdict">{edge.verdict}{edge.edge !== null && ` (${edge.edge > 0 ? "+" : ""}${edge.edge})`}</p>
+        </div>)}
+      </div>
+    </article>
+    {gamePlanSections.map((section) =>
+      <article className="panel" key={section.title}>
+        <p className="eyebrow">{section.title}</p>
+        <h2>{section.title === "Offense" ? "How you attack" : "How you defend"}</h2>
+        {section.keys.map((key) =>
+          <div className="plan-row" key={key}>
+            <p className="plan-label">{gamePlanLabels[key]}</p>
+            <div className="plan-options">{GAME_PLAN_OPTIONS[key].map((option) =>
+              <button
+                className={plan[key] === option.value ? "plan-option active" : "plan-option"}
+                key={option.value}
+                onClick={() => onQueue({ type: "SET_GAME_PLAN", programId, plan: { [key]: option.value } as Partial<GamePlan> })}
+              >
+                <strong>{option.label}</strong>
+                <span className="effect">{option.effect}</span>
+                <span className="tradeoff">{option.tradeoff}</span>
+              </button>)}
+            </div>
+          </div>)}
+      </article>)}
+  </section>;
+}
+
 function label(value: string): string { return value.toLowerCase().split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" "); }
 function money(value: number): string {
   const absolute = Math.abs(value);

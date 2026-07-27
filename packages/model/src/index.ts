@@ -20,6 +20,15 @@ export type PlayerMediaAction = "FOOTBALL_FOCUS" | "MEDIA_DAY" | "SOCIAL_MEDIA" 
 export type RecruitingEvaluation = "BASIC" | "ATHLETIC" | "POSITION" | "CHARACTER" | "MEDICAL" | "PROJECTION";
 export type RecruitingSearchType = "LOCAL_REGION" | "POSITION" | "SLEEPERS" | "NATIONAL_SHOWCASE";
 export type RedshirtStatus = "AVAILABLE" | "REDSHIRTING" | "USED" | "INELIGIBLE";
+export type TeamUnit = "rushOffense" | "passOffense" | "rushDefense" | "passDefense";
+export type RunPassBalance = "RUN_HEAVY" | "BALANCED" | "PASS_HEAVY";
+export type BackfieldUsage = "FEATURE_BACK" | "COMMITTEE";
+export type TargetDistribution = "SPREAD_IT" | "FEED_THE_STAR";
+export type OffensiveTempo = "HURRY_UP" | "NORMAL" | "CONTROL_CLOCK";
+export type DefensivePriority = "STOP_THE_RUN" | "BALANCED" | "STOP_THE_PASS";
+export type DefensivePosture = "TAKEAWAY_HUNT" | "CONTAIN" | "BEND_DONT_BREAK";
+export type PassRushPressure = "HEAVY_BLITZ" | "SITUATIONAL" | "COVERAGE_FIRST";
+export type PlayType = "RUN" | "PASS";
 export type SeasonAwardType =
   | "PLAYER_OF_THE_YEAR"
   | "OFFENSIVE_PLAYER_OF_THE_YEAR"
@@ -95,6 +104,40 @@ export interface PlayerGameStatLine {
   punts: number;
   puntYards: number;
   blockingGrade: number;
+}
+
+/**
+ * The four ratings a game is actually resolved against. Each is produced by the
+ * position groups responsible for it, so a call like "stop the run" has a
+ * specific number to move rather than a team-wide average.
+ */
+export type TeamUnitRatings = Record<TeamUnit, number>;
+
+/**
+ * A program's standing weekly preparation. Unlike development focus, a game
+ * plan persists until the player changes it — it is a standing instruction, not
+ * a one-week action.
+ */
+export interface GamePlan {
+  runPassBalance: RunPassBalance;
+  backfieldUsage: BackfieldUsage;
+  targetDistribution: TargetDistribution;
+  tempo: OffensiveTempo;
+  defensivePriority: DefensivePriority;
+  defensivePosture: DefensivePosture;
+  pressure: PassRushPressure;
+}
+
+/** How one team's plan fared against the other's, for the weekly plan report. */
+export interface MatchupOutcome {
+  unit: TeamUnit;
+  rating: number;
+  opposingRating: number;
+  edge: number;
+  plays: number;
+  yards: number;
+  yardsPerPlay: number;
+  touchdowns: number;
 }
 
 export interface AwardCandidate {
@@ -271,6 +314,8 @@ export interface GameState {
   recruiting: Record<ProgramId, RecruitingProgramState>;
   /** One optional development investment per program and week. Position groups trade intensity for breadth. */
   developmentSpotlights: Record<ProgramId, DevelopmentSpotlight | null>;
+  /** Standing weekly preparation per program; persists until changed. */
+  gamePlans: Record<ProgramId, GamePlan>;
   staff: Record<string, StaffMember>;
   depthCharts: Record<ProgramId, DepthChart>;
   playerGameStats: PlayerGameStatLine[];
@@ -283,12 +328,12 @@ export interface BalanceConfiguration {
   version: string;
   weeklyDevelopment: {
     base: number;
-    coachWeight: number;
     workEthicWeight: number;
     fatigueFloor: number;
     maximum: number;
   };
-  game: { possessions: number; homeFieldAdvantage: number; upsetNoise: number };
+  /** Drives per team come from the chosen tempo, not from a fixed count. */
+  game: { homeFieldAdvantage: number };
 }
 
 export type GameCommand =
@@ -303,6 +348,7 @@ export type GameCommand =
   | { type: "ASSIGN_STAFF"; programId: ProgramId; staffId: string; assignment: StaffAssignment }
   | { type: "UPGRADE_FACILITY"; programId: ProgramId; facility: FacilityType }
   | { type: "SET_PLAYER_MEDIA_ACTION"; programId: ProgramId; playerId: PlayerId; action: PlayerMediaAction }
+  | { type: "SET_GAME_PLAN"; programId: ProgramId; plan: Partial<GamePlan> }
   | { type: "SCHEDULE_MARQUEE_HOME_GAME"; programId: ProgramId; opponentProgramId: ProgramId };
 
 export type GameEvent =
@@ -447,6 +493,30 @@ export type GameEvent =
       personalFansAfter: number;
       personalFanChange: number;
       schoolFanLift: number;
+    }
+  | { type: "GAME_PLAN_SET"; season: Season; week: number; programId: ProgramId; plan: GamePlan; changed: (keyof GamePlan)[] }
+  | {
+      /** What each side called, and what the calls were worth. */
+      type: "GAME_PLAN_REPORT";
+      season: Season;
+      week: number;
+      gameId: string;
+      programId: ProgramId;
+      opponentProgramId: ProgramId;
+      plan: GamePlan;
+      opponentPlan: GamePlan;
+      units: TeamUnitRatings;
+      opponentUnits: TeamUnitRatings;
+      matchups: MatchupOutcome[];
+      runPlays: number;
+      passPlays: number;
+      takeaways: number;
+      giveaways: number;
+      sacksFor: number;
+      sacksAgainst: number;
+      leadBackShare: number;
+      topTargetShare: number;
+      notes: string[];
     }
   | { type: "WEEKLY_FINANCES"; season: Season; week: number; programId: ProgramId; revenue: number; expenses: number; net: number }
   | {

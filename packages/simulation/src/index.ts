@@ -1,6 +1,10 @@
-import type { AwardCandidate, DepthChart, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffAssignment, StaffMember, StaffRole } from "@college-legends/model";
+import type { AwardCandidate, DepthChart, GamePlan, MatchupOutcome, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffAssignment, StaffMember, StaffRole } from "@college-legends/model";
 import { FICTIONAL_PROGRAMS, fictionalPersonName } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
+import { DEFAULT_GAME_PLAN, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
+
+export { DEFAULT_GAME_PLAN, GAME_PLAN_OPTIONS, plannedUnitRatings, projectUnitEdges, unitLabel, unitRatingsFromLineup } from "./game.js";
+export type { GamePlanOption, UnitEdge } from "./game.js";
 
 export { AddressableRng } from "./rng.js";
 
@@ -33,15 +37,6 @@ const REGULAR_SEASON_WEEKS = [1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14] as const;
 const DIVISION_GAME_COUNT = 8;
 const STADIUM_CAPACITY_BY_LEVEL: Readonly<Record<number, number>> = { 1: 25_000, 2: 36_000, 3: 50_000, 4: 68_000, 5: 88_000 };
 const STARTER_COUNTS: Readonly<Record<Position, number>> = { QB: 1, RB: 2, WR: 3, TE: 1, OL: 5, DL: 4, LB: 3, DB: 4, K: 1, P: 1 };
-/** Sacks are charged against rushing yardage, following college scorekeeping. */
-const YARDS_LOST_PER_SACK = 6.5;
-/**
- * Possession outcomes. Real teams score on roughly a fifth of possessions and
- * reach the end zone on about three quarters of those, which lands a team near
- * 30 points on 4.4 touchdowns and 1.2 field goals per game.
- */
-const POSSESSION_SCORING_RATE = 0.21;
-const TOUCHDOWN_SHARE_OF_SCORES = 0.76;
 const OFFENSIVE_POSITIONS = new Set<Position>(["QB", "RB", "WR", "TE", "OL"]);
 const DEFENSIVE_POSITIONS = new Set<Position>(["DL", "LB", "DB"]);
 export const SEASON_AWARD_LABELS: Readonly<Record<SeasonAwardType, string>> = {
@@ -53,46 +48,6 @@ export const SEASON_AWARD_LABELS: Readonly<Record<SeasonAwardType, string>> = {
 };
 export const SEASON_AWARD_TYPES = Object.keys(SEASON_AWARD_LABELS) as SeasonAwardType[];
 
-export interface StatisticalBand {
-  mean: number;
-  standardDeviation: number;
-  minimum: number;
-  maximum: number;
-}
-
-/**
- * Calibrated against qualifying FBS player leader samples from 2021-25.
- * Bounded normal draws create recognizable college-football stat lines while
- * ratings, depth-chart role, opponent strength, and score shift the center.
- *
- * Volume bands are chosen so a full lineup sums to realistic team totals:
- * roughly 31 pass attempts for 235 yards, 30 rushes for 155 yards, and 400
- * yards of total offense per team per game. Touchdowns and field goals are not
- * drawn from bands at all — they are taken from the possessions that actually
- * scored, so the box score always reconciles with the scoreboard.
- */
-export const PLAYER_STAT_BANDS = {
-  qbAttempts: { mean: 31, standardDeviation: 7, minimum: 12, maximum: 52 },
-  qbCompletionRate: { mean: 0.635, standardDeviation: 0.055, minimum: 0.42, maximum: 0.82 },
-  qbYardsPerAttempt: { mean: 7.6, standardDeviation: 1.35, minimum: 3.8, maximum: 12.5 },
-  qbCarries: { mean: 7, standardDeviation: 3, minimum: 0, maximum: 18 },
-  qbRushingYardsPerCarry: { mean: 4.2, standardDeviation: 2.4, minimum: -2, maximum: 11 },
-  rbCarries: { mean: 17, standardDeviation: 5, minimum: 4, maximum: 32 },
-  rbYardsPerCarry: { mean: 5.2, standardDeviation: 1.25, minimum: 1.5, maximum: 9.5 },
-  backupRbCarries: { mean: 9, standardDeviation: 3.5, minimum: 0, maximum: 20 },
-  passingTouchdownShare: { mean: 0.54, standardDeviation: 0.2, minimum: 0, maximum: 1 },
-  wrTargets: { mean: 7, standardDeviation: 2.8, minimum: 1, maximum: 15 },
-  teTargets: { mean: 5, standardDeviation: 2.2, minimum: 1, maximum: 12 },
-  catchRate: { mean: 0.64, standardDeviation: 0.09, minimum: 0.35, maximum: 0.9 },
-  yardsPerReception: { mean: 12.6, standardDeviation: 3.2, minimum: 5, maximum: 24 },
-  dlTackles: { mean: 4.2, standardDeviation: 2, minimum: 0, maximum: 12 },
-  lbTackles: { mean: 7.1, standardDeviation: 2.7, minimum: 1, maximum: 16 },
-  dbTackles: { mean: 5.2, standardDeviation: 2.4, minimum: 0, maximum: 14 },
-  dlSacks: { mean: 0.4, standardDeviation: 0.55, minimum: 0, maximum: 3 },
-  lbSacks: { mean: 0.25, standardDeviation: 0.5, minimum: 0, maximum: 3 },
-  punts: { mean: 4.2, standardDeviation: 1.6, minimum: 1, maximum: 9 },
-  puntAverage: { mean: 42.5, standardDeviation: 3.8, minimum: 31, maximum: 55 }
-} as const satisfies Record<string, StatisticalBand>;
 const RECRUITING_POINT_CAP = 120;
 const RECRUITING_SEARCH_COSTS: Readonly<Record<RecruitingSearchType, number>> = {
   LOCAL_REGION: 15,
@@ -350,8 +305,8 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
   const lastNameOffset = Math.floor(nameRng.between("last-offset", 0, 160));
   const nameFor = (ordinal: number): string => fictionalPersonName(ordinal, firstNameOffset, lastNameOffset);
   const state: GameState = {
-    identity: { rootSeed, balanceConfiguration: { version: "0.1.0", weeklyDevelopment: { base: 0.012, coachWeight: 0.018, workEthicWeight: 0.022, fatigueFloor: 0.62, maximum: 0.09 }, game: { possessions: 24, homeFieldAdvantage: 2.8, upsetNoise: 11 } }, simulationVersion: "0.1.0" },
-    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, developmentSpotlights: {}, staff: {}, depthCharts: {}, playerGameStats: [], schedule: [], seasonHistory: [], eventHistory: []
+    identity: { rootSeed, balanceConfiguration: { version: "0.1.0", weeklyDevelopment: { base: 0.012, workEthicWeight: 0.022, fatigueFloor: 0.62, maximum: 0.09 }, game: { homeFieldAdvantage: 2.8 } }, simulationVersion: "0.1.0" },
+    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, developmentSpotlights: {}, gamePlans: {}, staff: {}, depthCharts: {}, playerGameStats: [], schedule: [], seasonHistory: [], eventHistory: []
   };
   const rosterPositions = Object.entries(ROSTER_COMPOSITION).flatMap(([position, count]) =>
     Array.from({ length: count }, () => position as Position)
@@ -395,6 +350,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       scoutingByProspect: {}
     };
     state.developmentSpotlights[id] = null;
+    state.gamePlans[id] = { ...DEFAULT_GAME_PLAN };
     for (const [staffIndex, role] of STAFF_ROLES.entries()) {
       const staffId = `${id}-staff-${staffIndex + 1}`;
       const personOrdinal = index * (STARTING_ROSTER_SIZE + STAFF_ROLES.length) + staffIndex;
@@ -676,7 +632,12 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
     throw new Error("Review the opening roster and begin the season before advancing a week.");
   }
   state.developmentSpotlights ??= {};
-  for (const programId of Object.keys(state.programs)) state.developmentSpotlights[programId] = null;
+  state.gamePlans ??= {};
+  for (const programId of Object.keys(state.programs)) {
+    state.developmentSpotlights[programId] = null;
+    // A game plan is a standing instruction, so it carries week to week.
+    state.gamePlans[programId] ??= { ...DEFAULT_GAME_PLAN };
+  }
   for (const player of Object.values(state.players)) {
     if (player.eligibility.rosterStatus === "SCHOLARSHIP") {
       player.developmentFocus = "BALANCED";
@@ -852,6 +813,21 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         playerIds: targetPlayers.map((player) => player.id).sort(),
         intensity
       });
+      continue;
+    }
+    if (command.type === "SET_GAME_PLAN") {
+      const current = state.gamePlans[program.id] ?? { ...DEFAULT_GAME_PLAN };
+      const changed = (Object.keys(command.plan) as (keyof GamePlan)[])
+        .filter((key) => command.plan[key] !== undefined && command.plan[key] !== current[key])
+        .sort();
+      if (!changed.length) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The game plan already reads that way." });
+        continue;
+      }
+      const updated: GamePlan = { ...current };
+      for (const key of changed) Object.assign(updated, { [key]: command.plan[key] });
+      state.gamePlans[program.id] = updated;
+      events.push({ type: "GAME_PLAN_SET", season: state.season, week: state.week, programId: program.id, plan: clone(updated), changed });
       continue;
     }
     if (command.type === "SET_PLAYER_MEDIA_ACTION") {
@@ -1236,20 +1212,41 @@ function developPlayers(state: GameState, rng: AddressableRng, events: GameEvent
   }
 }
 
-function teamStrength(state: GameState, program: Program): number {
+/**
+ * The four ratings a game is resolved against, before the game plan is applied.
+ * Exposed so the roster and game-plan screens can show what a decision moves.
+ */
+export function programUnitRatings(state: Readonly<GameState>, programId: string): TeamUnitRatings {
+  const lineup = activeLineup(state, programId);
+  const prepBonus = Object.values(state.staff)
+    .filter((staff) => staff.programId === programId && staff.assignment === "GAME_PREP")
+    .reduce((total, staff) => total + gamePrepContribution(staff), 0);
+  return unitRatingsFromLineup(lineup, prepBonus);
+}
+
+/**
+ * This week's four matchups for a program, with the opponent's plan folded in
+ * when one is scheduled. Lets the game-plan screen show what a call is worth
+ * before the week is advanced.
+ */
+export function projectGamePlan(state: Readonly<GameState>, programId: string): UnitEdge[] {
+  const game = state.schedule.find((item) =>
+    item.week === state.week && !item.played && (item.homeProgramId === programId || item.awayProgramId === programId)
+  );
+  const opponentId = game ? (game.homeProgramId === programId ? game.awayProgramId : game.homeProgramId) : null;
+  return projectUnitEdges(
+    programUnitRatings(state, programId),
+    state.gamePlans?.[programId] ?? { ...DEFAULT_GAME_PLAN },
+    opponentId ? programUnitRatings(state, opponentId) : null,
+    opponentId ? state.gamePlans?.[opponentId] ?? { ...DEFAULT_GAME_PLAN } : null
+  );
+}
+
+/** A single comparable number, kept for rankings and roster pressure checks. */
+function teamStrength(state: Readonly<GameState>, program: Program): number {
   const lineup = activeLineup(state, program.id);
   if (lineup.length === 0) return 40;
-  const playerStrength = lineup.reduce((sum, player) => {
-    const armBonus = player.position === "QB" ? (player.ratings.armStrength - player.overall) * 0.1 : 0;
-    const attributeBonus = (player.ratings.technique - player.overall) * 0.1
-      + (player.ratings.strength - player.overall) * 0.07
-      + (player.ratings.conditioning - player.overall) * 0.06;
-    return sum + player.overall + armBonus + attributeBonus - player.fatigue * 0.015;
-  }, 0) / lineup.length;
-  const gamePrepBonus = Object.values(state.staff)
-    .filter((staff) => staff.programId === program.id && staff.assignment === "GAME_PREP")
-    .reduce((total, staff) => total + gamePrepContribution(staff), 0);
-  return playerStrength + gamePrepBonus;
+  return overallStrength(programUnitRatings(state, program.id));
 }
 
 function gamePrepContribution(member: Pick<StaffMember, "rating" | "role">): number {
@@ -1289,403 +1286,143 @@ function processInjuries(state: GameState, rng: AddressableRng, events: GameEven
   }
 }
 
-function boundedNormal(rng: AddressableRng, path: string, band: StatisticalBand, meanShift = 0): number {
-  return clamp(band.mean + meanShift + rng.normal(path) * band.standardDeviation, band.minimum, band.maximum);
-}
-
-/** How a team's points were actually scored, so box scores can reconcile with the scoreboard. */
-export interface Scoreline {
-  points: number;
-  touchdowns: number;
-  fieldGoals: number;
-}
-
-/** What a defense produced, charged against the opposing offense's line. */
-interface DefensiveProduction {
-  sacks: number;
-  interceptions: number;
-}
-
 /**
- * Distributes a whole-number total across weighted shares without drift. The
- * largest-remainder method keeps each share proportional and guarantees the
- * parts sum exactly to the total, so receiving yards match passing yards and
- * receiving touchdowns match passing touchdowns.
+ * Plays every scheduled game for the current week. Scores, box scores, and the
+ * plan report all come out of the same drive simulation, so they cannot
+ * disagree with one another.
  */
-function allocateByWeight(total: number, weights: readonly number[]): number[] {
-  const totalWeight = weights.reduce((sum, weight) => sum + Math.max(0, weight), 0);
-  if (total <= 0 || totalWeight <= 0) return weights.map(() => 0);
-  const exact = weights.map((weight) => total * Math.max(0, weight) / totalWeight);
-  const allocated = exact.map((value) => Math.floor(value));
-  let remaining = total - allocated.reduce((sum, value) => sum + value, 0);
-  const byRemainder = exact
-    .map((value, index) => ({ index, remainder: value - Math.floor(value) }))
-    .sort((left, right) => right.remainder - left.remainder || left.index - right.index);
-  for (let position = 0; remaining > 0; position += 1, remaining -= 1) {
-    const target = byRemainder[position % byRemainder.length]!.index;
-    allocated[target] = (allocated[target] ?? 0) + 1;
+function resolveScheduledGames(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
+  for (const game of state.schedule.filter((item) => !item.played && state.week === item.week)) {
+    const home = state.programs[game.homeProgramId];
+    const away = state.programs[game.awayProgramId];
+    if (!home || !away) continue;
+    const result = playGame(state, game, home.id, away.id, rng.fork(game.id), true);
+    game.played = true;
+    game.homeScore = result.home.scoreline.points;
+    game.awayScore = result.away.scoreline.points;
+    if (game.homeScore > game.awayScore) { home.wins += 1; away.losses += 1; }
+    else { away.wins += 1; home.losses += 1; }
+    commitGameResult(state, game, home.id, away.id, result, events);
+    events.push({
+      type: "GAME_COMPLETED",
+      season: state.season,
+      week: state.week,
+      gameId: game.id,
+      homeProgramId: home.id,
+      awayProgramId: away.id,
+      homeScore: game.homeScore,
+      awayScore: game.awayScore
+    });
   }
-  return allocated;
 }
 
-function emptyStatLine(
-  state: Readonly<GameState>,
-  game: Readonly<GameState["schedule"][number]>,
-  player: Readonly<Player>,
-  programId: string,
-  opponentProgramId: string,
-  result: "WIN" | "LOSS"
-): PlayerGameStatLine {
+function teamSide(state: Readonly<GameState>, programId: string): TeamSide {
   return {
-    id: `stats:${game.id}:${player.id}`,
-    season: state.season,
-    week: state.week,
-    gameId: game.id,
-    playerId: player.id,
     programId,
-    opponentProgramId,
-    position: player.position,
-    started: true,
-    result,
-    gameRating: 50,
-    snaps: 0,
-    passingAttempts: 0,
-    passingCompletions: 0,
-    passingYards: 0,
-    passingTouchdowns: 0,
-    interceptionsThrown: 0,
-    sacksTaken: 0,
-    rushingAttempts: 0,
-    rushingYards: 0,
-    rushingTouchdowns: 0,
-    targets: 0,
-    receptions: 0,
-    receivingYards: 0,
-    receivingTouchdowns: 0,
-    tackles: 0,
-    tacklesForLoss: 0,
-    sacks: 0,
-    defensiveInterceptions: 0,
-    passBreakups: 0,
-    fieldGoalsAttempted: 0,
-    fieldGoalsMade: 0,
-    punts: 0,
-    puntYards: 0,
-    blockingGrade: 0
+    lineup: activeLineup(state, programId),
+    plan: state.gamePlans?.[programId] ?? { ...DEFAULT_GAME_PLAN },
+    prepBonus: Object.values(state.staff)
+      .filter((staff) => staff.programId === programId && staff.assignment === "GAME_PREP")
+      .reduce((total, staff) => total + gamePrepContribution(staff), 0)
   };
 }
 
-/**
- * Records both box scores for one game.
- *
- * Defenses resolve first so their sacks and interceptions can be charged
- * against the opposing quarterback: a pick recorded by a defensive back is the
- * same football as the interception charged to the passer. Touchdowns and field
- * goals come from the possessions that actually scored rather than from
- * `floor(points / 7)`, which previously counted every field goal as a
- * touchdown and inflated passing scores to roughly twice real rates.
- */
-function recordGameStats(
-  state: GameState,
+function playGame(
+  state: Readonly<GameState>,
   game: Readonly<GameState["schedule"][number]>,
-  homeProgramId: string,
-  awayProgramId: string,
-  homeScoreline: Readonly<Scoreline>,
-  awayScoreline: Readonly<Scoreline>,
-  rng: AddressableRng
-): void {
-  const sides = [
-    { programId: homeProgramId, opponentProgramId: awayProgramId, scoreline: homeScoreline, opponentScoreline: awayScoreline, key: "home" },
-    { programId: awayProgramId, opponentProgramId: homeProgramId, scoreline: awayScoreline, opponentScoreline: homeScoreline, key: "away" }
-  ] as const;
-
-  const lineups = new Map(sides.map((side) => [side.programId, activeLineup(state, side.programId)]));
-  const lines = new Map<string, PlayerGameStatLine>();
-  for (const side of sides) {
-    const result = side.scoreline.points > side.opponentScoreline.points ? "WIN" : "LOSS";
-    for (const player of lineups.get(side.programId)!) {
-      lines.set(player.id, emptyStatLine(state, game, player, side.programId, side.opponentProgramId, result));
-    }
-  }
-
-  const defense = new Map<string, DefensiveProduction>();
-  for (const side of sides) {
-    defense.set(side.programId, recordDefensiveStats(
-      state,
-      lineups.get(side.programId)!,
-      lines,
-      state.programs[side.opponentProgramId]!,
-      side.scoreline.points > side.opponentScoreline.points,
-      rng.fork(side.key, "defense")
-    ));
-  }
-
-  for (const side of sides) {
-    recordOffensiveStats(
-      state,
-      lineups.get(side.programId)!,
-      lines,
-      state.programs[side.opponentProgramId]!,
-      side.scoreline,
-      side.opponentScoreline,
-      defense.get(side.opponentProgramId)!,
-      rng.fork(side.key, "offense")
-    );
-  }
-
-  for (const line of lines.values()) {
-    state.playerGameStats.push(line);
-    const player = state.players[line.playerId]!;
-    player.eligibility.gamesPlayedThisSeason += 1;
-    player.lastGameRating = line.gameRating;
-    player.lastGameSummary = playerPerformanceSummary(line);
-  }
-}
-
-function recordDefensiveStats(
-  state: Readonly<GameState>,
-  lineup: readonly Player[],
-  lines: Map<string, PlayerGameStatLine>,
-  opponent: Readonly<Program>,
-  won: boolean,
-  rng: AddressableRng
-): DefensiveProduction {
-  const opponentStrength = teamStrength(state, opponent);
-  const baseSnaps = Math.round(boundedNormal(rng, "defensive-snaps", { mean: 68, standardDeviation: 8, minimum: 48, maximum: 92 }));
-  let sacks = 0;
-  let interceptions = 0;
-  for (const defender of lineup.filter((player) => DEFENSIVE_POSITIONS.has(player.position))) {
-    const tackleBand = defender.position === "DL" ? PLAYER_STAT_BANDS.dlTackles : defender.position === "LB" ? PLAYER_STAT_BANDS.lbTackles : PLAYER_STAT_BANDS.dbTackles;
-    const edge = defender.overall - opponentStrength;
-    const tackles = Math.round(boundedNormal(rng, `${defender.id}:tackles`, tackleBand, edge * 0.04));
-    const defenderSacks = defender.position === "DB"
-      ? 0
-      : Math.round(boundedNormal(rng, `${defender.id}:sacks`, defender.position === "DL" ? PLAYER_STAT_BANDS.dlSacks : PLAYER_STAT_BANDS.lbSacks, edge * 0.012));
-    // Interceptions are mostly defensive backs, with linebackers picking off a
-    // smaller share, summing to roughly the 0.8 per team-game real defenses record.
-    const interceptionChance = defender.position === "DB"
-      ? clamp(0.16 + edge * 0.004, 0.05, 0.32)
-      : defender.position === "LB" ? clamp(0.05 + edge * 0.002, 0.01, 0.14) : 0;
-    const defensiveInterceptions = rng.at(`${defender.id}:defensive-int`) < interceptionChance ? 1 : 0;
-    const passBreakups = defender.position === "DB" ? Math.round(boundedNormal(rng, `${defender.id}:pbu`, { mean: 0.9, standardDeviation: 0.9, minimum: 0, maximum: 4 }, edge * 0.02)) : 0;
-    const tacklesForLoss = Math.min(tackles, defenderSacks + Math.round(boundedNormal(rng, `${defender.id}:tfl`, { mean: defender.position === "DL" ? 0.8 : 0.45, standardDeviation: 0.7, minimum: 0, maximum: 4 })));
-    sacks += defenderSacks;
-    interceptions += defensiveInterceptions;
-    const line = lines.get(defender.id)!;
-    Object.assign(line, { snaps: Math.round(baseSnaps * 0.82), tackles, tacklesForLoss, sacks: defenderSacks, defensiveInterceptions, passBreakups });
-    line.gameRating = Math.round(clamp(
-      45 + tackles * 2.6 + tacklesForLoss * 3 + defenderSacks * 7 + defensiveInterceptions * 12 + passBreakups * 3 + (won ? 3 : 0)
-        + (defender.mediaAction === "FOOTBALL_FOCUS" ? 2 : 0),
-      25,
-      99
-    ));
-  }
-  return { sacks, interceptions };
-}
-
-function recordOffensiveStats(
-  state: Readonly<GameState>,
-  lineup: readonly Player[],
-  lines: Map<string, PlayerGameStatLine>,
-  opponent: Readonly<Program>,
-  scoreline: Readonly<Scoreline>,
-  opponentScoreline: Readonly<Scoreline>,
-  opposingDefense: Readonly<DefensiveProduction>,
-  rng: AddressableRng
-): void {
-  const byPosition = (position: Position): Player[] => lineup.filter((player) => player.position === position);
-  const opponentStrength = teamStrength(state, opponent);
-  const won = scoreline.points > opponentScoreline.points;
-  const chasing = opponentScoreline.points - scoreline.points;
-  // Scoring and yardage move together: a team that put up 45 moved the ball
-  // more than one that managed 10, without yards becoming a function of points.
-  const scoringEdge = scoreline.points - 28;
-  const baseSnaps = Math.round(boundedNormal(rng, "team-snaps", { mean: 68, standardDeviation: 8, minimum: 48, maximum: 92 }));
-
-  const quarterback = byPosition("QB")[0];
-  const runningBacks = byPosition("RB");
-  const passingTouchdowns = quarterback
-    ? Math.round(scoreline.touchdowns * boundedNormal(rng, "passing-touchdown-share", PLAYER_STAT_BANDS.passingTouchdownShare))
-    : 0;
-  const rushingTouchdowns = scoreline.touchdowns - passingTouchdowns;
-
-  let passingYards = 0;
-  let completions = 0;
-  if (quarterback) {
-    const ratingEdge = (quarterback.ratings.technique + quarterback.ratings.armStrength) / 2 - opponentStrength;
-    const attempts = Math.round(boundedNormal(rng, `${quarterback.id}:attempts`, PLAYER_STAT_BANDS.qbAttempts, chasing * 0.12));
-    const completionRate = boundedNormal(rng, `${quarterback.id}:completion-rate`, PLAYER_STAT_BANDS.qbCompletionRate, ratingEdge * 0.0022 + scoringEdge * 0.0015);
-    const yardsPerAttempt = boundedNormal(rng, `${quarterback.id}:ypa`, PLAYER_STAT_BANDS.qbYardsPerAttempt, ratingEdge * 0.035 + scoringEdge * 0.05);
-    completions = clamp(Math.round(attempts * completionRate), 0, attempts);
-    passingYards = Math.max(0, Math.round(attempts * yardsPerAttempt));
-    // Sacks are charged as rushing losses on the passer, per college scorekeeping.
-    const sacksTaken = opposingDefense.sacks;
-    const scrambles = Math.round(boundedNormal(rng, `${quarterback.id}:carries`, PLAYER_STAT_BANDS.qbCarries));
-    const scrambleYards = Math.round(scrambles * boundedNormal(rng, `${quarterback.id}:rush-ypc`, PLAYER_STAT_BANDS.qbRushingYardsPerCarry));
-    const line = lines.get(quarterback.id)!;
-    Object.assign(line, {
-      snaps: baseSnaps,
-      passingAttempts: attempts,
-      passingCompletions: completions,
-      passingYards,
-      passingTouchdowns,
-      interceptionsThrown: opposingDefense.interceptions,
-      sacksTaken,
-      rushingAttempts: scrambles + sacksTaken,
-      rushingYards: Math.round(scrambleYards - sacksTaken * YARDS_LOST_PER_SACK)
-    });
-    line.gameRating = Math.round(clamp(
-      48 + completionRate * 28 + (yardsPerAttempt - 6) * 3 + passingTouchdowns * 3 - opposingDefense.interceptions * 5
-        - sacksTaken * 0.8 + (won ? 4 : -2) + (quarterback.mediaAction === "FOOTBALL_FOCUS" ? 2 : 0),
-      25,
-      99
-    ));
-
-    const receivers = [...byPosition("WR"), ...byPosition("TE")];
-    if (receivers.length > 0) {
-      const targetWeights = receivers.map((receiver, index) => {
-        const base = receiver.position === "TE" ? PLAYER_STAT_BANDS.teTargets.mean : PLAYER_STAT_BANDS.wrTargets.mean;
-        return Math.max(0.5, base + (receiver.overall - 70) * 0.08 - index * 0.65 + rng.between(`${receiver.id}:target-weight`, -1.2, 1.2));
-      });
-      const targetsByReceiver = allocateByWeight(attempts, targetWeights);
-      const receptionsByReceiver = allocateByWeight(completions, targetWeights);
-      const yardsByReceiver = allocateByWeight(passingYards, receptionsByReceiver);
-      const touchdownsByReceiver = allocateByWeight(passingTouchdowns, receptionsByReceiver);
-      receivers.forEach((receiver, index) => {
-        const targets = targetsByReceiver[index]!;
-        const receptions = Math.min(receptionsByReceiver[index]!, targets);
-        const receivingYards = receptions === 0 ? 0 : yardsByReceiver[index]!;
-        const receivingTouchdowns = Math.min(touchdownsByReceiver[index]!, receptions);
-        const line = lines.get(receiver.id)!;
-        Object.assign(line, { snaps: Math.round(baseSnaps * 0.78), targets, receptions, receivingYards, receivingTouchdowns });
-        line.gameRating = Math.round(clamp(
-          45 + receptions * 2.2 + receivingYards * 0.2 + receivingTouchdowns * 7 + (won ? 3 : 0)
-            + (receiver.overall - opponentStrength) * 0.25 + (receiver.mediaAction === "FOOTBALL_FOCUS" ? 2 : 0),
-          25,
-          99
-        ));
-      });
-    }
-  }
-
-  // Rushing touchdowns are shared between the backfield and a scrambling
-  // quarterback rather than credited entirely to the lead back.
-  const rushingScorers = [...(quarterback ? [quarterback] : []), ...runningBacks];
-  const rushingTouchdownWeights = rushingScorers.map((player) => player.position === "QB" ? 0.22 : player.id === runningBacks[0]?.id ? 0.55 : 0.23);
-  const rushingTouchdownsByScorer = allocateByWeight(rushingTouchdowns, rushingTouchdownWeights);
-  rushingScorers.forEach((player, index) => {
-    const line = lines.get(player.id)!;
-    line.rushingTouchdowns = rushingTouchdownsByScorer[index]!;
-  });
-
-  runningBacks.forEach((back, index) => {
-    const lead = index === 0;
-    const edge = back.ratings.strength * 0.45 + back.ratings.technique * 0.55 - opponentStrength;
-    const attempts = Math.round(boundedNormal(
-      rng,
-      `${back.id}:carries`,
-      lead ? PLAYER_STAT_BANDS.rbCarries : PLAYER_STAT_BANDS.backupRbCarries,
-      -chasing * 0.1
-    ));
-    const yardsPerCarry = boundedNormal(rng, `${back.id}:ypc`, PLAYER_STAT_BANDS.rbYardsPerCarry, edge * 0.035 + scoringEdge * 0.02);
-    const rushingYards = Math.max(0, Math.round(attempts * yardsPerCarry));
-    const line = lines.get(back.id)!;
-    Object.assign(line, { snaps: Math.round(baseSnaps * (lead ? 0.68 : 0.34)), rushingAttempts: attempts, rushingYards });
-    line.gameRating = Math.round(clamp(
-      45 + rushingYards * 0.24 + line.rushingTouchdowns * 8 + (won ? 4 : 0) + edge * 0.22
-        + (back.mediaAction === "FOOTBALL_FOCUS" ? 2 : 0),
-      25,
-      99
-    ));
-  });
-
-  for (const lineman of byPosition("OL")) {
-    const line = lines.get(lineman.id)!;
-    line.snaps = baseSnaps;
-    line.blockingGrade = Math.round(boundedNormal(
-      rng,
-      `${lineman.id}:blocking`,
-      { mean: 68, standardDeviation: 9, minimum: 35, maximum: 95 },
-      (lineman.ratings.technique + lineman.ratings.strength - opponentStrength * 2) * 0.16 - opposingDefense.sacks * 1.2 + (won ? 3 : -2)
-    ));
-    line.gameRating = Math.round(clamp(line.blockingGrade + (lineman.mediaAction === "FOOTBALL_FOCUS" ? 2 : 0), 25, 99));
-  }
-
-  const kicker = byPosition("K")[0];
-  if (kicker) {
-    // Makes are the field goals that actually put points on the board; only the
-    // misses are drawn, so the kicker's line can never contradict the score.
-    const made = scoreline.fieldGoals;
-    const accuracy = clamp(0.68 + (kicker.ratings.technique - 60) * 0.006, 0.55, 0.94);
-    const expectedMisses = made * (1 - accuracy) / accuracy + 0.15;
-    const misses = Math.max(0, Math.round(boundedNormal(rng, `${kicker.id}:fg-misses`, { mean: expectedMisses, standardDeviation: 0.8, minimum: 0, maximum: 4 })));
-    const attempts = made + misses;
-    const line = lines.get(kicker.id)!;
-    Object.assign(line, { snaps: attempts + scoreline.touchdowns, fieldGoalsAttempted: attempts, fieldGoalsMade: made });
-    line.gameRating = Math.round(clamp(48 + made * 12 - misses * 8 + (won ? 4 : 0), 25, 99));
-  }
-
-  const punter = byPosition("P")[0];
-  if (punter) {
-    const punts = Math.round(boundedNormal(rng, `${punter.id}:punts`, PLAYER_STAT_BANDS.punts, Math.max(0, chasing) * 0.04 - scoringEdge * 0.03));
-    const average = boundedNormal(rng, `${punter.id}:punt-average`, PLAYER_STAT_BANDS.puntAverage, (punter.ratings.technique - 70) * 0.08);
-    const line = lines.get(punter.id)!;
-    Object.assign(line, { snaps: punts, punts, puntYards: Math.round(punts * average) });
-    line.gameRating = Math.round(clamp(42 + average + (won ? 2 : 0), 25, 99));
-  }
-}
-
-function resolveScheduledGames(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
-  for (const game of state.schedule.filter((item) => !item.played && state.week === item.week)) {
-    const home = state.programs[game.homeProgramId]; const away = state.programs[game.awayProgramId];
-    if (!home || !away) continue;
-    const scorelines = simulateGameScore(state, home.id, away.id, rng.fork(game.id), true);
-    const homeScore = scorelines.home.points;
-    const awayScore = scorelines.away.points;
-    game.played = true;
-    game.homeScore = homeScore;
-    game.awayScore = awayScore;
-    if (homeScore > awayScore) { home.wins += 1; away.losses += 1; } else { away.wins += 1; home.losses += 1; }
-    recordGameStats(state, game, home.id, away.id, scorelines.home, scorelines.away, rng.fork(game.id, "stats"));
-    events.push({ type: "GAME_COMPLETED", season: state.season, week: state.week, gameId: game.id, homeProgramId: home.id, awayProgramId: away.id, homeScore, awayScore });
-  }
-}
-
-/**
- * Resolves a game possession by possession and reports how each team's points
- * were scored, not merely the total. Downstream box scores consume the
- * touchdown and field-goal counts so the two can never disagree.
- */
-function simulateGameScore(
-  state: Readonly<GameState>,
   homeProgramId: string,
   awayProgramId: string,
   rng: AddressableRng,
   homeField: boolean
-): { home: Scoreline; away: Scoreline } {
-  const home = state.programs[homeProgramId]!;
-  const away = state.programs[awayProgramId]!;
-  const homeStrength = teamStrength(state, home) + (homeField ? state.identity.balanceConfiguration.game.homeFieldAdvantage : 0);
-  const awayStrength = teamStrength(state, away);
-  const score = (strength: number, opponent: number, side: string): Scoreline => {
-    const scoreline: Scoreline = { points: 0, touchdowns: 0, fieldGoals: 0 };
-    for (let possession = 0; possession < state.identity.balanceConfiguration.game.possessions; possession += 1) {
-      const chance = clamp(POSSESSION_SCORING_RATE + (strength - opponent) / 150 + rng.between(`${side}:${possession}`, -0.08, 0.08), 0.05, 0.55);
-      if (rng.at(`${side}:result:${possession}`) >= chance) continue;
-      if (rng.at(`${side}:td:${possession}`) < TOUCHDOWN_SHARE_OF_SCORES) { scoreline.touchdowns += 1; scoreline.points += 7; }
-      else { scoreline.fieldGoals += 1; scoreline.points += 3; }
-    }
-    return scoreline;
-  };
-  const homeScoreline = score(homeStrength, awayStrength, "home");
-  const awayScoreline = score(awayStrength, homeStrength, "away");
-  if (homeScoreline.points === awayScoreline.points) {
-    const winner = rng.at("overtime") < 0.5 ? homeScoreline : awayScoreline;
-    winner.fieldGoals += 1;
-    winner.points += 3;
-  }
-  return { home: homeScoreline, away: awayScoreline };
+): GameResult {
+  return resolveGame(
+    teamSide(state, homeProgramId),
+    teamSide(state, awayProgramId),
+    { season: state.season, week: state.week, gameId: game.id },
+    homeField ? state.identity.balanceConfiguration.game.homeFieldAdvantage : 0,
+    rng
+  );
 }
+
+/** Persists a played game: box scores, fatigue, and the plan report for each side. */
+function commitGameResult(
+  state: GameState,
+  game: Readonly<GameState["schedule"][number]>,
+  homeProgramId: string,
+  awayProgramId: string,
+  result: GameResult,
+  events: GameEvent[]
+): void {
+  for (const [programId, opponentProgramId, side, opposingSide] of [
+    [homeProgramId, awayProgramId, result.home, result.away] as const,
+    [awayProgramId, homeProgramId, result.away, result.home] as const
+  ]) {
+    for (const line of side.statLines) {
+      state.playerGameStats.push(line);
+      const player = state.players[line.playerId];
+      if (!player) continue;
+      player.eligibility.gamesPlayedThisSeason += 1;
+      player.lastGameRating = line.gameRating;
+      player.lastGameSummary = playerPerformanceSummary(line);
+    }
+    for (const [playerId, fatigue] of Object.entries(side.fatigueAdded)) {
+      const player = state.players[playerId];
+      if (player) player.fatigue = clamp(Number((player.fatigue + fatigue).toFixed(1)), 0, 100);
+    }
+    events.push({
+      type: "GAME_PLAN_REPORT",
+      season: state.season,
+      week: state.week,
+      gameId: game.id,
+      programId,
+      opponentProgramId,
+      plan: clone(state.gamePlans?.[programId] ?? { ...DEFAULT_GAME_PLAN }),
+      opponentPlan: clone(state.gamePlans?.[opponentProgramId] ?? { ...DEFAULT_GAME_PLAN }),
+      units: side.units,
+      opponentUnits: opposingSide.units,
+      matchups: side.matchups,
+      runPlays: side.runPlays,
+      passPlays: side.passPlays,
+      takeaways: side.takeaways,
+      giveaways: side.giveaways,
+      sacksFor: side.sacksFor,
+      sacksAgainst: side.sacksAgainst,
+      leadBackShare: side.leadBackShare,
+      topTargetShare: side.topTargetShare,
+      notes: gamePlanNotes(side, opposingSide)
+    });
+  }
+}
+
+/** Plain-language reads on which calls worked, assembled from the matchup tallies. */
+function gamePlanNotes(side: GameResult["home"], opposingSide: GameResult["home"]): string[] {
+  const notes: string[] = [];
+  const find = (unit: TeamUnit): MatchupOutcome | undefined => side.matchups.find((entry) => entry.unit === unit);
+  const rushOffense = find("rushOffense");
+  const passOffense = find("passOffense");
+  const rushDefense = find("rushDefense");
+  const passDefense = find("passDefense");
+  if (rushOffense && passOffense) {
+    const better = rushOffense.yardsPerPlay >= passOffense.yardsPerPlay ? rushOffense : passOffense;
+    const worse = better === rushOffense ? passOffense : rushOffense;
+    notes.push(`${better.unit === "rushOffense" ? "Running" : "Throwing"} produced ${better.yardsPerPlay} yards per play against ${worse.yardsPerPlay} the other way.`);
+  }
+  if (rushDefense && passDefense) {
+    const leak = rushDefense.yardsPerPlay >= passDefense.yardsPerPlay ? rushDefense : passDefense;
+    notes.push(`Opponents gained ${leak.yardsPerPlay} per play attacking the ${leak.unit === "rushDefense" ? "run" : "pass"} defense.`);
+  }
+  if (side.takeaways !== side.giveaways) {
+    notes.push(side.takeaways > side.giveaways
+      ? `Won the turnover margin ${side.takeaways}-${side.giveaways}.`
+      : `Lost the turnover margin ${side.takeaways}-${side.giveaways}.`);
+  }
+  if (side.sacksAgainst >= 4) notes.push(`Surrendered ${side.sacksAgainst} sacks; the pass protection was overmatched.`);
+  if (side.leadBackShare >= 0.6) notes.push(`The lead back took ${Math.round(side.leadBackShare * 100)}% of the carries.`);
+  if (side.topTargetShare >= 0.35) notes.push(`The top receiver drew ${Math.round(side.topTargetShare * 100)}% of the targets.`);
+  void opposingSide;
+  return notes;
+}
+
 
 interface ProgramBrandImpact {
   schoolFanLift: number;
@@ -2192,13 +1929,6 @@ function resolvePostseason(
       const gameId = `playoff:${state.season}:${gameIndex++}`;
       const homeField = round === "FIRST_ROUND";
       const gameRng = rng.fork(gameId);
-      const scorelines = simulateGameScore(state, home.programId, away.programId, gameRng.fork("score"), homeField);
-      const homeScore = scorelines.home.points;
-      const awayScore = scorelines.away.points;
-      const winner = homeScore > awayScore ? home : away;
-      const loser = homeScore > awayScore ? away : home;
-      state.programs[winner.programId]!.wins += 1;
-      state.programs[loser.programId]!.losses += 1;
       const scheduledGame = {
         id: gameId,
         week: round === "FIRST_ROUND" ? 15 : round === "QUARTERFINAL" ? 16 : round === "SEMIFINAL" ? 17 : 18,
@@ -2208,10 +1938,19 @@ function resolvePostseason(
         guaranteePaid: 0,
         marqueeOpponentRank: null,
         played: true,
-        homeScore,
-        awayScore
+        homeScore: 0,
+        awayScore: 0
       };
-      recordGameStats(state, scheduledGame, home.programId, away.programId, scorelines.home, scorelines.away, gameRng.fork("stats"));
+      const result = playGame(state, scheduledGame, home.programId, away.programId, gameRng, homeField);
+      const homeScore = result.home.scoreline.points;
+      const awayScore = result.away.scoreline.points;
+      scheduledGame.homeScore = homeScore;
+      scheduledGame.awayScore = awayScore;
+      const winner = homeScore > awayScore ? home : away;
+      const loser = homeScore > awayScore ? away : home;
+      state.programs[winner.programId]!.wins += 1;
+      state.programs[loser.programId]!.losses += 1;
+      commitGameResult(state, scheduledGame, home.programId, away.programId, result, events);
       games.push({
         id: gameId,
         season: state.season,

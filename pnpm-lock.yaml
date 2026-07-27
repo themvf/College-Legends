@@ -69,6 +69,9 @@ importers:
       '@college-legends/model':
         specifier: workspace:*
         version: link:../model
+      '@college-legends/simulation':
+        specifier: workspace:*
+        version: link:../simulation
 
   packages/analytics:
     dependencies:

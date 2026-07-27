@@ -1,1 +1,1 @@
-{"name":"@college-legends/ai","private":true,"type":"module","exports":"./dist/index.js","dependencies":{"@college-legends/model":"workspace:*"}}
+{"name":"@college-legends/ai","private":true,"type":"module","exports":"./dist/index.js","dependencies":{"@college-legends/model":"workspace:*","@college-legends/simulation":"workspace:*"}}

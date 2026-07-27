@@ -1,4 +1,53 @@
-import type { DevelopmentFocus, GameCommand, GameState, Position, Prospect } from "@college-legends/model";
+import type { DevelopmentFocus, GamePlan, GameState, GameCommand, Position, Prospect, TeamUnitRatings } from "@college-legends/model";
+import { programUnitRatings } from "@college-legends/simulation";
+
+/**
+ * Rivals answer the same game-plan questions the player does, using what a
+ * coaching staff could reasonably know: their own personnel and the opponent's
+ * film. They do not read the player's chosen plan — countering a call the
+ * opponent has not revealed is what scouting will buy in a later stage.
+ */
+function planGamePlan(state: Readonly<GameState>, programId: string, opponentId: string | null): GamePlan {
+  const units = programUnitRatings(state, programId);
+  const opponent: TeamUnitRatings | null = opponentId ? programUnitRatings(state, opponentId) : null;
+  const roster = Object.values(state.players).filter((player) =>
+    player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP"
+  );
+  const best = (position: Position): number[] => roster
+    .filter((player) => player.position === position)
+    .map((player) => player.overall)
+    .sort((left, right) => right - left);
+  const backs = best("RB");
+  const receivers = best("WR");
+
+  // Attack with whichever unit is stronger, and defend whichever one the
+  // opponent leans on.
+  const offensiveTilt = units.passOffense - units.rushOffense;
+  const opponentTilt = opponent ? opponent.passOffense - opponent.rushOffense : 0;
+  const tired = roster.reduce((total, player) => total + player.fatigue, 0) / Math.max(1, roster.length);
+
+  return {
+    runPassBalance: offensiveTilt > 1.5 ? "PASS_HEAVY" : offensiveTilt < -1.5 ? "RUN_HEAVY" : "BALANCED",
+    // A clear lead back is worth featuring; an even room is worth resting.
+    backfieldUsage: backs.length >= 2 && backs[0]! - backs[1]! >= 4 && tired < 45 ? "FEATURE_BACK" : "COMMITTEE",
+    targetDistribution: receivers.length >= 2 && receivers[0]! - receivers[1]! >= 5 ? "FEED_THE_STAR" : "SPREAD_IT",
+    tempo: tired > 55 ? "CONTROL_CLOCK" : offensiveTilt > 3 ? "HURRY_UP" : "NORMAL",
+    defensivePriority: opponentTilt > 1.5 ? "STOP_THE_PASS" : opponentTilt < -1.5 ? "STOP_THE_RUN" : "BALANCED",
+    // Trailing programs gamble for the ball; comfortable ones protect a lead.
+    defensivePosture: state.programs[programId]!.losses > state.programs[programId]!.wins ? "TAKEAWAY_HUNT" : "CONTAIN",
+    pressure: opponent && units.passDefense - opponent.passOffense < -2 ? "COVERAGE_FIRST"
+      : opponent && units.passDefense - opponent.passOffense > 3 ? "HEAVY_BLITZ"
+        : "SITUATIONAL"
+  };
+}
+
+function upcomingOpponent(state: Readonly<GameState>, programId: string): string | null {
+  const game = state.schedule.find((item) =>
+    item.week === state.week && !item.played && (item.homeProgramId === programId || item.awayProgramId === programId)
+  );
+  if (!game) return null;
+  return game.homeProgramId === programId ? game.awayProgramId : game.homeProgramId;
+}
 
 /** AI programs use the same limited development, media, and recruiting decisions as the human player. */
 export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId?: string): GameCommand[] {
@@ -6,6 +55,16 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
   return Object.values(state.programs).flatMap((program) => {
     if (program.id === excludedProgramId) return [];
     const commands: GameCommand[] = [];
+
+    const desired = planGamePlan(state, program.id, upcomingOpponent(state, program.id));
+    const current = state.gamePlans?.[program.id];
+    const changes = Object.fromEntries(
+      (Object.keys(desired) as (keyof GamePlan)[])
+        .filter((key) => !current || current[key] !== desired[key])
+        .map((key) => [key, desired[key]])
+    );
+    if (Object.keys(changes).length > 0) commands.push({ type: "SET_GAME_PLAN", programId: program.id, plan: changes });
+
     const position = weakestPosition(state, program.id);
     const developmentFocus: Exclude<DevelopmentFocus, "BALANCED"> = state.week % 3 === 1 ? "TECHNIQUE" : state.week % 3 === 2 ? "STRENGTH" : "CONDITIONING";
     commands.push({ type: "SET_DEVELOPMENT_SPOTLIGHT", programId: program.id, target: { type: "POSITION", position }, focus: developmentFocus });
