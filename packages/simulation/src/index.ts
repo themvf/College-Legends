@@ -1269,10 +1269,7 @@ function processInjuries(state: GameState, rng: AddressableRng, events: GameEven
 }
 
 function boundedNormal(rng: AddressableRng, path: string, band: StatisticalBand, meanShift = 0): number {
-  const first = Math.max(0.000001, rng.at(`${path}:normal-a`));
-  const second = rng.at(`${path}:normal-b`);
-  const standardNormal = Math.sqrt(-2 * Math.log(first)) * Math.cos(2 * Math.PI * second);
-  return clamp(band.mean + meanShift + standardNormal * band.standardDeviation, band.minimum, band.maximum);
+  return clamp(band.mean + meanShift + rng.normal(path) * band.standardDeviation, band.minimum, band.maximum);
 }
 
 function emptyStatLine(
