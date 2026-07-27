@@ -110,16 +110,53 @@ adjacent suffixes, sequential player IDs. Any hash used here needs a finalizer.
 `recordPlayerGameStats` back-filled box scores via `totalTouchdowns =
 floor(scoreFor / 7)`. Field goals double-counted as touchdowns, pass TDs ran
 ~2x real rates, RB1 absorbed every non-passing TD, and nothing reconciled
-between the two teams. Scoring is now decomposed into actual touchdowns and
-field goals, and cross-team totals agree.
+between the two teams.
 
-Still true and still worth deciding on: **individual stats do not affect who
-wins.** The score comes from a team-strength average in which the QB is 1/24
-plus a small arm bonus; real football puts the QB at 30-40% of team quality. The
+`simulateGameScore` now returns a `Scoreline` — points, touchdowns, and field
+goals — and `recordGameStats` builds both box scores together, defenses first,
+so sacks and interceptions charge against the opposing passer. Kicker makes are
+the field goals that actually scored; only misses are drawn. Receiving yards,
+receptions, and receiving touchdowns are allocated by largest remainder so they
+sum exactly to the passing totals. `STARTER_COUNTS.RB` went to 2 and rushing
+touchdowns are shared across the backfield and a scrambling quarterback.
+
+Measured per team-game after the change (24 programs, full season):
+
+| | sim | real FBS |
+|---|---|---|
+| pass attempts / completion % | 30.8 / 62.7% | 31 / 63% |
+| passing yards / TD | 233 / 2.1 | 235 / 1.9 |
+| rushing attempts / yards / TD | 35.9 / 154 / 1.6 | 36 / 155 / 1.6 |
+| total yards | 387 | 390 |
+| interceptions / sacks | 0.7 / 2.5 | 0.8 / 2.2 |
+| field goals made | 1.3 | 1.2 |
+| starting QB season | 2,791 yd / 24.8 TD / 8.2 INT | 2,800 / 21 / 8 |
+
+Reconciliation is asserted, not assumed: `tests/rng-distribution.test.mjs`
+checks over 288 team box scores that touchdowns and field goals add up to the
+final score, that interceptions thrown equal the opposing defense's picks, and
+that sacks taken equal the opposing defense's sacks.
+
+`homeFieldAdvantage` also moved from 1.8 to 2.8, which lifted the home win rate
+from 53.5% to 59.7% against a real 57-60%, measured pooled over 1,440 games.
+Rates vary by several points between generated leagues, so the distribution
+suite pools four independent leagues rather than trusting one season.
+
+Two things remain open here.
+
+**Margins are still fat-tailed.** One-score games run about 27% against a real
+35%, and blowouts about 27% against a real 20%. Possessions are independent
+Bernoulli trials with no game script, so nothing reproduces the negative
+feedback of real games — trailing teams gaining possessions, leaders draining
+clock. Closing this needs game-script modelling, not more constant tuning.
+
+**Individual stats still do not affect who wins.** The score comes from a
+team-strength average in which the quarterback is 1 of 25 starters plus a small
+arm bonus; real football puts the quarterback at 30-40% of team quality. The
 larger fix is to drive the score *from* the box score — allocate possessions to
-positional units and sum to a score — which makes developing a star QB matter
-competitively and turns the stat bands into a validated output instead of an
-input. Not attempted yet.
+positional units and sum to a score — which makes developing a star quarterback
+matter competitively and turns the stat bands into a validated output instead of
+an input. Deliberately not attempted; it is a design decision, not a bug.
 
 ### 3. Money and fame loops do not exist
 

@@ -157,7 +157,7 @@ export function fictionalPersonName(ordinal: number, firstOffset = 0, lastOffset
 export const DEFAULT_BALANCE: BalanceConfiguration = {
   version: "0.1.0",
   weeklyDevelopment: { base: 0.012, coachWeight: 0.018, workEthicWeight: 0.022, fatigueFloor: 0.62, maximum: 0.09 },
-  game: { possessions: 24, homeFieldAdvantage: 1.8, upsetNoise: 11 }
+  game: { possessions: 24, homeFieldAdvantage: 2.8, upsetNoise: 11 }
 };
 
 export const CAREER_PATHS: Record<CareerPath, { label: string; tier: "LOW" | "MID" | "POWER"; budget: number; initialSecurity: number; championshipDeadline: number | null }> = {

@@ -76,6 +76,8 @@ export interface PlayerGameStatLine {
   passingYards: number;
   passingTouchdowns: number;
   interceptionsThrown: number;
+  /** Sacks surrendered, taken from the opposing front seven's recorded sacks. */
+  sacksTaken: number;
   rushingAttempts: number;
   rushingYards: number;
   rushingTouchdowns: number;

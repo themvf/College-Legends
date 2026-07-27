@@ -92,21 +92,29 @@ test("normal draws follow a bell curve rather than clustering", () => {
 });
 
 test("simulated scores land in college-football tolerance bands", () => {
-  let state = beginSeason(createFictionalLeague("score-distribution", 24));
   const scores = [];
   const margins = [];
-  // Week 14 rolls the season over and resets the counter, so drive the loop
-  // from the regular-season week count rather than from state.week.
-  for (let week = 0; week < 14; week += 1) {
-    const result = advanceWeek(state);
-    state = result.state;
-    for (const event of result.events) {
-      if (event.type !== "GAME_COMPLETED") continue;
-      scores.push(event.homeScore, event.awayScore);
-      margins.push(Math.abs(event.homeScore - event.awayScore));
+  const homeWins = [];
+  // One 24-program season is 144 games, and rates vary by several points from
+  // one generated league to the next — enough that a single season would sit
+  // within noise of these thresholds. Four independent leagues give 576 games,
+  // which keeps the tolerances meaningful rather than flaky.
+  for (const seed of ["score-distribution-a", "score-distribution-b", "score-distribution-c", "score-distribution-d"]) {
+    let state = beginSeason(createFictionalLeague(seed, 24));
+    // Week 14 rolls the season over and resets the counter, so drive the loop
+    // from the regular-season week count rather than from state.week.
+    for (let week = 0; week < 14; week += 1) {
+      const result = advanceWeek(state);
+      state = result.state;
+      for (const event of result.events) {
+        if (event.type !== "GAME_COMPLETED") continue;
+        scores.push(event.homeScore, event.awayScore);
+        margins.push(Math.abs(event.homeScore - event.awayScore));
+        homeWins.push(event.homeScore > event.awayScore ? 1 : 0);
+      }
     }
   }
-  assert.ok(scores.length > 200, `expected a full season of games, saw ${scores.length / 2}`);
+  assert.ok(scores.length > 1000, `expected four full seasons of games, saw ${scores.length / 2}`);
 
   const averageScore = mean(scores);
   assert.ok(averageScore > 20 && averageScore < 40, `average team score ${averageScore.toFixed(1)} is outside 20-40`);
@@ -133,4 +141,92 @@ test("simulated scores land in college-football tolerance bands", () => {
   // unfinalized hash produced, not against that known modelling gap.
   const oneScoreRate = margins.filter((margin) => margin <= 8).length / margins.length;
   assert.ok(oneScoreRate > 0.2, `one-score games at ${(oneScoreRate * 100).toFixed(1)}% is too competitive-thin`);
+
+  const homeWinRate = mean(homeWins);
+  assert.ok(homeWinRate > 0.54 && homeWinRate < 0.66, `home win rate ${(homeWinRate * 100).toFixed(1)}% is outside 54-66%`);
+});
+
+test("box scores reconcile with the scoreboard and with the opposing defense", () => {
+  let state = beginSeason(createFictionalLeague("box-score-reconciliation", 24));
+  const finals = new Map();
+  for (let week = 0; week < 14; week += 1) {
+    const result = advanceWeek(state);
+    state = result.state;
+    for (const event of result.events) {
+      if (event.type !== "GAME_COMPLETED") continue;
+      finals.set(`${event.gameId}:${event.homeProgramId}`, event.homeScore);
+      finals.set(`${event.gameId}:${event.awayProgramId}`, event.awayScore);
+    }
+  }
+
+  const teams = new Map();
+  for (const line of state.playerGameStats.filter((entry) => entry.week <= 14)) {
+    const key = `${line.gameId}:${line.programId}`;
+    const totals = teams.get(key) ?? {
+      opponent: `${line.gameId}:${line.opponentProgramId}`,
+      touchdowns: 0, fieldGoalsMade: 0, fieldGoalsAttempted: 0,
+      interceptionsThrown: 0, sacksTaken: 0, defensiveInterceptions: 0, sacks: 0,
+      passingTouchdowns: 0, receivingTouchdowns: 0, passingYards: 0, receivingYards: 0,
+      passingCompletions: 0, receptions: 0
+    };
+    totals.touchdowns += line.passingTouchdowns + line.rushingTouchdowns;
+    totals.fieldGoalsMade += line.fieldGoalsMade;
+    totals.fieldGoalsAttempted += line.fieldGoalsAttempted;
+    totals.interceptionsThrown += line.interceptionsThrown;
+    totals.sacksTaken += line.sacksTaken;
+    totals.defensiveInterceptions += line.defensiveInterceptions;
+    totals.sacks += line.sacks;
+    totals.passingTouchdowns += line.passingTouchdowns;
+    totals.receivingTouchdowns += line.receivingTouchdowns;
+    totals.passingYards += line.passingYards;
+    totals.receivingYards += line.receivingYards;
+    totals.passingCompletions += line.passingCompletions;
+    totals.receptions += line.receptions;
+    teams.set(key, totals);
+  }
+  // 24 programs playing a 12-game regular season produce 288 team box scores.
+  assert.ok(teams.size > 250, `expected a full season of box scores, saw ${teams.size}`);
+
+  for (const [key, totals] of teams) {
+    const points = finals.get(key);
+    assert.equal(
+      totals.touchdowns * 7 + totals.fieldGoalsMade * 3,
+      points,
+      `${key}: ${totals.touchdowns} TD and ${totals.fieldGoalsMade} FG do not add up to ${points} points`
+    );
+    assert.ok(totals.fieldGoalsMade <= totals.fieldGoalsAttempted, `${key}: made more field goals than it attempted`);
+    assert.equal(totals.receivingTouchdowns, totals.passingTouchdowns, `${key}: receiving touchdowns do not match passing touchdowns`);
+    assert.equal(totals.receivingYards, totals.passingYards, `${key}: receiving yards do not match passing yards`);
+    assert.equal(totals.receptions, totals.passingCompletions, `${key}: receptions do not match completions`);
+
+    const defense = teams.get(totals.opponent);
+    assert.ok(defense, `${key}: opponent box score is missing`);
+    assert.equal(totals.interceptionsThrown, defense.defensiveInterceptions, `${key}: interceptions thrown do not match the opposing defense`);
+    assert.equal(totals.sacksTaken, defense.sacks, `${key}: sacks taken do not match the opposing defense`);
+  }
+});
+
+test("team production lands in real per-game college-football ranges", () => {
+  let state = beginSeason(createFictionalLeague("team-production", 24));
+  for (let week = 0; week < 14; week += 1) state = advanceWeek(state).state;
+
+  const lines = state.playerGameStats.filter((entry) => entry.week <= 14);
+  const teamGames = new Set(lines.map((line) => `${line.gameId}:${line.programId}`)).size;
+  const per = (field) => lines.reduce((total, line) => total + line[field], 0) / teamGames;
+
+  const inRange = (label, value, low, high) =>
+    assert.ok(value >= low && value <= high, `${label} ${value.toFixed(1)} is outside ${low}-${high}`);
+
+  inRange("pass attempts", per("passingAttempts"), 27, 35);
+  inRange("completion rate", per("passingCompletions") / per("passingAttempts"), 0.58, 0.68);
+  inRange("passing yards", per("passingYards"), 200, 270);
+  inRange("passing touchdowns", per("passingTouchdowns"), 1.4, 2.5);
+  inRange("rushing attempts", per("rushingAttempts"), 30, 42);
+  inRange("rushing yards", per("rushingYards"), 130, 185);
+  inRange("rushing touchdowns", per("rushingTouchdowns"), 1.1, 2.1);
+  inRange("total yards", per("passingYards") + per("rushingYards"), 340, 440);
+  inRange("interceptions", per("interceptionsThrown"), 0.4, 1.3);
+  inRange("sacks", per("sacks"), 1.6, 3.2);
+  inRange("field goals made", per("fieldGoalsMade"), 0.8, 1.8);
+  inRange("punts", per("punts"), 3.2, 5.5);
 });
