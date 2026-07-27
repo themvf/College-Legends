@@ -241,11 +241,52 @@ prospects-by-status) instead of `Object.values().filter()`.
   depth chart, and never upgrades facilities, so rivals do not compete on the
   systems the game is actually about.
 
+## Direction: the game is a decision engine
+
+The reference is a business simulation where nearly every screen is a decision
+with a posted price and a posted payoff. Three patterns carry it, and new
+systems should be built to match:
+
+- **Salaried specialists with visible modifiers.** An executive costs a stated
+  weekly salary and posts exactly what he changes — maintenance −15%, deal boost
+  +10%, competitiveness +15 % — with a replace button beside him. A hire is
+  never a guess.
+- **Multi-week projects with named stages.** A legal case shows its stages at
+  100%, 74%, and 0%, an overall percentage, and a settlement price that climbs
+  as the deadline nears. Long work is visible, partial, and costly to abandon.
+- **Finite staff capacity.** `Employees: 15, Available: 0`. Attention runs out,
+  which is what forces a choice instead of a checklist.
+
+The player should always be spending something scarce on a plan, then finding
+out whether the plan was right.
+
+`docs/GAMEPLAN_AND_PREPARATION.md` applies this to weekly football preparation:
+playbook installation as a staged project, play concepts as incremental
+unlocks, tiered opponent scouting, offensive and defensive emphasis calls
+(run/pass balance, back-by-committee, feeding the hot receiver, stopping the run
+or the pass, hunting turnovers), prep-point capacity, and coordinators who can
+be delegated the call.
+
+**That work is blocked on unit-level game resolution.** `teamStrength` averages
+all 25 starters into one scalar and `simulateGameScore` reads only the
+difference between two such scalars, so there is no rushing offense or pass
+defense for any of these decisions to modify. Splitting team strength into
+rushOffense, passOffense, rushDefense, and passDefense — and resolving each
+possession as a called play against the matching unit — is a prerequisite, not
+a follow-up. It also resolves the open question from the box-score work, since
+box scores then fall out of play resolution instead of being fitted to a final
+score.
+
 ## Suggested order of work
 
 1. ~~RNG finalizer plus a distribution test~~ — done.
 2. ~~Re-tune stat bands against the fixed RNG; reconcile score to box score~~ — done.
-3. Make revenue a function of fame; add recurring costs and an insolvency check.
-4. Add an offseason phase — unblocks marquee scheduling every year, signing day,
+3. Unit-level ratings and possession resolution — the prerequisite for every
+   game-plan decision, and the fix for stats not affecting who wins.
+4. The game-plan decision layer, in the staged order set out in
+   `docs/GAMEPLAN_AND_PREPARATION.md`.
+5. Make revenue a function of fame; add recurring costs and an insolvency check.
+   Coordinator salaries from step 4 give this its first real payroll pressure.
+6. Add an offseason phase — unblocks marquee scheduling every year, signing day,
    the portal as an input, coach hiring, and expectations/firing.
-5. Performance and save size before any iOS work.
+7. Performance and save size before any iOS work.
