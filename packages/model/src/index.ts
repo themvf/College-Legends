@@ -12,8 +12,13 @@ export type DevelopmentSpotlightTarget =
   | { type: "PLAYER"; playerId: PlayerId }
   | { type: "POSITION"; position: Position };
 export type StaffRole = "HEAD_COACH" | "OFFENSIVE_COORDINATOR" | "DEFENSIVE_COORDINATOR" | "STRENGTH_COACH";
-export type StaffAssignment = "GAME_PREP" | "PLAYER_DEVELOPMENT" | "RECRUITING" | "RECOVERY";
-export type FacilityType = "TRAINING" | "STADIUM" | "ACADEMICS" | "RECRUITING";
+/**
+ * What a coach spends his week on. Attention is split rather than assigned
+ * wholesale: a coordinator prepares the team, helps scout opponents, and helps
+ * recruit, and how he divides those is the decision.
+ */
+export type StaffFocus = "PREPARE" | "SCOUT" | "RECRUIT" | "DEVELOP" | "RECOVER";
+export type FacilityType = "TRAINING" | "STADIUM" | "ACADEMICS" | "RECRUITING" | "SCOUTING";
 export type DivisionId = "ATLANTIC" | "GREAT_LAKES" | "HEARTLAND" | "GULF" | "MOUNTAIN" | "PACIFIC";
 export type PlayerRating = "technique" | "strength" | "conditioning" | "injuryPrevention" | "armStrength";
 export type PlayerMediaAction = "FOOTBALL_FOCUS" | "MEDIA_DAY" | "SOCIAL_MEDIA" | "COMMUNITY_APPEARANCE";
@@ -145,9 +150,13 @@ export interface SchemeIdentity {
 export interface PreparationProgramState {
   points: number;
   weeklyPoints: number;
-  /** Tiers bought against this week's opponent. Cleared at every new week. */
-  scoutedTiers: ScoutingTier[];
-  scoutedOpponentId: ProgramId | null;
+  /**
+   * The scouting department's own weekly output. Kept separate from preparation
+   * because the two are produced by different people: a coordinator who spends
+   * his week scouting is not preparing the team, and that is the trade.
+   */
+  scoutingPoints: number;
+  weeklyScoutingPoints: number;
   /** Reps spent installing each side of the plan. Cleared at every new week. */
   offensiveReps: number;
   defensiveReps: number;
@@ -170,6 +179,25 @@ export interface PlanExecution {
   expected: number;
   summary: string;
   limits: string[];
+}
+
+/** How a coach divides his week. The parts sum to his capacity. */
+export type StaffAllocation = Record<StaffFocus, number>;
+
+/**
+ * A file being built on a future opponent. Scouting accumulates against a
+ * specific team rather than being bought fresh each week, so a program can start
+ * work on a ranked opponent several weeks out.
+ */
+export interface OpponentDossier {
+  opponentProgramId: ProgramId;
+  week: number;
+  points: number;
+  tiers: ScoutingTier[];
+  confidence: number;
+  /** What beating them is worth, which is what justifies spending early. */
+  value: number;
+  valueNote: string;
 }
 
 /** A posted modifier on a staff card, in the spirit of a salaried specialist. */
@@ -415,7 +443,8 @@ export interface StaffMember {
   role: StaffRole;
   rating: number;
   salary: number;
-  assignment: StaffAssignment;
+  /** How this coach divides his week across the things a staff does. */
+  allocation: StaffAllocation;
 }
 
 export interface GameState {
@@ -436,6 +465,8 @@ export interface GameState {
   /** Standing weekly preparation per program; persists until changed. */
   gamePlans: Record<ProgramId, GamePlan>;
   preparation: Record<ProgramId, PreparationProgramState>;
+  /** Accumulated scouting points per program, per opponent. Files persist. */
+  dossiers: Record<ProgramId, Record<ProgramId, number>>;
   staff: Record<string, StaffMember>;
   depthCharts: Record<ProgramId, DepthChart>;
   playerGameStats: PlayerGameStatLine[];
@@ -465,14 +496,14 @@ export type GameCommand =
   | { type: "SET_REDSHIRT"; programId: ProgramId; playerId: PlayerId; enabled: boolean }
   | { type: "SET_DEPTH_CHART"; programId: ProgramId; position: Position; playerIds: PlayerId[] }
   | { type: "SET_DEVELOPMENT_SPOTLIGHT"; programId: ProgramId; focus: Exclude<DevelopmentFocus, "BALANCED">; target: DevelopmentSpotlightTarget }
-  | { type: "ASSIGN_STAFF"; programId: ProgramId; staffId: string; assignment: StaffAssignment }
   | { type: "UPGRADE_FACILITY"; programId: ProgramId; facility: FacilityType }
   | { type: "SET_PLAYER_MEDIA_ACTION"; programId: ProgramId; playerId: PlayerId; action: PlayerMediaAction }
   | { type: "SET_GAME_PLAN"; programId: ProgramId; plan: Partial<GamePlan> }
-  | { type: "SCOUT_OPPONENT"; programId: ProgramId; tier: ScoutingTier }
   | { type: "SET_TICKET_PRICE"; programId: ProgramId; price: number }
   | { type: "SET_ADVERTISING"; programId: ProgramId; spend: number }
   | { type: "SET_PRACTICE_REPS"; programId: ProgramId; side: "OFFENSE" | "DEFENSE"; reps: number }
+  | { type: "SET_STAFF_ALLOCATION"; programId: ProgramId; staffId: string; allocation: Partial<StaffAllocation> }
+  | { type: "ALLOCATE_SCOUTING"; programId: ProgramId; opponentProgramId: ProgramId; points: number }
   | { type: "REPLACE_STAFF"; programId: ProgramId; staffId: string; candidateId: string }
   | { type: "SCHEDULE_MARQUEE_HOME_GAME"; programId: ProgramId; opponentProgramId: ProgramId };
 
@@ -596,7 +627,6 @@ export type GameEvent =
       playerIds: PlayerId[];
       intensity: number;
     }
-  | { type: "STAFF_ASSIGNED"; season: Season; week: number; programId: ProgramId; staffId: string; assignment: StaffAssignment }
   | { type: "FACILITY_UPGRADED"; season: Season; week: number; programId: ProgramId; facility: FacilityType; newLevel: number; cost: number }
   | { type: "MARQUEE_GAME_SCHEDULED"; season: Season; programId: ProgramId; opponentProgramId: ProgramId; week: number; guarantee: number; opponentRank: number }
   | { type: "PLAYER_MEDIA_ACTION_SET"; season: Season; week: number; programId: ProgramId; playerId: PlayerId; action: PlayerMediaAction }
@@ -619,7 +649,8 @@ export type GameEvent =
       personalFanChange: number;
       schoolFanLift: number;
     }
-  | { type: "OPPONENT_SCOUTED"; season: Season; week: number; programId: ProgramId; opponentProgramId: ProgramId; tier: ScoutingTier; pointsSpent: number; confidence: number }
+  | { type: "STAFF_ALLOCATION_SET"; season: Season; week: number; programId: ProgramId; staffId: string; allocation: StaffAllocation }
+  | { type: "SCOUTING_ALLOCATED"; season: Season; week: number; programId: ProgramId; opponentProgramId: ProgramId; points: number; totalPoints: number; tiers: ScoutingTier[] }
   | { type: "PRACTICE_REPS_SET"; season: Season; week: number; programId: ProgramId; side: "OFFENSE" | "DEFENSE"; reps: number; pointsSpent: number; expectedExecution: number }
   | { type: "STAFF_REPLACED"; season: Season; week: number; programId: ProgramId; departingStaffId: string; arrivingStaffId: string; name: string; role: StaffRole; rating: number; salary: number; signingCost: number }
   | { type: "TICKET_PRICE_SET"; season: Season; week: number; programId: ProgramId; price: number; fairPrice: number }

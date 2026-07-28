@@ -12,6 +12,7 @@ import type {
   TeamUnitRatings
 } from "@college-legends/model";
 import { AddressableRng } from "./rng.js";
+import { DOSSIER_THRESHOLDS, dossierTiers, staffContribution } from "./department.js";
 import {
   DEFENSIVE_IDENTITY_LABELS,
   GAME_PLAN_OPTIONS,
@@ -21,17 +22,6 @@ import {
 } from "./game.js";
 
 const clamp = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value));
-
-/**
- * Preparation is attention, not money. The pool refreshes weekly and cannot be
- * banked, and the three tiers together cost more than a week provides — so
- * scouting is always chosen at the expense of something else.
- */
-export const SCOUTING_COSTS: Readonly<Record<ScoutingTier, number>> = {
-  TENDENCIES: 8,
-  PERSONNEL: 14,
-  GAME_PLAN: 22
-};
 
 export const SCOUTING_TIERS: readonly ScoutingTier[] = ["TENDENCIES", "PERSONNEL", "GAME_PLAN"];
 
@@ -47,35 +37,42 @@ export const SCOUTING_TIER_DESCRIPTIONS: Readonly<Record<ScoutingTier, string>> 
   GAME_PLAN: "How likely each of their calls is this week — never a certainty"
 };
 
-export function scoutingCost(tier: ScoutingTier): number {
-  return SCOUTING_COSTS[tier];
-}
-
-/** A program's weekly preparation pool: coaching attention plus facilities. */
-export function preparationWeeklyPoints(state: Readonly<GameState>, programId: string): number {
-  const program = state.programs[programId];
-  if (!program) return 0;
-  const staff = Object.values(state.staff)
-    .filter((member) => member.programId === programId && member.assignment === "GAME_PREP")
-    .reduce((total, member) => total + member.rating / 22, 0);
-  return Math.round(12 + program.facilities.TRAINING * 2 + staff);
+export function scoutingTierLabel(tier: ScoutingTier): string {
+  return SCOUTING_TIER_LABELS[tier];
 }
 
 /**
- * How reliable a report is, from the people producing it and the film they have
- * to work from. Week one has no film at all, which is what makes the opening
- * game a genuine unknown rather than a lookup.
+ * A program's weekly preparation pool: coaching attention plus facilities.
+ * Buys practice reps only — scouting is paid for out of the department's own
+ * output, so the two compete for coaches rather than for points.
  */
-export function scoutingConfidence(state: Readonly<GameState>, programId: string, filmGames: number): number {
+export function preparationWeeklyPoints(state: Readonly<GameState>, programId: string): number {
   const program = state.programs[programId];
   if (!program) return 0;
-  const staff = Object.values(state.staff)
-    .filter((member) => member.programId === programId && member.assignment === "GAME_PREP")
-    .reduce((total, member) => total + member.rating / 8, 0);
-  // Film dominates. With none, even a strong staff is projecting rather than
-  // reporting — which is what makes the opening week a real unknown.
-  const film = Math.min(filmGames, 5) * 7;
-  return Math.round(clamp(14 + program.facilities.TRAINING * 4 + staff + film, 18, 90));
+  return Math.round(12 + program.facilities.TRAINING * 2 + staffContribution(state, programId, "PREPARE") / 22);
+}
+
+/**
+ * How reliable a file is: the department behind it, the film available, and how
+ * much work has actually gone into it. Week one has no film at all, which is
+ * what makes the opening game a genuine unknown rather than a lookup.
+ */
+export function scoutingConfidence(
+  state: Readonly<GameState>,
+  programId: string,
+  filmGames: number,
+  dossierPoints = 0
+): number {
+  const program = state.programs[programId];
+  if (!program) return 0;
+  const department = (program.facilities.SCOUTING ?? 1) * 6;
+  // Film dominates. With none, even a strong department is projecting rather
+  // than reporting — which is what makes the opening week a real unknown.
+  const film = Math.min(filmGames, 5) * 6;
+  // Work put into this specific file. Diminishing, so a deep file is never
+  // certainty and points are better spread across games that matter.
+  const work = Math.sqrt(Math.max(0, dossierPoints)) * 4.2;
+  return Math.round(clamp(10 + department + film + work, 10, 92));
 }
 
 export function filmGamesAvailable(state: Readonly<GameState>, opponentProgramId: string): number {
@@ -105,6 +102,11 @@ function rosterFatigue(state: Readonly<GameState>, programId: string): number {
  * The plan a program will actually run this week. Both the rival planner and
  * the scouting report call this, so a bought report describes the real plan
  * rather than a parallel guess that could drift away from it.
+ *
+ * A program only plans against what its own file says. Rivals used to read the
+ * opponent's exact ratings for free, which made scouting a system only the
+ * player paid for — an unscouted opponent now gets a plan built from identity
+ * and personnel alone.
  */
 export function projectedGamePlan(
   state: Readonly<GameState>,
@@ -114,13 +116,14 @@ export function projectedGamePlan(
 ): GamePlan {
   const program = state.programs[programId]!;
   const opponent = opponentId ? state.programs[opponentId] : null;
+  const known = opponentId ? dossierTiers(state.dossiers?.[programId]?.[opponentId] ?? 0) : [];
   return intendedGamePlan(
     program.schemeIdentity,
     unitRatings(programId),
-    opponentId ? unitRatings(opponentId) : null,
+    opponentId && known.includes("PERSONNEL") ? unitRatings(opponentId) : null,
     rosterFatigue(state, programId),
     program.losses > program.wins,
-    opponent?.schemeIdentity ?? null
+    known.includes("TENDENCIES") ? opponent?.schemeIdentity ?? null : null
   );
 }
 
@@ -178,7 +181,6 @@ export function opponentScoutingReport(
   programId: string,
   inputs: ScoutingInputs
 ): OpponentScoutingReport {
-  const preparation = state.preparation?.[programId];
   const opponentId = scheduledOpponent(state, programId);
   if (!opponentId) {
     return {
@@ -198,9 +200,10 @@ export function opponentScoutingReport(
   }
 
   const opponent = state.programs[opponentId]!;
-  const tiers = preparation?.scoutedOpponentId === opponentId ? [...(preparation.scoutedTiers ?? [])] : [];
+  const dossierPoints = state.dossiers?.[programId]?.[opponentId] ?? 0;
+  const tiers = dossierTiers(dossierPoints);
   const filmGames = filmGamesAvailable(state, opponentId);
-  const confidence = scoutingConfidence(state, programId, filmGames);
+  const confidence = scoutingConfidence(state, programId, filmGames, dossierPoints);
   const rng = new AddressableRng(state.identity.rootSeed).fork("scouting", String(state.season), String(state.week), programId, opponentId);
 
   const notes: string[] = [];
@@ -208,6 +211,10 @@ export function opponentScoutingReport(
     notes.push("No film exists on this opponent yet, so every read is a projection rather than a record.");
   } else {
     notes.push(`${filmGames} game${filmGames === 1 ? "" : "s"} of film available.`);
+  }
+  const nextTier = SCOUTING_TIERS.find((tier) => !tiers.includes(tier));
+  if (nextTier) {
+    notes.push(`${DOSSIER_THRESHOLDS[nextTier] - dossierPoints} more points on this file opens ${SCOUTING_TIER_LABELS[nextTier].toLowerCase()}.`);
   }
 
   const identity = tiers.includes("TENDENCIES") ? opponent.schemeIdentity : null;

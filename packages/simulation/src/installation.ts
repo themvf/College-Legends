@@ -8,6 +8,7 @@ import type {
   StaffRole
 } from "@college-legends/model";
 import { AddressableRng } from "./rng.js";
+import { focusShare } from "./department.js";
 
 const clamp = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value));
 
@@ -30,28 +31,44 @@ const INSTALLER_ROLE: Readonly<Record<"OFFENSE" | "DEFENSE", StaffRole>> = {
 };
 
 /**
- * Who actually installs a side of the plan. The coordinator does it when he is
- * assigned to game preparation; otherwise the head coach improvises, and if he
- * is busy elsewhere the players work it out for themselves. That is what makes
- * the existing staff-assignment decision worth caring about.
+ * Who actually installs a side of the plan, and how much of himself he brings
+ * to it. The coordinator does it, at the fraction of his week he actually spends
+ * preparing the team — send him scouting or recruiting instead and the plan
+ * installs worse. Below half a week the head coach covers, worse than the
+ * specialist would; with nobody preparing at all the players work it out
+ * themselves.
  */
 export function planInstaller(
   state: Readonly<GameState>,
   programId: string,
   side: "OFFENSE" | "DEFENSE"
 ): { staff: StaffMember | null; rating: number; name: string; note: string } {
-  const staff = Object.values(state.staff).filter((member) =>
-    member.programId === programId && member.assignment === "GAME_PREP");
+  const staff = Object.values(state.staff).filter((member) => member.programId === programId);
   const coordinator = staff.find((member) => member.role === INSTALLER_ROLE[side]);
-  if (coordinator) {
-    return { staff: coordinator, rating: coordinator.rating, name: coordinator.name, note: "Coordinator installing" };
+  const coordinatorShare = coordinator ? focusShare(coordinator, "PREPARE") : 0;
+  if (coordinator && coordinatorShare >= 0.5) {
+    return {
+      staff: coordinator,
+      // Full attention is par; a coordinator splitting his week installs less.
+      rating: coordinator.rating * (0.72 + coordinatorShare * 0.28),
+      name: coordinator.name,
+      note: coordinatorShare >= 0.99
+        ? "Coordinator installing"
+        : `Coordinator installing on ${Math.round(coordinatorShare * 100)}% of his week`
+    };
   }
   const headCoach = staff.find((member) => member.role === "HEAD_COACH");
-  if (headCoach) {
+  const headCoachShare = headCoach ? focusShare(headCoach, "PREPARE") : 0;
+  if (headCoach && headCoachShare > 0) {
     // A head coach covering a coordinator's job does it worse than the specialist would.
-    return { staff: headCoach, rating: headCoach.rating * 0.82, name: headCoach.name, note: "Head coach covering" };
+    return {
+      staff: headCoach,
+      rating: headCoach.rating * 0.82 * (0.72 + headCoachShare * 0.28),
+      name: headCoach.name,
+      note: "Head coach covering"
+    };
   }
-  return { staff: null, rating: 38, name: "Nobody", note: "No coach on game preparation" };
+  return { staff: null, rating: 38, name: "Nobody", note: "No coach is preparing the team" };
 }
 
 /**
@@ -81,8 +98,9 @@ export function planExecution(
   const expected = Number(((low + high) / 2).toFixed(3));
 
   const limits: string[] = [];
-  if (!installer.staff) limits.push("Nobody is assigned to game preparation, so the plan installs itself badly.");
+  if (!installer.staff) limits.push("Nobody is preparing the team, so the plan installs itself badly.");
   else if (installer.note === "Head coach covering") limits.push(`${installer.name} is covering for a coordinator who is working elsewhere.`);
+  else if (installer.note.startsWith("Coordinator installing on")) limits.push(`${installer.name} is only part-time on preparation; the rest of his week is scouting or recruiting.`);
   if (reps === 0) limits.push("No reps have been spent, so the plan is only walked through.");
   if (reps >= MAXIMUM_REPS_PER_SIDE) limits.push("The players have this fully installed; more reps would only tire them.");
 

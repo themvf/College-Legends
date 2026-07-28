@@ -51,7 +51,7 @@ These are load-bearing. Breaking one is a design change, not a refactor.
   fields; the UI writes the sentences. `eventHistory` is capped at 10,000.
 - **Payoffs are visible.** Every decision the player can make exposes a
   projection function (`projectedDevelopmentPayoff`, `facilityPayoff`,
-  `staffAssignmentPayoff`, `playerMediaPayoff`) so the UI can explain the
+  `staffFocusPayoff`, `playerMediaPayoff`) so the UI can explain the
   tradeoff before the week is advanced. Keep new decisions to this standard.
 - **Balance values are hypotheses.** Correctness belongs in unit tests;
   statistical behavior belongs in committed distribution tests with tolerances.
@@ -244,7 +244,8 @@ systems should be built to match:
   100%, 74%, and 0%, an overall percentage, and a settlement price that climbs
   as the deadline nears. Long work is visible, partial, and costly to abandon.
 - **Finite staff capacity.** `Employees: 15, Available: 0`. Attention runs out,
-  which is what forces a choice instead of a checklist.
+  which is what forces a choice instead of a checklist. Built — the staff screen
+  reads `Hours: 32 · Available: 0` and every coach's week is split by hand.
 
 The player should always be spending something scarce on a plan, then finding
 out whether the plan was right.
@@ -315,7 +316,74 @@ Two deviations are known and deliberate rather than tuned away:
   matter, and the league mixes power and low-tier programs inside divisions in a
   way real conferences do not.
 
-## Preparation and opponent scouting
+## The scouting department
+
+Scouting used to be a tier bought out of the same pool that paid for practice
+reps, against this week's opponent only. Two things were wrong with that. A
+program could not act on the fact that week six is the game that matters, and
+the squeeze was one pool against itself rather than a decision about people.
+
+It is a department now, with three inputs and one output.
+
+- **Funding**, `facilities.SCOUTING`, tiers 1–5. Both a floor and a multiplier:
+  a shoestring department produces 6 points a week, a national one 41, before
+  any coach has given it an hour.
+- **Coaching hours.** `StaffAllocation` replaced `StaffAssignment` entirely. A
+  coach has 4–10 hours a week by rating and splits them across `PREPARE`,
+  `SCOUT`, `RECRUIT`, `DEVELOP`, `RECOVER`, each with a role fit — a coordinator
+  is 1.4 at preparing and 0.35 if he is a strength coach trying to scout.
+  `staffContribution(state, programId, focus)` replaced every `assignment ===`
+  filter in the engine, so a coach who gives a job a third of his week
+  contributes a third of his worth to it.
+- **Points allocated forward.** Output goes onto a named future opponent and
+  stays there. A file opens `TENDENCIES` at 6, `PERSONNEL` at 18, `GAME_PLAN` at
+  36, and is spent the moment its fixture is played.
+
+Measured weekly output and what a season buys:
+
+| tier | department | weekly | season | full files |
+|---|---|---|---|---|
+| LOW | 1 | 9 | 126 | 3 of 12 |
+| MID | 2 | 16 | 224 | 6 of 12 |
+| POWER | 3 | 24 | 336 | 9 of 12 |
+
+**The board prices the schedule.** `opponentValue` returns 0–100 from the
+opponent's rank normalised to league size, plus a bonus for playing above
+yourself. On one generated schedule: the top-ranked opponent scores 100, #5
+scores 76, #15 scores 27, #22 scores 6. Scouting everybody is never available,
+so the question is always which games are worth knowing about.
+
+**The squeeze is people, not points.** Preparation buys reps; the department
+buys files; the two compete for the same coaching hours. Sending the offensive
+coordinator's whole week to scouting drops the offensive install band from
+40–61% to 34–57% and hands the job to the head coach — measured in the browser,
+not asserted.
+
+**Information is worth games.** Half a 24-program league scouting every opponent
+completely against the other half scouting nobody, over 960 team-games:
+
+| | margin | win rate | points |
+|---|---|---|---|
+| complete file | +2.65 | 54.0% | 28.1 |
+| no file | −2.65 | 46.0% | 25.9 |
+
+That is roughly what home field is worth, which is the right order of magnitude
+for a system the player pays for every week.
+
+**Rivals compete on it.** `projectedGamePlan` now gates the opponent's ratings
+and identity behind the *planning* program's own file, so an unscouted rival
+plans blind — previously every AI read exact opposing unit ratings for free,
+which made scouting a system only the player paid for. Rivals also move
+coordinator hours toward scouting when a fixture worth ≥60 is within two weeks,
+and bank leftover output onto the largest prize still on their schedule.
+
+**This Week and Game Plan are one screen.** Both dealt with the same seven days,
+so half a decision lived on each. `WeekHub` has five tabs — Decisions, Scouting,
+Install, Playbook, Last week — and the tab bar is the intermediate step: pick
+the part of the week to work on, then see only its controls. The staff screen
+reads `Hours: 32 · Available: 0` with a slider per focus per coach.
+
+## Preparation and opponent scouting (superseded by the department above)
 
 Three things had to be true before scouting could sell anything.
 
@@ -341,16 +409,12 @@ inform the game plan. `prepareWeek` resolves scouting immediately, ahead of
 `advanceWeek`; preparation is seeded in `beginSeason` and refreshed at the end of
 each `advanceWeek`, so it is already available when the player is asked to plan.
 
-| Tier | Cost | Reveals |
+| Tier | File points | Reveals |
 |---|---|---|
 | (free) | 0 | Record, ranking, reputation |
-| `TENDENCIES` | 8 | Their scheme identity |
-| `PERSONNEL` | 14 | The four unit ratings as ranges, plus their best players |
-| `GAME_PLAN` | 22 | Likelihoods for each of their calls this week |
-
-A week provides roughly 25 prep points against 44 for the full board, so
-scouting always costs something else. Points are attention: they refresh weekly
-and never bank.
+| `TENDENCIES` | 6 | Their scheme identity |
+| `PERSONNEL` | 18 | The four unit ratings as ranges, plus their best players |
+| `GAME_PLAN` | 36 | Likelihoods for each of their calls this week |
 
 Precision comes from staff, facilities, and **film**, which is what gives the
 opening week its own shape. Week 1 has no film and runs about 49% confidence
@@ -397,9 +461,12 @@ balanced plan was pure fatigue for no gain, and a full-install season finished
 against a 0.55 baseline: a drilled team busts fewer assignments whatever it has
 called, and an unprepared one is worse than its ratings.
 
-Installing both sides fully costs 24 of a ~25-point pool, so **a full install
-means no scouting at all**. That is the squeeze, and it is what finally makes
-preparation capacity an economy rather than a scouting budget with one sink.
+Installing both sides fully costs 24 of a ~25-point pool. Since the scouting
+department moved onto its own output, the squeeze is no longer prep-versus-
+scouting inside one pool — it is **coaching hours**. A coordinator only installs
+his side for the share of his week he actually spends preparing the team, and
+below half a week the head coach covers at 82%. Sending him scouting is what
+costs the plan.
 
 ### Staff cards
 
@@ -488,8 +555,11 @@ be replaced.
    Still open from finding 3: media rights, sponsorship, merchandise, recurring
    facility costs, and an insolvency check. `weeklyRevenue` and `weeklyExpenses`
    are still stored constants.
-7. Add an offseason phase — unblocks marquee scheduling every year, signing day,
+7. ~~The scouting department, staff hour allocation, and one weekly screen~~ —
+   done; see "The scouting department". `facilities.SCOUTING` has an upgrade
+   cost but no recurring one, which is the same gap as every other facility.
+8. Add an offseason phase — unblocks marquee scheduling every year, signing day,
    the portal as an input, coach hiring, and expectations/firing.
-8. Performance and save size before any iOS work. A week advance measures 6.9
+9. Performance and save size before any iOS work. A week advance measures 6.9
    seconds in the browser at the full 72-program league; the cost is the
    recruiting market and the AI planner, not game resolution.

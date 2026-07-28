@@ -7,9 +7,11 @@ import {
   createFictionalLeague,
   prepareWeek,
   projectGamePlan,
-  scoutingCost,
+  scoutingBoard,
   scoutingReport,
-  SCOUTING_TIERS,
+  staffCapacity,
+  weeklyScoutingOutput,
+  DOSSIER_THRESHOLDS,
   DEFENSIVE_PRESETS,
   OFFENSIVE_PRESETS,
   developmentCandidates,
@@ -393,32 +395,45 @@ test("week one is a real test: nothing is free, and film changes what a report i
     assert.equal(edge.opposingRating, null, `${edge.unit} leaked an unscouted opponent rating`);
   }
 
-  // The whole board costs more than a week of preparation provides.
-  const pool = state.preparation[programId].weeklyPoints;
-  const everything = SCOUTING_TIERS.reduce((total, tier) => total + scoutingCost(tier), 0);
-  assert.ok(pool > 0, "a program must be able to prepare in week one");
-  assert.ok(everything > pool, `all three tiers cost ${everything} but a week provides ${pool} — scouting must force a choice`);
+  // A full file costs more than a week of department output provides, so
+  // scouting one opponent deeply always means scouting another not at all.
+  const pool = state.preparation[programId].weeklyScoutingPoints;
+  assert.ok(pool > 0, "a scouting department must produce something in week one");
+  assert.ok(
+    DOSSIER_THRESHOLDS.GAME_PLAN > pool,
+    `a complete file costs ${DOSSIER_THRESHOLDS.GAME_PLAN} but a week provides ${pool} — files must take more than one week`
+  );
 
-  // Buying resolves immediately, before the week is advanced.
+  // Allocation resolves immediately, before the week is advanced.
+  const opponentId = blind.opponentProgramId;
+  assert.ok(pool >= DOSSIER_THRESHOLDS.TENDENCIES, "one week must at least open the cheapest tier");
   const bought = prepareWeek(state, [
-    { type: "SCOUT_OPPONENT", programId, tier: "TENDENCIES" },
-    { type: "SCOUT_OPPONENT", programId, tier: "PERSONNEL" }
+    { type: "ALLOCATE_SCOUTING", programId, opponentProgramId: opponentId, points: pool }
   ]);
   const informed = scoutingReport(bought.state, programId);
   assert.ok(informed.identity, "tendencies should reveal their identity");
-  assert.equal(informed.units?.length, 4, "personnel should estimate all four units");
-  assert.equal(informed.tendencies, null, "the unbought tier stays locked");
-  assert.equal(bought.state.preparation[programId].points, pool - scoutingCost("TENDENCIES") - scoutingCost("PERSONNEL"));
+  assert.equal(informed.tendencies, null, "the tier the file has not reached stays locked");
+  assert.equal(bought.state.dossiers[programId][opponentId], pool);
+  assert.equal(bought.state.preparation[programId].scoutingPoints, 0);
 
-  // Estimates are ranges that contain something, never exact numbers.
-  for (const unit of informed.units) {
+  // Estimates, when the file reaches personnel, are ranges rather than exact
+  // numbers — better work narrows them without ever collapsing them.
+  const deep = prepareWeek(
+    { ...bought.state, preparation: { ...bought.state.preparation, [programId]: { ...bought.state.preparation[programId], scoutingPoints: 40 } } },
+    [{ type: "ALLOCATE_SCOUTING", programId, opponentProgramId: opponentId, points: Math.max(0, DOSSIER_THRESHOLDS.PERSONNEL - pool) }]
+  ).state;
+  const personnel = scoutingReport(deep, programId);
+  assert.equal(personnel.units?.length, 4, "personnel should estimate all four units");
+  for (const unit of personnel.units) {
     assert.ok(unit.high > unit.low, `${unit.unit} came back as a point estimate rather than a range`);
   }
 
-  const overspend = prepareWeek(bought.state, [{ type: "SCOUT_OPPONENT", programId, tier: "GAME_PLAN" }]);
+  const overspend = prepareWeek(bought.state, [
+    { type: "ALLOCATE_SCOUTING", programId, opponentProgramId: opponentId, points: pool }
+  ]);
   assert.ok(
     overspend.events.some((event) => event.type === "COMMAND_REJECTED"),
-    "a program must not be able to buy every report in one week"
+    "a program must not be able to spend department output it has not produced"
   );
 
   // Film accumulates, and a later report is worth more than an opening-week one.
@@ -437,7 +452,13 @@ test("the top scouting tier reports likelihoods, never certainty", () => {
   const programId = "program-1";
   // Reach a week with film so the report is as sharp as it gets.
   for (let week = 0; week < 6; week += 1) state = advanceWeek(state, planWeeklyCommands(state)).state;
-  state = prepareWeek(state, [{ type: "SCOUT_OPPONENT", programId, tier: "GAME_PLAN" }]).state;
+  const opponentId = scoutingReport(state, programId).opponentProgramId;
+  // Force a complete file: the point under test is what the top tier reports,
+  // not how long it takes to reach it.
+  state = {
+    ...state,
+    dossiers: { ...state.dossiers, [programId]: { ...state.dossiers[programId], [opponentId]: DOSSIER_THRESHOLDS.GAME_PLAN } }
+  };
 
   const report = scoutingReport(state, programId);
   assert.ok(report.tendencies?.length, "the game-plan tier should report tendencies");
@@ -577,10 +598,12 @@ test("installing the plan is worth real points and costs real reps", () => {
   );
   assert.ok(none.high > none.low, "execution must be a band, never a point value");
 
-  // Sending the coordinator away hands the job to the head coach at a discount.
+  // Sending the coordinator's week elsewhere hands the job to the head coach.
   const stripped = structuredClone(state);
   for (const member of Object.values(stripped.staff)) {
-    if (member.programId === programId && member.role === "OFFENSIVE_COORDINATOR") member.assignment = "RECRUITING";
+    if (member.programId !== programId) continue;
+    if (member.role !== "OFFENSIVE_COORDINATOR") continue;
+    member.allocation = { PREPARE: 0, SCOUT: 0, RECRUIT: staffCapacity(member.rating), DEVELOP: 0, RECOVER: 0 };
   }
   const covered = planExecution(stripped, programId, "OFFENSE", 6);
   assert.ok(
@@ -589,11 +612,19 @@ test("installing the plan is worth real points and costs real reps", () => {
   );
   assert.ok(covered.limits.length > 0, "the screen must say why execution dropped");
 
-  // The whole board cannot be bought: full install on both sides starves scouting.
-  const pool = state.preparation[programId].weeklyPoints;
+  // Half a coordinator is worse than all of him: splitting his week is a real
+  // cost, which is what makes the scouting-versus-preparation call bite.
+  const split = structuredClone(state);
+  for (const member of Object.values(split.staff)) {
+    if (member.programId !== programId) continue;
+    if (member.role !== "OFFENSIVE_COORDINATOR") continue;
+    const capacity = staffCapacity(member.rating);
+    member.allocation = { PREPARE: capacity, SCOUT: 0, RECRUIT: 0, DEVELOP: 0, RECOVER: 0 };
+  }
+  const undivided = planExecution(split, programId, "OFFENSE", 6);
   assert.ok(
-    MAXIMUM_REPS_PER_SIDE * 2 > pool - scoutingCost("TENDENCIES"),
-    `installing both sides fully (${MAXIMUM_REPS_PER_SIDE * 2}) must not leave room for scouting out of ${pool}`
+    undivided.expected > some.expected,
+    `a coordinator on preparation full-time must install more (${undivided.expected} vs ${some.expected})`
   );
 
   // Reps are actually charged, and they tire the roster.
@@ -685,4 +716,132 @@ test("staff cards post what they change and can be replaced", () => {
     Object.values(result.state.staff).some((member) => member.programId === programId && member.name === target.name),
     "the arriving coach should be on staff"
   );
+});
+
+test("the scouting department scales with funding and with the hours coaches give it", () => {
+  const state = beginSeason(createFictionalLeague("scouting-department", 24));
+  const programId = "program-1";
+  const base = weeklyScoutingOutput(state, programId);
+
+  const funded = structuredClone(state);
+  funded.programs[programId].facilities.SCOUTING = 5;
+  assert.ok(
+    weeklyScoutingOutput(funded, programId) > base * 2,
+    `five tiers of funding must be worth far more than one (${base} vs ${weeklyScoutingOutput(funded, programId)})`
+  );
+
+  // Coaching hours are the other input, and they are the same hours that install
+  // the game plan — which is what makes the allocation screen a real trade.
+  const committed = structuredClone(state);
+  for (const member of Object.values(committed.staff)) {
+    if (member.programId !== programId) continue;
+    member.allocation = { PREPARE: 0, SCOUT: staffCapacity(member.rating), RECRUIT: 0, DEVELOP: 0, RECOVER: 0 };
+  }
+  assert.ok(
+    weeklyScoutingOutput(committed, programId) > base,
+    "a staff that spends its whole week scouting must produce more than one that does not"
+  );
+  assert.ok(
+    planExecution(committed, programId, "OFFENSE", 6).expected < planExecution(state, programId, "OFFENSE", 6).expected,
+    "the hours spent scouting must come out of installing the plan"
+  );
+});
+
+test("the board prices a title contender far above a bottom-half fixture", () => {
+  const state = beginSeason(createFictionalLeague("scouting-board", 24));
+  const programId = "program-1";
+  const board = scoutingBoard(state, programId);
+  assert.ok(board.length > 6, "a full schedule should be visible from week one");
+
+  const ranked = [...board].sort((left, right) => right.value - left.value);
+  const best = state.programs[ranked[0].opponentProgramId];
+  const worst = state.programs[ranked[ranked.length - 1].opponentProgramId];
+  assert.ok(
+    best.nationalRank < worst.nationalRank,
+    `the most valuable fixture (#${best.nationalRank}) must outrank the least (#${worst.nationalRank})`
+  );
+  assert.ok(
+    ranked[0].value > ranked[ranked.length - 1].value * 3,
+    `the board must discriminate (${ranked[0].value} vs ${ranked[ranked.length - 1].value}) or every game is worth scouting`
+  );
+  // A file can be opened weeks before the game it is for. That is the decision.
+  assert.ok(board.some((dossier) => dossier.week > state.week + 3), "the board must reach beyond the next few weeks");
+});
+
+test("a file is built forward, survives to its fixture, and is spent when the game is played", () => {
+  let state = beginSeason(createFictionalLeague("forward-scouting", 24));
+  const programId = "program-1";
+  const target = scoutingBoard(state, programId).find((dossier) => dossier.week >= state.week + 3);
+  assert.ok(target, "there must be a fixture several weeks out to scout");
+
+  // Spend every week's department output on one future opponent.
+  for (let week = 0; week < 3; week += 1) {
+    const available = state.preparation[programId].scoutingPoints;
+    state = prepareWeek(state, [
+      { type: "ALLOCATE_SCOUTING", programId, opponentProgramId: target.opponentProgramId, points: available }
+    ]).state;
+    assert.equal(state.preparation[programId].scoutingPoints, 0);
+    state = advanceWeek(state, planWeeklyCommands(state, programId)).state;
+  }
+  const built = state.dossiers[programId][target.opponentProgramId];
+  assert.ok(built > 0, "banked work must survive the weeks between allocating it and playing the game");
+  assert.ok(
+    built >= DOSSIER_THRESHOLDS.TENDENCIES,
+    `three weeks of saving must open something (${built} of ${DOSSIER_THRESHOLDS.TENDENCIES})`
+  );
+
+  // Once the fixture is played the file is spent — points cannot be banked into
+  // a single blowout and then reused.
+  while (state.week <= target.week && state.week <= 14) {
+    state = advanceWeek(state, planWeeklyCommands(state, programId)).state;
+  }
+  assert.equal(
+    state.dossiers[programId][target.opponentProgramId], undefined,
+    "a file must be cleared once the game it was built for has been played"
+  );
+});
+
+test("information is worth games: a scouted half of the league beats a blind half", () => {
+  // The load-bearing claim of the whole department. Half the league scouts every
+  // opponent completely and half scouts nobody; both halves hold the same mix of
+  // tiers, so information is the only difference between them.
+  const tally = { seeing: { for: 0, against: 0, wins: 0, games: 0 }, blind: { for: 0, against: 0, wins: 0, games: 0 } };
+  for (let league = 0; league < 3; league += 1) {
+    let state = beginSeason(createFictionalLeague(`information-value-${league}`, 24));
+    const ids = Object.keys(state.programs);
+    const seeing = new Set(ids.filter((_, index) => index % 2 === 0));
+    for (let week = 0; week < 12; week += 1) {
+      const dossiers = {};
+      for (const id of ids) {
+        dossiers[id] = {};
+        if (!seeing.has(id)) continue;
+        const fixture = state.schedule.find((game) => game.week === state.week && !game.played
+          && (game.homeProgramId === id || game.awayProgramId === id));
+        if (!fixture) continue;
+        const opponentId = fixture.homeProgramId === id ? fixture.awayProgramId : fixture.homeProgramId;
+        dossiers[id][opponentId] = DOSSIER_THRESHOLDS.GAME_PLAN;
+      }
+      state = { ...state, dossiers };
+      const result = advanceWeek(state, planWeeklyCommands(state));
+      state = result.state;
+      for (const event of result.events) {
+        if (event.type !== "GAME_COMPLETED") continue;
+        for (const [id, mine, theirs] of [
+          [event.homeProgramId, event.homeScore, event.awayScore],
+          [event.awayProgramId, event.awayScore, event.homeScore]
+        ]) {
+          const bucket = seeing.has(id) ? tally.seeing : tally.blind;
+          bucket.for += mine;
+          bucket.against += theirs;
+          bucket.games += 1;
+          if (mine > theirs) bucket.wins += 1;
+        }
+      }
+    }
+  }
+  const winRate = tally.seeing.wins / tally.seeing.games;
+  const margin = (tally.seeing.for - tally.seeing.against) / tally.seeing.games;
+  assert.ok(tally.seeing.games > 300, `sample too small at ${tally.seeing.games} games`);
+  assert.ok(winRate > 0.51, `scouting must be worth winning games (${(winRate * 100).toFixed(1)}%)`);
+  assert.ok(margin > 1, `scouting must be worth points on the board (${margin.toFixed(2)})`);
 });

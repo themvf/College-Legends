@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
+import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -192,14 +192,21 @@ test("development and staff decisions resolve through the shared command boundar
   const player = Object.values(state.players).find((candidate) => candidate.programId === "program-1");
   const staff = Object.values(state.staff).find((candidate) => candidate.programId === "program-1");
   assert.ok(player && staff);
+  const capacity = staffCapacity(staff.rating);
   const result = advanceWeek(state, [
     { type: "SET_DEVELOPMENT_SPOTLIGHT", programId: "program-1", target: { type: "PLAYER", playerId: player.id }, focus: "STRENGTH" },
-    { type: "ASSIGN_STAFF", programId: "program-1", staffId: staff.id, assignment: "PLAYER_DEVELOPMENT" }
+    { type: "SET_STAFF_ALLOCATION", programId: "program-1", staffId: staff.id, allocation: { PREPARE: 0, SCOUT: 0, RECRUIT: 0, DEVELOP: capacity, RECOVER: 0 } }
   ]);
   assert.equal(result.state.players[player.id].developmentFocus, "STRENGTH");
-  assert.equal(result.state.staff[staff.id].assignment, "PLAYER_DEVELOPMENT");
+  assert.equal(result.state.staff[staff.id].allocation.DEVELOP, capacity);
   assert.ok(result.events.some((event) => event.type === "DEVELOPMENT_SPOTLIGHT_SET"));
-  assert.ok(result.events.some((event) => event.type === "STAFF_ASSIGNED"));
+  assert.ok(result.events.some((event) => event.type === "STAFF_ALLOCATION_SET"));
+
+  // A coach cannot work more hours than he has, so every allocation is a trade.
+  const overcommitted = advanceWeek(state, [
+    { type: "SET_STAFF_ALLOCATION", programId: "program-1", staffId: staff.id, allocation: { PREPARE: capacity, SCOUT: capacity, RECRUIT: 0, DEVELOP: 0, RECOVER: 0 } }
+  ]);
+  assert.ok(overcommitted.events.some((event) => event.type === "COMMAND_REJECTED"));
 });
 
 test("facility upgrades spend budget and weekly finances are recorded", () => {
@@ -389,7 +396,10 @@ test("recovery assignments lower fatigue and recruiting staff and facilities gen
   assert.ok(player && coach);
   player.fatigue = 20;
   const noRecovery = advanceWeek(base);
-  const recovery = advanceWeek(base, [{ type: "ASSIGN_STAFF", programId: "program-1", staffId: coach.id, assignment: "RECOVERY" }]);
+  const recovery = advanceWeek(base, [{
+    type: "SET_STAFF_ALLOCATION", programId: "program-1", staffId: coach.id,
+    allocation: { PREPARE: 0, SCOUT: 0, RECRUIT: 0, DEVELOP: 0, RECOVER: staffCapacity(coach.rating) }
+  }]);
   assert.ok(recovery.state.players[player.id].fatigue < noRecovery.state.players[player.id].fatigue);
 
   const basicRecruiting = activeLeague("recruiting-investment", 4);
@@ -401,7 +411,7 @@ test("recovery assignments lower fatigue and recruiting staff and facilities gen
   assert.equal(investedPoints - basicPoints, 16);
   const recruiter = Object.values(investedRecruiting.staff).find((candidate) => candidate.programId === "program-1");
   assert.ok(recruiter);
-  recruiter.assignment = "RECRUITING";
+  recruiter.allocation = { PREPARE: 0, SCOUT: 0, RECRUIT: staffCapacity(recruiter.rating), DEVELOP: 0, RECOVER: 0 };
   assert.ok(recruitingWeeklyPoints(investedRecruiting, "program-1") > investedPoints);
   assert.ok(projectedRecruitingOpenings(investedRecruiting, "program-1") > 0);
 });

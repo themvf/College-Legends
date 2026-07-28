@@ -92,21 +92,27 @@ advantage — a bonus in a situation, or a counter to one opponent tendency.
 This is the small, frequent decision that fills weeks when nothing large is in
 progress.
 
-### 3. Opponent scouting — tiered reveal
+### 3. Opponent scouting — a department, allocated forward
 
-Modelled on the existing prospect scouting report, which already earns its keep:
-pay for information, receive an estimate whose width narrows with the quality of
-the people producing it.
+Pay for information, receive an estimate whose width narrows with the quality of
+the people producing it — and decide *which games are worth knowing about*.
 
-| Tier | Reveals |
-|---|---|
-| none | Record and ranking |
-| `TENDENCIES` | Run/pass balance as a band |
-| `PERSONNEL` | Unit strengths and their star players |
-| `GAME_PLAN` | The emphasis they have actually chosen this week |
+| Tier | File points | Reveals |
+|---|---|---|
+| none | 0 | Record and ranking |
+| `TENDENCIES` | 6 | Their scheme identity |
+| `PERSONNEL` | 18 | Unit strengths as ranges, and their star players |
+| `GAME_PLAN` | 36 | Likelihoods for each call they will make this week |
+
+Points come from `facilities.SCOUTING` (funding tiers 1–5) plus the hours coaches
+allocate to `SCOUT`, and are spent onto a **named future opponent**. A file
+persists until its fixture is played, so the game in week six can be worked on
+from week one. `opponentValue` prices every remaining fixture 0–100 — the
+top-ranked side scores 100 and a bottom-half fixture single digits — which is
+what makes the board a decision rather than a queue.
 
 The top tier is what makes the emphasis decisions a game rather than a coin
-flip. It should be expensive and never perfectly reliable.
+flip. It is expensive and never perfectly reliable.
 
 ### 4. Weekly emphasis — the calls
 
@@ -158,13 +164,16 @@ really making, and it is the point where preparation becomes a payroll question
 
 ### 6. Preparation capacity — the scarcity
 
-A weekly pool of prep points from staff assigned to `GAME_PREP` plus facility
-level, spent on installation, play concepts, and scouting. Emphasis choices are
-free, because they are decisions rather than work.
+Two pools, produced by the same people. Preparation points come from the hours
+coaches give `PREPARE` plus the training facility, and buy practice reps.
+Scouting points come from the department's funding tier plus the hours coaches
+give `SCOUT`, and buy files. Emphasis choices are free, because they are
+decisions rather than work.
 
-The pool must be small enough that installing a playbook, learning concepts, and
-scouting deeply in the same week is impossible. Without that, there is no plan —
-only a checklist.
+The scarcity that binds is therefore **the coaching week**, not a single pool: a
+coordinator sent to scout the number-two team is a coordinator not installing
+Saturday's plan, and below half a week the head coach covers his side at 82%.
+Without that, there is no plan — only a checklist.
 
 ## Feedback
 
@@ -189,8 +198,19 @@ decisions they cannot learn from.
 5. ~~Plan installation as a weekly build: who installs it, how many reps, and an
    execution band that decides how much of the plan lands.~~ **Done** —
    `packages/simulation/src/installation.ts`.
-6. Playbook identity as a staged multi-week project, then play concepts.
-7. Coordinator delegation and the `AUTO_GAMEPLAN` card.
+6. ~~The scouting department: funding tiers, coaching hours split across the jobs
+   a staff does, and points allocated forward onto specific fixtures.~~ **Done**
+   — `packages/simulation/src/department.ts`, the `SET_STAFF_ALLOCATION` and
+   `ALLOCATE_SCOUTING` commands, and the `WeekHub` screen.
+7. Playbook identity as a staged multi-week project, then play concepts.
+8. Coordinator delegation and the `AUTO_GAMEPLAN` card.
+
+The lesson from stage 6: **a system only the player pays for is not a system.**
+`projectGamePlan` handed every rival the opponent's exact unit ratings for free,
+so the AI planned as if it had bought the top tier every week while the player
+was being charged for it. Scouting only became a competitive advantage once
+rivals planned from their own files too. Before shipping a system that sells
+information, check what the AI already knows.
 
 The lesson from stage 5: a multiplier needs something to multiply. Execution
 first scaled only the emphasis deltas, and a balanced plan has none — so

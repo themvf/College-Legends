@@ -1,57 +1,110 @@
 import type { DevelopmentFocus, GamePlan, GameState, GameCommand, Position, Prospect } from "@college-legends/model";
-import { intendedGamePlan, MAXIMUM_REPS_PER_SIDE, programUnitRatings, scheduledOpponent, scoutingCost, SCOUTING_TIERS } from "@college-legends/simulation";
+import {
+  DOSSIER_THRESHOLDS,
+  MARQUEE_VALUE,
+  MAXIMUM_REPS_PER_SIDE,
+  programUnitRatings,
+  projectedGamePlan,
+  scheduledOpponent,
+  scoutingBoard,
+  staffCapacity,
+  WORTH_SCOUTING
+} from "@college-legends/simulation";
 
 /**
- * Rivals answer the same game-plan questions the player does, from what a
- * coaching staff could know: their own identity and personnel, and the
- * opponent's film. They call `intendedGamePlan` — the same function the
- * player's scouting report reads — so a bought report describes the plan that
- * is actually run rather than a parallel guess.
+ * Rivals answer the same game-plan question the player does, from what their own
+ * scouting file actually says. They call `projectedGamePlan` — the same function
+ * the player's scouting report reads — so a bought report describes the plan
+ * that is really run rather than a parallel guess, and a rival who has not
+ * scouted plans blind.
  */
 function planGamePlan(state: Readonly<GameState>, programId: string, opponentId: string | null): GamePlan {
-  const program = state.programs[programId]!;
-  const roster = Object.values(state.players).filter((player) =>
-    player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP"
-  );
-  const fatigue = roster.reduce((total, player) => total + player.fatigue, 0) / Math.max(1, roster.length);
-  const opponent = opponentId ? state.programs[opponentId] : null;
-  return intendedGamePlan(
-    program.schemeIdentity,
-    programUnitRatings(state, programId),
-    opponentId ? programUnitRatings(state, opponentId) : null,
-    fatigue,
-    program.losses > program.wins,
-    opponent?.schemeIdentity ?? null
-  );
+  return projectedGamePlan(state, programId, opponentId, (id) => programUnitRatings(state, id));
 }
 
 /**
- * Rivals face the same squeeze the player does: a week of attention buys either
- * information about the opponent or reps installing their own plan. They keep
- * most of it for installation and buy the cheapest useful report with the rest.
+ * Rivals install their plan with the week's preparation, exactly as the player
+ * does. Preparation buys reps and nothing else, so this is a single call on how
+ * hard to practise.
  */
-function planPreparation(state: Readonly<GameState>, programId: string): GameCommand[] {
+function planPractice(state: Readonly<GameState>, programId: string): GameCommand[] {
   const preparation = state.preparation?.[programId];
   if (!preparation || !scheduledOpponent(state, programId)) return [];
   let points = preparation.points;
   const commands: GameCommand[] = [];
-
-  // Install first — a plan that is not practised is worth less than knowing
-  // what the opponent will do with theirs.
   for (const side of ["OFFENSE", "DEFENSE"] as const) {
     const current = side === "OFFENSE" ? preparation.offensiveReps : preparation.defensiveReps;
-    const target = Math.min(MAXIMUM_REPS_PER_SIDE, current + Math.floor(points * 0.35));
+    const target = Math.min(MAXIMUM_REPS_PER_SIDE, current + Math.floor(points * 0.45));
     if (target <= current) continue;
     commands.push({ type: "SET_PRACTICE_REPS", programId, side, reps: target });
     points -= target - current;
   }
+  return commands;
+}
 
-  for (const tier of SCOUTING_TIERS) {
-    if (preparation.scoutedTiers.includes(tier)) continue;
-    const cost = scoutingCost(tier);
-    if (points < cost) continue;
-    commands.push({ type: "SCOUT_OPPONENT", programId, tier });
-    points -= cost;
+/**
+ * How a rival spends its scouting department. Files are opened weeks ahead and
+ * the week's output goes where it is worth most: this week's game first, since
+ * an unread file is wasted, then the largest prize still on the schedule.
+ *
+ * Rivals therefore skip the bottom of the league and stack points on the games
+ * that pay, which is the same judgement the player is being asked to make.
+ */
+function planScouting(state: Readonly<GameState>, programId: string): GameCommand[] {
+  const preparation = state.preparation?.[programId];
+  if (!preparation || preparation.scoutingPoints < 1) return [];
+  const board = scoutingBoard(state, programId);
+  if (board.length === 0) return [];
+
+  let points = preparation.scoutingPoints;
+  const commands: GameCommand[] = [];
+  const thisWeek = board.find((dossier) => dossier.week === state.week);
+  if (thisWeek) {
+    // Whatever is left unspent when the whistle blows is lost, so the imminent
+    // game always gets enough to open the next tier if that is reachable.
+    const next = DOSSIER_THRESHOLDS.GAME_PLAN > thisWeek.points
+      ? [DOSSIER_THRESHOLDS.TENDENCIES, DOSSIER_THRESHOLDS.PERSONNEL, DOSSIER_THRESHOLDS.GAME_PLAN]
+        .find((threshold) => threshold > thisWeek.points) ?? 0
+      : 0;
+    const spend = Math.min(points, Math.max(0, next - thisWeek.points));
+    if (spend > 0) {
+      commands.push({ type: "ALLOCATE_SCOUTING", programId, opponentProgramId: thisWeek.opponentProgramId, points: spend });
+      points -= spend;
+    }
+  }
+
+  // The rest goes forward, onto the biggest prize still to come — and only if
+  // it is worth more than a routine fixture.
+  const ahead = board
+    .filter((dossier) => dossier.week > state.week && dossier.value >= WORTH_SCOUTING)
+    .sort((left, right) => right.value - left.value || left.week - right.week)[0];
+  if (ahead && points > 0) {
+    commands.push({ type: "ALLOCATE_SCOUTING", programId, opponentProgramId: ahead.opponentProgramId, points });
+  }
+  return commands;
+}
+
+/**
+ * Rivals move coordinator hours toward scouting when a game worth scouting is
+ * coming, and back to preparation when it is not. Without this the allocation
+ * screen is a lever only the player pulls, and a big week costs a rival nothing.
+ */
+function planStaffAllocation(state: Readonly<GameState>, programId: string): GameCommand[] {
+  const bigGameComing = scoutingBoard(state, programId)
+    .some((dossier) => dossier.week <= state.week + 2 && dossier.value >= MARQUEE_VALUE);
+  const commands: GameCommand[] = [];
+  for (const member of Object.values(state.staff)) {
+    if (member.programId !== programId) continue;
+    if (member.role !== "OFFENSIVE_COORDINATOR" && member.role !== "DEFENSIVE_COORDINATOR") continue;
+    const capacity = staffCapacity(member.rating);
+    const scout = bigGameComing ? Math.round(capacity * 0.4) : Math.round(capacity * 0.15);
+    if (member.allocation.SCOUT === scout) continue;
+    commands.push({
+      type: "SET_STAFF_ALLOCATION",
+      programId,
+      staffId: member.id,
+      allocation: { PREPARE: capacity - scout, SCOUT: scout, RECRUIT: 0, DEVELOP: 0, RECOVER: 0 }
+    });
   }
   return commands;
 }
@@ -71,7 +124,9 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
     if (program.id === excludedProgramId) return [];
     const commands: GameCommand[] = [];
 
-    commands.push(...planPreparation(state, program.id));
+    commands.push(...planStaffAllocation(state, program.id));
+    commands.push(...planPractice(state, program.id));
+    commands.push(...planScouting(state, program.id));
 
     const desired = planGamePlan(state, program.id, upcomingOpponent(state, program.id));
     const current = state.gamePlans?.[program.id];

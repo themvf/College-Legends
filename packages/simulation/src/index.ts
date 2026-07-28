@@ -1,8 +1,23 @@
-import type { AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffAssignment, StaffMember, StaffRole } from "@college-legends/model";
+import type { AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffFocus, StaffMember, StaffRole, OpponentDossier } from "@college-legends/model";
 import { FICTIONAL_PROGRAMS, fictionalPersonName } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
 import { DEFAULT_GAME_PLAN, OFFENSIVE_IDENTITY_LABELS, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
-import { opponentScoutingReport, preparationWeeklyPoints, projectedGamePlan, scheduledOpponent, scoutingCost, SCOUTING_TIERS } from "./scouting.js";
+import { opponentScoutingReport, preparationWeeklyPoints, projectedGamePlan, scheduledOpponent, scoutingConfidence, filmGamesAvailable } from "./scouting.js";
+import {
+  allocatedTotal,
+  defaultAllocation,
+  dossierTiers,
+  emptyAllocation,
+  focusShare,
+  roleFit,
+  scoutingDepartmentSummary,
+  staffCapacity,
+  staffContribution,
+  STAFF_FOCUSES,
+  upcomingDossiers,
+  weeklyScoutingOutput,
+  WORTH_SCOUTING
+} from "./department.js";
 import { advertisingReach, DEFENSIVE_PRESETS, developmentCandidates, fairTicketPrice, matchingPreset, MAXIMUM_TICKET_PRICE, MAXIMUM_WEEKLY_ADVERTISING, MINIMUM_TICKET_PRICE, OFFENSIVE_PRESETS, pricingGoodwill, projectGate } from "./business.js";
 import { MAXIMUM_REPS_PER_SIDE, planExecution, repsFatigue, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
 
@@ -25,14 +40,33 @@ export { MAXIMUM_REPS_PER_SIDE, planExecution, planInstaller, repsFatigue, staff
 export {
   filmGamesAvailable,
   preparationWeeklyPoints,
+  projectedGamePlan,
   scheduledOpponent,
   scoutingConfidence,
-  scoutingCost,
-  SCOUTING_COSTS,
   SCOUTING_TIER_DESCRIPTIONS,
   SCOUTING_TIER_LABELS,
   SCOUTING_TIERS
 } from "./scouting.js";
+export {
+  allocatedTotal,
+  defaultAllocation,
+  departmentBaseOutput,
+  DOSSIER_THRESHOLDS,
+  dossierTiers,
+  emptyAllocation,
+  focusShare,
+  MARQUEE_VALUE,
+  opponentValue,
+  roleFit,
+  scoutingDepartmentSummary,
+  SCOUTING_FUNDING_LABELS,
+  staffCapacity,
+  staffContribution,
+  STAFF_FOCUS_LABELS,
+  STAFF_FOCUSES,
+  weeklyScoutingOutput,
+  WORTH_SCOUTING
+} from "./department.js";
 export type { GamePlanOption, UnitEdge } from "./game.js";
 
 export { AddressableRng } from "./rng.js";
@@ -120,10 +154,7 @@ export function recruitingEvaluationCost(evaluation: RecruitingEvaluation): numb
 export function recruitingWeeklyPoints(state: Readonly<GameState>, programId: string): number {
   const program = state.programs[programId];
   if (!program) return 0;
-  const staffPoints = Object.values(state.staff)
-    .filter((staff) => staff.programId === programId && staff.assignment === "RECRUITING")
-    .reduce((sum, staff) => sum + staff.rating / 20, 0);
-  return Math.round(32 + program.facilities.RECRUITING * 4 + staffPoints);
+  return Math.round(32 + program.facilities.RECRUITING * 4 + staffContribution(state, programId, "RECRUIT") / 20);
 }
 
 export function projectedRecruitingOpenings(state: Readonly<GameState>, programId: string): number {
@@ -252,9 +283,7 @@ export function projectedDevelopmentPayoff(
   const program = state.programs[player.programId]!;
   const fatigueModifier = clamp(1 - player.fatigue / 180, rules.fatigueFloor, 1);
   const trainingModifier = 1 + Math.max(0, program.facilities.TRAINING - 1) * 0.04;
-  const coachingModifier = 1 + Object.values(state.staff)
-    .filter((staff) => staff.programId === program.id && staff.assignment === "PLAYER_DEVELOPMENT")
-    .reduce((sum, staff) => sum + staff.rating / 500, 0);
+  const coachingModifier = 1 + staffContribution(state, program.id, "DEVELOP") / 500;
   const scale = clamp((0.72 + player.workEthic * 0.45) * fatigueModifier * trainingModifier * coachingModifier, 0.5, 1.8);
   const payoff = developmentPayoff(focus, player.position);
   return {
@@ -266,17 +295,26 @@ export function projectedDevelopmentPayoff(
   };
 }
 
-export function staffAssignmentPayoff(member: Pick<StaffMember, "rating" | "role">, assignment: StaffAssignment): string {
-  if (assignment === "GAME_PREP") return `+${gamePrepContribution(member).toFixed(1)} team rating in the next game`;
-  if (assignment === "PLAYER_DEVELOPMENT") return `+${Math.round(member.rating / 5)}% weekly player growth`;
-  if (assignment === "RECRUITING") return `+${(member.rating / 25).toFixed(1)} pursuit score and +${Math.round(member.rating / 20)} Recruiting Points each week`;
-  return `-${(member.rating / 30).toFixed(1)} roster fatigue; ${Math.round(member.rating / 2)}% chance to shorten injuries`;
+/**
+ * What one hour of a coach's week buys on a given job. Posted per hour rather
+ * than per coach, because the decision the player makes is how many of his hours
+ * go where — not whether he is "on" a job at all.
+ */
+export function staffFocusPayoff(member: Pick<StaffMember, "rating" | "role">, focus: StaffFocus): string {
+  const perHour = (multiplier: number): number =>
+    member.rating * roleFit(member.role, focus) * multiplier / staffCapacity(member.rating);
+  if (focus === "PREPARE") return `+${perHour(0.01).toFixed(2)} to every unit per hour`;
+  if (focus === "SCOUT") return `+${perHour(1 / 12).toFixed(1)} scouting points a week per hour`;
+  if (focus === "RECRUIT") return `+${perHour(0.05).toFixed(1)} pursuit score and +${perHour(0.05).toFixed(1)} Recruiting Points per hour`;
+  if (focus === "DEVELOP") return `+${perHour(0.2).toFixed(1)}% weekly player growth per hour`;
+  return `-${perHour(1 / 30).toFixed(2)} roster fatigue a week per hour`;
 }
 
 export function facilityPayoff(facility: FacilityType, level: number): string {
   if (facility === "TRAINING") return `+${Math.max(0, level - 1) * 4}% weekly player growth`;
   if (facility === "STADIUM") return `+${Math.max(0, level - 1) * 8}% home-game revenue`;
   if (facility === "ACADEMICS") return `-${Math.max(0, level - 1) * 1.5}% offseason transfer risk`;
+  if (facility === "SCOUTING") return `${scoutingDepartmentSummary(level)}`;
   return `+${Math.max(0, level - 1) * 2} pursuit score and +${level * 4} Recruiting Points each week`;
 }
 
@@ -335,7 +373,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
   const nameFor = (ordinal: number): string => fictionalPersonName(ordinal, firstNameOffset, lastNameOffset);
   const state: GameState = {
     identity: { rootSeed, balanceConfiguration: { version: "0.1.0", weeklyDevelopment: { base: 0.012, workEthicWeight: 0.022, fatigueFloor: 0.62, maximum: 0.09 }, game: { homeFieldAdvantage: 2.8 } }, simulationVersion: "0.1.0" },
-    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, staff: {}, depthCharts: {}, playerGameStats: [], schedule: [], seasonHistory: [], eventHistory: []
+    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, dossiers: {}, staff: {}, depthCharts: {}, playerGameStats: [], schedule: [], seasonHistory: [], eventHistory: []
   };
   const rosterPositions = Object.entries(ROSTER_COMPOSITION).flatMap(([position, count]) =>
     Array.from({ length: count }, () => position as Position)
@@ -373,7 +411,9 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       advertisingSpend: 0,
       weeklyRevenue: tier === "POWER" ? 1_200_000 : tier === "MID" ? 520_000 : 210_000,
       weeklyExpenses: tier === "POWER" ? 940_000 : tier === "MID" ? 430_000 : 185_000,
-      facilities: { TRAINING: facilityLevel, STADIUM: facilityLevel, ACADEMICS: facilityLevel, RECRUITING: facilityLevel }
+      // A scouting department starts a tier behind the rest: information is the
+      // thing a program has to decide to invest in rather than inherit.
+      facilities: { TRAINING: facilityLevel, STADIUM: facilityLevel, ACADEMICS: facilityLevel, RECRUITING: facilityLevel, SCOUTING: Math.max(1, facilityLevel - 1) }
     };
     state.recruiting[id] = {
       points: 0,
@@ -383,20 +423,22 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
     };
     state.developmentSpotlights[id] = null;
     state.gamePlans[id] = { ...DEFAULT_GAME_PLAN };
-    state.preparation[id] = { points: 0, weeklyPoints: 0, scoutedTiers: [], scoutedOpponentId: null, offensiveReps: 0, defensiveReps: 0 };
+    state.preparation[id] = { points: 0, weeklyPoints: 0, scoutingPoints: 0, weeklyScoutingPoints: 0, offensiveReps: 0, defensiveReps: 0 };
+    state.dossiers[id] = {};
     for (const [staffIndex, role] of STAFF_ROLES.entries()) {
       const staffId = `${id}-staff-${staffIndex + 1}`;
       const personOrdinal = index * (STARTING_ROSTER_SIZE + STAFF_ROLES.length) + staffIndex;
+      const rating = Math.round(rng.between(`${staffId}:rating`, baseline - 4, baseline + 7));
       state.staff[staffId] = {
         id: staffId,
         programId: id,
         name: nameFor(personOrdinal),
         role,
-        rating: Math.round(rng.between(`${staffId}:rating`, baseline - 4, baseline + 7)),
+        rating,
         // Priced by the same formula the hiring market uses, so a replacement is
         // never both better and cheaper by accident.
-        salary: staffSalary(Math.round(rng.between(`${staffId}:rating`, baseline - 4, baseline + 7)), role),
-        assignment: role === "STRENGTH_COACH" ? "PLAYER_DEVELOPMENT" : "GAME_PREP"
+        salary: staffSalary(rating, role),
+        allocation: defaultAllocation(role, rating)
       };
     }
     for (let rosterIndex = 0; rosterIndex < rosterPositions.length; rosterIndex += 1) {
@@ -721,22 +763,37 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
 
 /**
  * Refreshes every program's preparation for the week about to be played.
- * Preparation is attention rather than savings: it never banks, and last week's
- * scouting is worthless against a new opponent.
+ *
+ * Preparation is attention: reps and department output both refresh weekly and
+ * never bank. Dossiers are the exception — they are the work product, and they
+ * persist against the fixture they were opened for until it is played.
  */
 function refreshPreparation(state: GameState, events: GameEvent[]): void {
   state.preparation ??= {};
+  state.dossiers ??= {};
   for (const programId of Object.keys(state.programs)) {
     const weeklyPoints = preparationWeeklyPoints(state, programId);
+    const weeklyScoutingPoints = weeklyScoutingOutput(state, programId);
     state.preparation[programId] = {
       points: weeklyPoints,
       weeklyPoints,
-      scoutedTiers: [],
-      scoutedOpponentId: scheduledOpponent(state, programId),
+      scoutingPoints: weeklyScoutingPoints,
+      weeklyScoutingPoints,
       offensiveReps: 0,
       defensiveReps: 0
     };
     events.push({ type: "PREP_POINTS_ADDED", season: state.season, week: state.week, programId, pointsAdded: weeklyPoints });
+  }
+  // A file was work done for one fixture. Once that game is played it is spent,
+  // which is what stops a program banking scouting into a single blowout.
+  for (const [programId, files] of Object.entries(state.dossiers)) {
+    for (const opponentProgramId of Object.keys(files)) {
+      const pending = state.schedule.some((game) =>
+        !game.played
+        && ((game.homeProgramId === programId && game.awayProgramId === opponentProgramId)
+          || (game.awayProgramId === programId && game.homeProgramId === opponentProgramId)));
+      if (!pending) delete files[opponentProgramId];
+    }
   }
 }
 
@@ -750,7 +807,7 @@ function refreshPreparation(state: GameState, events: GameEvent[]): void {
 export function prepareWeek(input: Readonly<GameState>, commands: readonly GameCommand[] = []): SimulationResult {
   const state = clone<GameState>(input);
   const events: GameEvent[] = [];
-  const preparationCommands = commands.filter((command) => command.type === "SCOUT_OPPONENT");
+  const preparationCommands = commands.filter((command) => command.type === "ALLOCATE_SCOUTING");
   if (preparationCommands.length > 0) {
     resolveCommands(state, preparationCommands, new AddressableRng(state.identity.rootSeed).fork("preparation", String(state.season), String(state.week)), events);
   }
@@ -854,14 +911,23 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       });
       continue;
     }
-    if (command.type === "ASSIGN_STAFF") {
+    if (command.type === "SET_STAFF_ALLOCATION") {
       const staff = state.staff[command.staffId];
       if (!staff || staff.programId !== program.id) {
-        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Staff assignment is not valid for this program." });
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That coach does not work for this program." });
         continue;
       }
-      staff.assignment = command.assignment;
-      events.push({ type: "STAFF_ASSIGNED", season: state.season, week: state.week, programId: program.id, staffId: staff.id, assignment: staff.assignment });
+      const capacity = staffCapacity(staff.rating);
+      const allocation = emptyAllocation();
+      for (const focus of STAFF_FOCUSES) {
+        allocation[focus] = Math.max(0, Math.trunc(command.allocation[focus] ?? staff.allocation[focus] ?? 0));
+      }
+      if (allocatedTotal(allocation) > capacity) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: `${staff.name} has ${capacity} hours a week and this plan spends more.` });
+        continue;
+      }
+      staff.allocation = allocation;
+      events.push({ type: "STAFF_ALLOCATION_SET", season: state.season, week: state.week, programId: program.id, staffId: staff.id, allocation: { ...allocation } });
       continue;
     }
     if (command.type === "UPGRADE_FACILITY") {
@@ -911,38 +977,41 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       });
       continue;
     }
-    if (command.type === "SCOUT_OPPONENT") {
+    if (command.type === "ALLOCATE_SCOUTING") {
       const preparation = state.preparation[program.id];
-      const opponentId = scheduledOpponent(state, program.id);
-      if (!preparation || !opponentId) {
-        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "There is no opponent to scout this week." });
+      const points = Math.trunc(command.points);
+      if (!preparation || !Number.isFinite(points) || points < 1) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Allocate at least one scouting point." });
         continue;
       }
-      if (!SCOUTING_TIERS.includes(command.tier)) {
-        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That scouting report does not exist." });
+      // A file can only be opened on a game still to be played — scouting is
+      // work done ahead of a fixture, not a permanent record of the league.
+      const fixture = state.schedule.find((game) =>
+        !game.played
+        && game.week >= state.week
+        && ((game.homeProgramId === program.id && game.awayProgramId === command.opponentProgramId)
+          || (game.awayProgramId === program.id && game.homeProgramId === command.opponentProgramId)));
+      if (!fixture) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That opponent is not on the remaining schedule." });
         continue;
       }
-      if (preparation.scoutedTiers.includes(command.tier)) {
-        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That report has already been ordered this week." });
+      if (preparation.scoutingPoints < points) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The scouting department has not produced that many points this week." });
         continue;
       }
-      const cost = scoutingCost(command.tier);
-      if (preparation.points < cost) {
-        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Not enough preparation left this week for that report." });
-        continue;
-      }
-      preparation.points -= cost;
-      preparation.scoutedTiers.push(command.tier);
-      preparation.scoutedTiers.sort();
+      preparation.scoutingPoints -= points;
+      state.dossiers[program.id] ??= {};
+      const totalPoints = (state.dossiers[program.id]![command.opponentProgramId] ?? 0) + points;
+      state.dossiers[program.id]![command.opponentProgramId] = totalPoints;
       events.push({
-        type: "OPPONENT_SCOUTED",
+        type: "SCOUTING_ALLOCATED",
         season: state.season,
         week: state.week,
         programId: program.id,
-        opponentProgramId: opponentId,
-        tier: command.tier,
-        pointsSpent: cost,
-        confidence: scoutingReport(state, program.id).confidence
+        opponentProgramId: command.opponentProgramId,
+        points,
+        totalPoints,
+        tiers: dossierTiers(totalPoints)
       });
       continue;
     }
@@ -1000,7 +1069,8 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         role: candidate.role,
         rating: candidate.rating,
         salary: candidate.salary,
-        assignment: outgoing.assignment
+        // The post keeps its hours; the person filling it changes.
+        allocation: { ...outgoing.allocation }
       };
       events.push({
         type: "STAFF_REPLACED",
@@ -1262,9 +1332,7 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
   const program = state.programs[programId]!;
   const pursuitPoints = state.recruiting[programId]?.scoutingByProspect[prospect.id]?.pursuitPoints ?? 0;
   const facilityBonus = Math.max(0, program.facilities.RECRUITING - 1) * 2;
-  const staffBonus = Object.values(state.staff)
-    .filter((staff) => staff.programId === programId && staff.assignment === "RECRUITING")
-    .reduce((total, staff) => total + staff.rating / 25, 0);
+  const staffBonus = staffContribution(state, programId, "RECRUIT") / 25;
   const exposureBonus = program.localPress / 50 + program.nationalPress / 20;
   return Number((
     prospect.interestByProgram[programId]! * 0.3
@@ -1280,10 +1348,7 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
 function scoutingQuality(state: Readonly<GameState>, programId: string): number {
   const program = state.programs[programId];
   if (!program) return 0;
-  const staff = Object.values(state.staff)
-    .filter((member) => member.programId === programId && member.assignment === "RECRUITING")
-    .reduce((sum, member) => sum + member.rating / 4, 0);
-  return clamp(25 + program.facilities.RECRUITING * 12 + staff, 25, 100);
+  return clamp(25 + program.facilities.RECRUITING * 12 + staffContribution(state, programId, "RECRUIT") / 6, 25, 100);
 }
 
 function prospectProgramFit(state: Readonly<GameState>, prospect: Readonly<Prospect>, programId: string): number {
@@ -1302,7 +1367,7 @@ function prospectProgramFit(state: Readonly<GameState>, prospect: Readonly<Prosp
       return clamp(95 - returning.length * 5 - Math.max(0, bestReturning - prospect.overall), 15, 95);
     }
     if (priority === "WINNING") return clamp(program.prestige * 0.55 + program.wins * 5 - program.losses * 2, 5, 100);
-    if (priority === "PLAYER_DEVELOPMENT") return clamp(program.facilities.TRAINING * 16 + Object.values(state.staff).filter((staff) => staff.programId === programId && staff.assignment === "PLAYER_DEVELOPMENT").reduce((sum, staff) => sum + staff.rating / 6, 0), 10, 100);
+    if (priority === "PLAYER_DEVELOPMENT") return clamp(program.facilities.TRAINING * 16 + staffContribution(state, programId, "DEVELOP") / 6, 10, 100);
     if (priority === "NATIONAL_EXPOSURE") return clamp(program.nationalPress + Math.max(0, 26 - program.nationalRank), 5, 100);
     if (priority === "ACADEMICS") return program.facilities.ACADEMICS * 20;
     if (priority === "FACILITIES") return (program.facilities.TRAINING + program.facilities.RECRUITING) * 10;
@@ -1446,8 +1511,7 @@ function developPlayers(state: GameState, rng: AddressableRng, events: GameEvent
     const fatigueModifier = clamp(1 - player.fatigue / 180, rules.fatigueFloor, 1);
     const program = state.programs[player.programId]!;
     const trainingModifier = 1 + Math.max(0, program.facilities.TRAINING - 1) * 0.04;
-    const developmentCoaches = Object.values(state.staff).filter((staff) => staff.programId === program.id && staff.assignment === "PLAYER_DEVELOPMENT");
-    const coachingModifier = 1 + developmentCoaches.reduce((sum, staff) => sum + staff.rating / 500, 0);
+    const coachingModifier = 1 + staffContribution(state, program.id, "DEVELOP") / 500;
     const intensity = playerDevelopmentIntensity(state, player);
     const focus = projectedDevelopmentPayoff(state, player, player.developmentFocus, intensity);
     const ratingChanges: Partial<Record<PlayerRating, number>> = {};
@@ -1469,11 +1533,7 @@ function developPlayers(state: GameState, rng: AddressableRng, events: GameEvent
  * Exposed so the roster and game-plan screens can show what a decision moves.
  */
 export function programUnitRatings(state: Readonly<GameState>, programId: string): TeamUnitRatings {
-  const lineup = activeLineup(state, programId);
-  const prepBonus = Object.values(state.staff)
-    .filter((staff) => staff.programId === programId && staff.assignment === "GAME_PREP")
-    .reduce((total, staff) => total + gamePrepContribution(staff), 0);
-  return unitRatingsFromLineup(lineup, prepBonus);
+  return unitRatingsFromLineup(activeLineup(state, programId), gamePrepBonus(state, programId));
 }
 
 /**
@@ -1605,6 +1665,18 @@ export function scoutingReport(state: Readonly<GameState>, programId: string): O
 }
 
 /**
+ * The scouting board: every opponent left on the schedule, the file built so
+ * far, and what beating them is worth. This is the screen that makes forward
+ * allocation a decision — a file on a top-ten side in six weeks can be started
+ * now, and a file on the hundredth-ranked team probably should not be started
+ * at all.
+ */
+export function scoutingBoard(state: Readonly<GameState>, programId: string): OpponentDossier[] {
+  return upcomingDossiers(state, programId, (opponentId, points) =>
+    scoutingConfidence(state, programId, filmGamesAvailable(state, opponentId), points));
+}
+
+/**
  * This week's four matchups for a program.
  *
  * The opponent's side is only filled in once the personnel report has been
@@ -1637,19 +1709,30 @@ function teamStrength(state: Readonly<GameState>, program: Program): number {
   return overallStrength(programUnitRatings(state, program.id));
 }
 
-function gamePrepContribution(member: Pick<StaffMember, "rating" | "role">): number {
-  const roleFit: Record<StaffRole, number> = { HEAD_COACH: 1.2, OFFENSIVE_COORDINATOR: 1.4, DEFENSIVE_COORDINATOR: 1.4, STRENGTH_COACH: 0.6 };
-  return member.rating * roleFit[member.role] / 100;
+/**
+ * What the staff's preparation hours are worth on the field, applied to every
+ * unit. A coach who gives half his week to preparing the team delivers half of
+ * what he would if that were all he did — which is the cost of asking him to
+ * scout or recruit as well.
+ */
+function gamePrepBonus(state: Readonly<GameState>, programId: string): number {
+  return staffContribution(state, programId, "PREPARE") / 100;
+}
+
+/** What one coach would add to every unit if preparation were his whole week. */
+export function gamePrepContribution(member: Pick<StaffMember, "rating" | "role">): number {
+  return member.rating * roleFit(member.role, "PREPARE") / 100;
 }
 
 function recoverPlayers(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
   for (const program of Object.values(state.programs)) {
-    const recoveryStaff = Object.values(state.staff).filter((staff) => staff.programId === program.id && staff.assignment === "RECOVERY");
-    const fatigueRecovery = recoveryStaff.reduce((total, staff) => total + staff.rating / 30, 0);
+    const recoveryStaff = Object.values(state.staff).filter((staff) => staff.programId === program.id && focusShare(staff, "RECOVER") > 0);
+    const fatigueRecovery = staffContribution(state, program.id, "RECOVER") / 30;
     for (const player of Object.values(state.players).filter((candidate) => candidate.programId === program.id && candidate.eligibility.rosterStatus === "SCHOLARSHIP")) {
       player.fatigue = clamp(Number((player.fatigue - fatigueRecovery).toFixed(1)), 0, 100);
       if (player.injuryWeeksRemaining <= 0) continue;
-      const extraRecovery = recoveryStaff.some((staff) => rng.at(`${player.id}:${staff.id}:extra-recovery`) < staff.rating / 200) ? 1 : 0;
+      const extraRecovery = recoveryStaff.some((staff) =>
+        rng.at(`${player.id}:${staff.id}:extra-recovery`) < staff.rating * focusShare(staff, "RECOVER") / 200) ? 1 : 0;
       player.injuryWeeksRemaining = Math.max(0, player.injuryWeeksRemaining - 1 - extraRecovery);
       if (player.injuryWeeksRemaining === 0) events.push({ type: "PLAYER_RECOVERED", season: state.season, week: state.week, playerId: player.id });
     }
@@ -1709,9 +1792,7 @@ function teamSide(state: Readonly<GameState>, programId: string): TeamSide {
     programId,
     lineup: activeLineup(state, programId),
     plan: state.gamePlans?.[programId] ?? { ...DEFAULT_GAME_PLAN },
-    prepBonus: Object.values(state.staff)
-      .filter((staff) => staff.programId === programId && staff.assignment === "GAME_PREP")
-      .reduce((total, staff) => total + gamePrepContribution(staff), 0),
+    prepBonus: gamePrepBonus(state, programId),
     execution: {
       offense: planExecution(state, programId, "OFFENSE"),
       defense: planExecution(state, programId, "DEFENSE")

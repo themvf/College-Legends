@@ -299,7 +299,36 @@ dd { margin:0; font-weight:700; text-align:right; }
 .decision-list li.attention-row span { opacity: 1; color: #e8b552; }
 .attention-dot { color: #e8b552; }
 .attention { color: #e8b552; font-size: 0.82rem; margin: 0.25rem 0 0; }
-.this-week input[type="range"] { width: 100%; margin: 0.5rem 0 0.25rem; }
+.this-week input[type="range"], .week-tab-body input[type="range"] { width: 100%; margin: 0.5rem 0 0.25rem; }
+
+/* The weekly hub: one screen, five rooms. */
+.week-hub { display: flex; flex-direction: column; gap: 1rem; }
+.week-header h2 { margin: 0.2rem 0 0; }
+.week-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.5rem; }
+.week-tab { display: flex; flex-direction: column; gap: 0.2rem; text-align: left; padding: 0.6rem 0.75rem; border-radius: 10px;
+  border: 1px solid var(--line, #2a2f3a); background: rgba(255, 255, 255, 0.02); color: inherit; cursor: pointer; }
+.week-tab.active { border-color: #6ea8fe; background: rgba(110, 168, 254, 0.12); }
+.week-tab span { font-size: 0.76rem; opacity: 0.6; }
+.week-tab-body { display: flex; flex-direction: column; gap: 1rem; }
+
+/* The scouting board: every fixture left, and what it is worth. */
+.dossier-row { padding: 0.75rem 0; border-bottom: 1px solid var(--line, #2a2f3a); }
+.dossier-row:last-child { border-bottom: none; }
+.dossier-row.now { border-left: 2px solid #6ea8fe; padding-left: 0.7rem; }
+.dossier-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.dossier-head .plan-label { margin-bottom: 0.2rem; }
+.dossier-value { font-size: 0.78rem; padding: 0.15rem 0.5rem; border-radius: 999px; border: 1px solid var(--line, #2a2f3a); opacity: 0.7; white-space: nowrap; }
+.dossier-value.high { border-color: #e8b552; color: #e8b552; opacity: 1; }
+.dossier-controls { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.35rem; }
+.dossier-controls input[type="range"] { flex: 1; margin: 0; }
+.plan-option.static { cursor: default; }
+
+/* A coach's week, split across the jobs a staff does. */
+.allocation-row { margin-top: 0.85rem; }
+.allocation-row .plan-label { display: flex; justify-content: space-between; gap: 1rem; margin-bottom: 0.2rem; }
+.allocation-row .hours { opacity: 1; letter-spacing: 0; }
+.allocation-row input[type="range"] { width: 100%; margin: 0; }
+.allocation-row .muted { font-size: 0.78rem; margin: 0.15rem 0 0; }
 .execution-bar { position: relative; height: 14px; border-radius: 7px; background: rgba(255,255,255,0.07); margin: 0.4rem 0 0.3rem; overflow: hidden; }
 .execution-band { position: absolute; top: 0; bottom: 0; background: linear-gradient(90deg, #b45f3c, #4f9d69); border-radius: 7px; }
 .execution-par { position: absolute; top: -2px; bottom: -2px; width: 2px; background: rgba(255,255,255,0.55); }
