@@ -28,9 +28,10 @@ export function fairTicketPrice(
  * deliberately gentle near the fair price so small adjustments are a nudge
  * rather than a cliff.
  */
-export function ticketDemandMultiplier(price: number, fairPrice: number): number {
+export function ticketDemandMultiplier(price: number, fairPrice: number, elasticity = 1): number {
   const overage = (price - fairPrice) / Math.max(1, fairPrice);
-  return clamp(1 - overage * 0.85, 0.15, 1.4);
+  // A diehard base barely notices the price; a front-running one leaves.
+  return clamp(1 - overage * 0.85 * elasticity, 0.15, 1.4);
 }
 
 /**
@@ -78,7 +79,7 @@ export function projectGate(
   const reach = advertisingReach(spend);
   const opponentDraw = opponent ? opponent.fanBase * 0.045 + (opponent.nationalRank <= 25 ? 5_000 : 0) + (marqueeGame ? 7_500 : 0) : 0;
   const baseDemand = program.fanBase * 0.62 + opponentDraw + reach.attendance;
-  const demand = baseDemand * ticketDemandMultiplier(price, fairPrice);
+  const demand = baseDemand * ticketDemandMultiplier(price, fairPrice, program.fanElasticity ?? 1);
   // Only a small hardcore turns up regardless of price. A generous floor would
   // let a program gouge its way past the demand curve and back into profit.
   const attendance = Math.round(clamp(demand, capacity * 0.06, capacity));
@@ -105,10 +106,10 @@ export function projectGate(
  * Gouging a loyal audience works for a week and erodes the fan base that makes
  * the gate worth having.
  */
-export function pricingGoodwill(price: number, fairPrice: number): number {
+export function pricingGoodwill(price: number, fairPrice: number, elasticity = 1): number {
   const overage = (price - fairPrice) / Math.max(1, fairPrice);
   if (overage <= 0.05) return 0;
-  return -Math.round(clamp(overage * 12, 0, 9));
+  return -Math.round(clamp(overage * 12 * elasticity, 0, 12));
 }
 
 /**

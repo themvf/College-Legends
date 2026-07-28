@@ -230,6 +230,54 @@ prospects-by-status) instead of `Object.values().filter()`.
   depth chart, and never upgrades facilities, so rivals do not compete on the
   systems the game is actually about.
 
+## Generation: tails, not bands
+
+The whole generator was `rng.between(low, high)` — uniform, no tail — and that one
+pattern produced three separate defects. Fixed as one piece of work.
+
+| symptom | before | after |
+|---|---|---|
+| rerolling bought nothing | six leagues, best low-tier ceiling **86 every time**, roster potential 75.0–76.5 | future stars inherited range **3–7** across seeds, best ceiling 91–99 |
+| every program in a tier was identical | one `facilityLevel` applied to all five facilities | TRAINING spreads 1–4, RECRUITING 1–3, elasticity 0.35–1.6 |
+| no diamonds in the rough | upside **flat at ~12** across every reputation tier | UNRANKED carries 11.4 hidden points against ELITE's 6.6 |
+
+**Programs have character**, authored permanently onto all 72 so the league has
+the same landmarks every save. `BLUEBLOOD`, `DIEHARD`, `FRONTRUNNER`,
+`TALENT_MAGNET`, `DEVELOPER` set per-facility levels, `fanElasticity`,
+`recruitAppeal`, `donorCulture`, and `homeRegionBias`. Character changes
+*strategy*, not difficulty: a developer has a weight room and no recruiting
+office, a talent magnet the reverse, and a front-runner's gate collapses when it
+loses where a diehard's does not.
+
+**Upside is deliberately asymmetric by tier** — low-tier rosters average 10.0
+points of headroom against a power program's 6.2. With equal upside a low-tier
+roster can never close the measured 15.3-point gap, so development was a
+treadmill it could not win.
+
+**Hype is split from truth.** `prospect.hype` is the public consensus every
+program sees free; `potential` is revealed only by investment. `hype` is weighted
+0.78 toward *current* ability, because rankings measure what a scout can see —
+which is why a raw prospect with a real ceiling is systematically under-ranked.
+A 12% minority are badly under-rated and 9% over-rated. 15% of prospects with an
+88+ ceiling now look unremarkable; before, reputation was a near-perfect proxy
+for potential and scouting could only confirm what a power program already knew.
+
+**Rivals recruit the rankings, not the truth.** `prospectValue` read real
+`potential`, so every overlooked gem was gone before the player could find one —
+the same class of leak as the AI reading opposing unit ratings for free. It reads
+`hype` now, and a distribution test asserts rivals sign over-hyped busts at least
+as often as hidden gems.
+
+**Choosing a job is a decision.** `programPreviews(state, tier)` returns the jobs
+at a tier with facilities, fan character, and the roster you would inherit;
+`CREATE_GAME` now generates a league and offers it rather than assigning one.
+Characters are interleaved in the list — grouped, the top of the screen was three
+cards with the same headline, which is the exact impression the screen exists to
+correct.
+
+Still open from the spec: economy drains, NIL, portal/offseason, scheme and
+familiarity, concepts, pipelines. See `docs/PROGRAM_IDENTITY_AND_ECONOMY.md`.
+
 ## Direction: the game is a decision engine
 
 The reference is a business simulation where nearly every screen is a decision

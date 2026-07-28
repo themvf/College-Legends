@@ -221,6 +221,14 @@ function projectedOpenings(state: Readonly<GameState>, programId: string): numbe
   return Math.max(0, program.scholarshipLimit - roster.length + departures - commitments);
 }
 
+/**
+ * What a rival thinks a prospect is worth. Reads `hype` — the public consensus —
+ * and never the true `potential`, which is information nobody has bought.
+ *
+ * Rivals used to sort by real potential, which meant every overlooked gem was
+ * taken before the player could find one and the whole point of scouting was
+ * lost. Same class of leak as the AI reading opposing unit ratings for free.
+ */
 function prospectValue(state: Readonly<GameState>, prospect: Prospect, programId: string): number {
   const localBonus = prospect.homeDivisionId === state.programs[programId]!.divisionId ? 8 : 0;
   const needBonus = Object.values(state.players).filter((player) =>
@@ -229,5 +237,5 @@ function prospectValue(state: Readonly<GameState>, prospect: Prospect, programId
     && player.eligibility.rosterStatus === "SCHOLARSHIP"
     && player.eligibility.seasonsRemaining > 1
   ).length <= 2 ? 7 : 0;
-  return prospect.overall * 0.4 + prospect.potential * 0.25 + prospect.interestByProgram[programId]! * 0.25 + localBonus + needBonus;
+  return prospect.hype * 0.65 + prospect.interestByProgram[programId]! * 0.25 + localBonus + needBonus;
 }

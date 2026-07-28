@@ -1,5 +1,5 @@
 import type { AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffFocus, StaffMember, StaffRole, OpponentDossier } from "@college-legends/model";
-import { FICTIONAL_PROGRAMS, fictionalPersonName } from "@college-legends/content";
+import { FICTIONAL_PROGRAMS, fictionalPersonName, PROGRAM_CHARACTERS } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
 import { DEFAULT_GAME_PLAN, OFFENSIVE_IDENTITY_LABELS, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
 import { opponentScoutingReport, preparationWeeklyPoints, projectedGamePlan, scheduledOpponent, scoutingConfidence, filmGamesAvailable } from "./scouting.js";
@@ -360,8 +360,132 @@ export function playerMediaPayoff(action: PlayerMediaAction): PlayerMediaPayoff 
   return PLAYER_MEDIA_PAYOFFS[action];
 }
 
+/**
+ * A right-tailed draw: mostly ordinary, occasionally exceptional.
+ *
+ * Every generator in this engine used to be `rng.between(low, high)`, which is
+ * uniform and has no tail — so six independent leagues produced the same best
+ * available player to within a point and a half, and restarting a career bought
+ * nothing. A tail is what makes a roster worth looking through and a save worth
+ * rerolling.
+ */
+function tailedDraw(rng: AddressableRng, key: string, typical: number, tail: number, tailChance = 0.08): number {
+  const body = rng.between(`${key}:body`, 0, typical);
+  if (rng.at(`${key}:tail-roll`) >= tailChance) return body;
+  return typical + rng.between(`${key}:tail`, 0, tail);
+}
+
 export function marqueeGuarantee(rank: number): number {
   return Math.round(500_000 + (25 - clamp(rank, 1, 25)) * (1_000_000 / 24));
+}
+
+export interface ProgramPreview {
+  programId: string;
+  name: string;
+  abbreviation: string;
+  location: string;
+  tier: Program["tier"];
+  character: Program["character"];
+  characterLabel: string;
+  blurb: string;
+  strategy: string;
+  facilities: Record<FacilityType, number>;
+  fanBase: number;
+  fanElasticity: number;
+  recruitAppeal: number;
+  prestige: number;
+  /** The roster you would inherit. */
+  rosterOverall: number;
+  rosterCeiling: number;
+  futureStars: number;
+  bestCeiling: number;
+  /** Plain sentences a player can compare across jobs. */
+  notes: string[];
+}
+
+const FACILITY_LABELS: Readonly<Record<FacilityType, string>> = {
+  TRAINING: "Weight room",
+  STADIUM: "Stadium",
+  ACADEMICS: "Academics",
+  RECRUITING: "Recruiting office",
+  SCOUTING: "Scouting department"
+};
+
+/**
+ * The jobs available at a tier, with what each one actually offers.
+ *
+ * Programs used to be tier-clones — one facility level applied to everything and
+ * rosters drawn from the same narrow band — so choosing between them was a
+ * cosmetic decision. Character has to be legible at the moment of choosing or it
+ * may as well not exist.
+ */
+export function programPreviews(state: Readonly<GameState>, tier: Program["tier"]): ProgramPreview[] {
+  return Object.values(state.programs)
+    .filter((program) => program.tier === tier)
+    .map((program) => {
+      const roster = Object.values(state.players).filter((player) =>
+        player.programId === program.id && player.eligibility.rosterStatus === "SCHOLARSHIP");
+      const size = Math.max(1, roster.length);
+      const profile = PROGRAM_CHARACTERS[program.character];
+      const notes: string[] = [];
+
+      if (program.fanElasticity <= 0.5) notes.push("Fans turn up whatever the record says.");
+      else if (program.fanElasticity >= 1.4) notes.push("Fans leave when you lose and flood back when you win.");
+      if (program.recruitAppeal >= 6) notes.push(`Recruits take the call — +${program.recruitAppeal} in every contested commitment.`);
+      else if (program.recruitAppeal <= -3) notes.push(`Nobody wants to sign here — ${program.recruitAppeal} in every contested commitment.`);
+
+      const best = (Object.keys(FACILITY_LABELS) as FacilityType[])
+        .sort((left, right) => program.facilities[right] - program.facilities[left]);
+      const strongest = best[0]!;
+      const weakest = best[best.length - 1]!;
+      if (program.facilities[strongest] - program.facilities[weakest] >= 2) {
+        notes.push(`${FACILITY_LABELS[strongest]} is the best thing here; ${FACILITY_LABELS[weakest].toLowerCase()} is the worst.`);
+      }
+
+      const futureStars = roster.filter((player) => player.potential >= 88).length;
+      if (futureStars >= 6) notes.push(`${futureStars} players on this roster could become stars. Somebody has to find them.`);
+      else if (futureStars <= 2) notes.push("Very little on this roster is going to become a star on its own.");
+
+      return {
+        programId: program.id,
+        name: program.name,
+        abbreviation: program.abbreviation,
+        location: `${program.city}, ${program.stateCode}`,
+        tier: program.tier,
+        character: program.character,
+        characterLabel: profile.label,
+        blurb: profile.blurb,
+        strategy: profile.strategy,
+        facilities: { ...program.facilities },
+        fanBase: program.fanBase,
+        fanElasticity: program.fanElasticity,
+        recruitAppeal: program.recruitAppeal,
+        prestige: program.prestige,
+        rosterOverall: Number((roster.reduce((total, player) => total + player.overall, 0) / size).toFixed(1)),
+        rosterCeiling: Number((roster.reduce((total, player) => total + player.potential, 0) / size).toFixed(1)),
+        futureStars,
+        bestCeiling: roster.length ? Math.max(...roster.map((player) => player.potential)) : 0,
+        notes
+      };
+    })
+    .sort((left, right) => left.character.localeCompare(right.character) || left.name.localeCompare(right.name))
+    // Interleave the characters. Grouped, the top of the list is three cards
+    // with the same headline and the player concludes the jobs are identical —
+    // which is the exact impression this screen exists to correct.
+    .reduce<ProgramPreview[][]>((buckets, preview) => {
+      const bucket = buckets.find((entry) => entry[0]!.character === preview.character);
+      if (bucket) bucket.push(preview);
+      else buckets.push([preview]);
+      return buckets;
+    }, [])
+    .reduce<ProgramPreview[]>((ordered, _bucket, _index, buckets) => {
+      const depth = Math.max(...buckets.map((bucket) => bucket.length));
+      if (ordered.length > 0) return ordered;
+      for (let row = 0; row < depth; row += 1) {
+        for (const bucket of buckets) if (bucket[row]) ordered.push(bucket[row]!);
+      }
+      return ordered;
+    }, []);
 }
 
 export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL_PROGRAMS.length): GameState {
@@ -384,6 +508,15 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
     const tier = definition.tier;
     const facilityLevel = tier === "POWER" ? 4 : tier === "MID" ? 3 : 2;
     const baseline = tier === "POWER" ? 83 : tier === "MID" ? 75 : 68;
+    const character = PROGRAM_CHARACTERS[definition.character];
+    // Headroom is deliberately asymmetric by tier. With equal upside a low-tier
+    // roster can never close the 15-point gap to a power program, so development
+    // is a treadmill it cannot win.
+    const upsideFloor = tier === "POWER" ? 1 : tier === "MID" ? 3 : 5;
+    // Facilities are no longer one level applied to everything. A developer has
+    // a weight room and no recruiting office; a talent magnet has the reverse.
+    const facility = (type: FacilityType): number =>
+      clamp(Math.round(facilityLevel + (character.facilitySkew[type] ?? 0)), 1, 5);
     state.programs[id] = {
       id,
       name: `${definition.name} ${definition.nickname}`,
@@ -407,13 +540,24 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       nationalPress: tier === "POWER" ? 80 : tier === "MID" ? 38 : 12,
       nationalRank: index + 1,
       schemeIdentity: assignSchemeIdentity(rng, id),
+      character: definition.character,
+      fanElasticity: character.fanElasticity,
+      recruitAppeal: character.recruitAppeal,
+      donorCulture: character.donorCulture,
+      homeRegionBias: character.homeRegionBias,
       ticketPrice: tier === "POWER" ? 58 : tier === "MID" ? 42 : 28,
       advertisingSpend: 0,
       weeklyRevenue: tier === "POWER" ? 1_200_000 : tier === "MID" ? 520_000 : 210_000,
       weeklyExpenses: tier === "POWER" ? 940_000 : tier === "MID" ? 430_000 : 185_000,
       // A scouting department starts a tier behind the rest: information is the
       // thing a program has to decide to invest in rather than inherit.
-      facilities: { TRAINING: facilityLevel, STADIUM: facilityLevel, ACADEMICS: facilityLevel, RECRUITING: facilityLevel, SCOUTING: Math.max(1, facilityLevel - 1) }
+      facilities: {
+        TRAINING: facility("TRAINING"),
+        STADIUM: facility("STADIUM"),
+        ACADEMICS: facility("ACADEMICS"),
+        RECRUITING: facility("RECRUITING"),
+        SCOUTING: clamp(facility("SCOUTING") - 1, 1, 5)
+      }
     };
     state.recruiting[id] = {
       points: 0,
@@ -452,7 +596,14 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
         programId: id,
         position,
         overall,
-        potential: clamp(Math.round(overall + rng.between(`${playerId}:potential`, 2, 13)), overall, 99),
+        // A struggling program has to be able to out-develop a rich one, so its
+        // rosters carry more headroom — and a tail, so a rebuild can inherit a
+        // genuine star nobody knew was there.
+        potential: clamp(
+          Math.round(overall + upsideFloor + tailedDraw(rng, `${playerId}:potential`, 9, 16)),
+          overall,
+          99
+        ),
         workEthic: rng.between(`${playerId}:work-ethic`, 0.2, 1),
         fatigue: 0,
         ratings: createPlayerRatings(overall, position, rng, playerId),
@@ -1334,6 +1485,7 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
   const facilityBonus = Math.max(0, program.facilities.RECRUITING - 1) * 2;
   const staffBonus = staffContribution(state, programId, "RECRUIT") / 25;
   const exposureBonus = program.localPress / 50 + program.nationalPress / 20;
+  const appealBonus = program.recruitAppeal + (prospect.homeDivisionId === program.divisionId ? program.homeRegionBias / 8 : 0);
   return Number((
     prospect.interestByProgram[programId]! * 0.3
     + prospectProgramFit(state, prospect, programId) * 0.35
@@ -1341,6 +1493,7 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
     + facilityBonus
     + staffBonus
     + exposureBonus
+    + appealBonus
     + rng.between(`${prospect.id}:${programId}:decision-noise`, -2, 2)
   ).toFixed(3));
 }
@@ -1416,6 +1569,35 @@ function prospectToPlayer(prospect: Prospect, id: string, programId: string, sea
   };
 }
 
+/** How badly the recruiting world can be wrong about a prospect, either way. */
+export const HYPE_MISREAD = { bustChance: 0.09, gemChance: 0.12, bustSwing: 13, gemSwing: 20 };
+
+/**
+ * What the recruiting world thinks a prospect is worth. Usually close to a fair
+ * read of his current ability and ceiling — but a minority are badly misjudged,
+ * and that minority is the only reason paying to dig pays anything.
+ *
+ * Measured before this existed: upside was flat at ~12 points across every
+ * reputation tier, so reputation was a near-perfect proxy for potential and
+ * scouting could only ever confirm what a power program already saw for free.
+ */
+function prospectHype(rng: AddressableRng, id: string, overall: number, potential: number): number {
+  // Weighted toward what a scout can actually see today. Rankings measure
+  // present ability far more than projection, which is why a raw prospect with a
+  // real ceiling is systematically under-ranked — and why he is findable.
+  const fairRead = overall * 0.78 + potential * 0.22;
+  const roll = rng.at(`${id}:hype-roll`);
+  if (roll < HYPE_MISREAD.gemChance) {
+    // Overlooked. Low reputation hides a real ceiling.
+    return clamp(Math.round(fairRead - rng.between(`${id}:hype-gem`, 6, HYPE_MISREAD.gemSwing)), 40, 99);
+  }
+  if (roll > 1 - HYPE_MISREAD.bustChance) {
+    // Over-ranked. The rankings love him and the tape does not.
+    return clamp(Math.round(fairRead + rng.between(`${id}:hype-bust`, 5, HYPE_MISREAD.bustSwing)), 40, 99);
+  }
+  return clamp(Math.round(fairRead + rng.between(`${id}:hype-noise`, -2.5, 2.5)), 40, 99);
+}
+
 function generateProspects(state: GameState, rng: AddressableRng, count: number, cohort: string, nameStart = 0, firstNameOffset = 0, lastNameOffset = 0): void {
   const positions: Player["position"][] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
   const programs = Object.values(state.programs);
@@ -1428,17 +1610,20 @@ function generateProspects(state: GameState, rng: AddressableRng, count: number,
       .sort((left, right) => rng.at(`${id}:priority:${left}`) - rng.at(`${id}:priority:${right}`))
       .slice(0, 3);
     const interestByProgram = Object.fromEntries(Object.keys(state.programs).map((programId) => [programId, Number(rng.between(`${id}:${programId}:interest`, 35, 88).toFixed(3))]));
+    const potential = clamp(overall + 3 + tailedDraw(rng, `${id}:potential`, 12, 18, 0.1), overall, 99);
+    const hype = prospectHype(rng, id, overall, potential);
     state.prospects[id] = {
       id,
       name: fictionalPersonName(nameStart + index, firstNameOffset, lastNameOffset),
       position,
       overall,
-      potential: clamp(overall + rng.between(`${id}:potential`, 4, 20), overall, 99),
+      potential,
+      hype,
       workEthic: rng.between(`${id}:work-ethic`, 0.2, 1),
       ratings: createPlayerRatings(overall, position, rng, id),
       homeStateCode: homeProgram.stateCode,
       homeDivisionId: homeProgram.divisionId,
-      reputation: overall >= 77 ? "ELITE" : overall >= 72 ? "NATIONAL" : overall >= 63 ? "REGIONAL" : "UNRANKED",
+      reputation: hype >= 77 ? "ELITE" : hype >= 72 ? "NATIONAL" : hype >= 63 ? "REGIONAL" : "UNRANKED",
       priorities,
       interestByProgram,
       status: "AVAILABLE",
@@ -2112,11 +2297,14 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
     const playedAtHome = Boolean(homeGame && game?.played);
     const gate = projectGate(program, opponent, capacity, marqueeGame);
     const advertisingFans = gate.advertisingFans;
-    const goodwill = pricingGoodwill(program.ticketPrice, fairTicketPrice(program, opponent, marqueeGame));
+    const goodwill = pricingGoodwill(program.ticketPrice, fairTicketPrice(program, opponent, marqueeGame), program.fanElasticity ?? 1);
     // Over-pricing costs followers, not merely a satisfaction score — otherwise
     // gouging is free and the price decision has only an upside.
     const goodwillFanLoss = goodwill < 0 ? Math.round(fansBefore * goodwill * 0.002) : 0;
-    const fanChange = teamResultFanChange + brandImpact.schoolFanLift + advertisingFans + goodwillFanLoss;
+    // Character decides how hard the base swings on a result. A diehard support
+    // barely moves either way; a front-running one empties out and floods back.
+    const elasticResultChange = Math.round(teamResultFanChange * (program.fanElasticity ?? 1));
+    const fanChange = elasticResultChange + brandImpact.schoolFanLift + advertisingFans + goodwillFanLoss;
     program.fanBase = Math.max(5_000, program.fanBase + fanChange);
     program.fanSupport = clamp(
       Math.round(program.fanSupport + fanChange / Math.max(1, fansBefore) * 35 + goodwill),
@@ -2150,7 +2338,7 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
       fansBefore,
       fansAfter: program.fanBase,
       fanChange,
-      teamResultFanChange,
+      teamResultFanChange: elasticResultChange,
       playerFanLift: brandImpact.schoolFanLift,
       featuredPlayerId: brandImpact.featuredPlayerId,
       featuredPlayerRating: brandImpact.featuredPlayerRating,

@@ -2,15 +2,12 @@
 import type { CareerPath, GameCommand, GameState, ProgramId } from "@college-legends/model";
 import { CAREER_PATHS } from "@college-legends/content";
 import { planWeeklyCommands } from "@college-legends/ai";
-import { advanceWeek, beginSeason, createFictionalLeague, prepareWeek } from "@college-legends/simulation";
+import { advanceWeek, beginSeason, createFictionalLeague, prepareWeek, programPreviews } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 
 let activeState: GameState | undefined;
 
-function playerProgramForPath(state: GameState, careerPath: CareerPath): ProgramId {
-  const tier = CAREER_PATHS[careerPath].tier;
-  return Object.values(state.programs).find((program) => program.tier === tier)?.id ?? Object.keys(state.programs)[0]!;
-}
+
 
 function reply(message: WorkerResponse): void { self.postMessage(message); }
 
@@ -18,13 +15,25 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
   try {
     if (request.type === "CREATE_GAME") {
+      // The league is generated first so the player can see the jobs it offers.
+      // Nothing is committed until a program is chosen.
       activeState = createFictionalLeague(request.seed);
-      const playerProgramId = playerProgramForPath(activeState, request.careerPath);
+      reply({
+        type: "CANDIDATES",
+        requestId: request.requestId,
+        state: activeState,
+        previews: programPreviews(activeState, CAREER_PATHS[request.careerPath].tier)
+      });
+      return;
+    }
+    if (request.type === "CHOOSE_PROGRAM") {
+      if (!activeState) throw new Error("Generate a league before choosing a program.");
       const profile = CAREER_PATHS[request.careerPath];
-      const program = activeState.programs[playerProgramId]!;
+      const program = activeState.programs[request.programId];
+      if (!program) throw new Error("That program is not in this league.");
       program.budget = profile.budget;
       program.coachSecurity = profile.initialSecurity;
-      reply({ type: "READY", requestId: request.requestId, state: activeState, playerProgramId, events: [] });
+      reply({ type: "READY", requestId: request.requestId, state: activeState, playerProgramId: program.id, events: [] });
       return;
     }
     if (!activeState) throw new Error("Create a game before advancing the simulation.");

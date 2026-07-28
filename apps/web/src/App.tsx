@@ -20,6 +20,7 @@ import type {
   StaffFocus
 } from "@college-legends/model";
 import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
+import type { ProgramPreview } from "@college-legends/simulation";
 import {
   DEFAULT_GAME_PLAN,
   DEFENSIVE_IDENTITY_LABELS,
@@ -111,6 +112,8 @@ export function App(): ReactElement {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [pendingCommands, setPendingCommands] = useState<GameCommand[]>([]);
+  /** The jobs on offer, between choosing a career path and taking one. */
+  const [offers, setOffers] = useState<{ careerPath: CareerPath; previews: ProgramPreview[] }>();
 
   useEffect(() => {
     const worker = new Worker(new URL("./simulation.worker.ts", import.meta.url), { type: "module" });
@@ -119,6 +122,11 @@ export function App(): ReactElement {
       const response = event.data;
       setBusy(false);
       if (response.type === "ERROR") { setError(response.message); return; }
+      if (response.type === "CANDIDATES") {
+        setOffers((previous) => ({ careerPath: previous?.careerPath ?? "DYNASTY_BUILDER", previews: response.previews }));
+        return;
+      }
+      setOffers(undefined);
       setGame((previous) => ({
         state: response.state,
         playerProgramId: response.type === "READY" ? response.playerProgramId : previous!.playerProgramId,
@@ -134,10 +142,17 @@ export function App(): ReactElement {
     setError(undefined);
     workerRef.current?.postMessage(request);
   };
-  const startGame = (careerPath: CareerPath): void => {
+  const startGame = (careerPath: CareerPath, reroll = 0): void => {
     setScreen("ROSTER");
     setPendingCommands([]);
-    send({ type: "CREATE_GAME", requestId: nextRequestId(), careerPath, seed: `web-alpha-${careerPath.toLowerCase()}` });
+    setOffers({ careerPath, previews: [] });
+    // The seed carries the reroll, so "look at another league" is a real reroll
+    // rather than the same 72 programs shuffled.
+    send({ type: "CREATE_GAME", requestId: nextRequestId(), careerPath, seed: `web-alpha-${careerPath.toLowerCase()}-${reroll}` });
+  };
+  const takeJob = (programId: ProgramId): void => {
+    if (!offers) return;
+    send({ type: "CHOOSE_PROGRAM", requestId: nextRequestId(), careerPath: offers.careerPath, programId });
   };
   const begin = (): void => {
     if (!game) return;
@@ -192,7 +207,10 @@ export function App(): ReactElement {
     send({ type: "ADVANCE_WEEK", requestId: nextRequestId(), playerProgramId: game.playerProgramId, commands: pendingCommands });
   };
 
-  if (!game) return <NewGame busy={busy} onStart={startGame} />;
+  if (offers) return <ChooseJob busy={busy} careerPath={offers.careerPath} previews={offers.previews}
+    onTake={takeJob} onReroll={() => startGame(offers.careerPath, Math.floor(Math.random() * 100_000))}
+    onBack={() => setOffers(undefined)} />;
+  if (!game) return <NewGame busy={busy} onStart={(path) => startGame(path)} />;
   return <Dashboard game={game} screen={screen} busy={busy} error={error} pendingCommands={pendingCommands}
     onNavigate={setScreen} onQueue={queue} onBegin={begin} onAdvance={advance} />;
 }
@@ -216,6 +234,62 @@ function commandKey(command: GameCommand): string {
   if (command.type === "SET_DEPTH_CHART") return `depth:${command.position}`;
   if (command.type === "SET_REDSHIRT" || command.type === "RED_SHIRT") return `redshirt:${command.playerId}`;
   return "command";
+}
+
+/**
+ * The jobs on offer at a tier. Two programs at the same tier used to be the same
+ * program — one facility level applied to everything, rosters from one narrow
+ * band — so this screen would have been a coin flip. Character has to be legible
+ * at the moment of choosing or it may as well not exist.
+ */
+function ChooseJob({ busy, careerPath, previews, onTake, onReroll, onBack }: {
+  busy: boolean;
+  careerPath: CareerPath;
+  previews: ProgramPreview[];
+  onTake: (programId: ProgramId) => void;
+  onReroll: () => void;
+  onBack: () => void;
+}): ReactElement {
+  const profile = CAREER_PATHS[careerPath];
+  const facilityOrder: FacilityType[] = ["TRAINING", "RECRUITING", "STADIUM", "ACADEMICS", "SCOUTING"];
+  return <main className="new-game">
+    <header className="masthead">
+      <p className="eyebrow">{profile.label} · {profile.tier} tier</p>
+      <h1>Which job do you take?</h1>
+      <p>
+        Every program here is the same tier. None of them is better than the others —
+        they are good at different things, and what you inherit is different at each one.
+      </p>
+      <div className="job-actions">
+        <button className="replace-button" onClick={onBack} disabled={busy}>Back</button>
+        <button className="replace-button" onClick={onReroll} disabled={busy}>Look at another league</button>
+      </div>
+    </header>
+    {previews.length === 0 && <p className="muted">Generating a league…</p>}
+    <section className="career-grid">{previews.map((preview) =>
+      <article className={`career-card job-card ${preview.character.toLowerCase()}`} key={preview.programId}>
+        <p className="tier">{preview.characterLabel}</p>
+        <h2>{preview.name}</h2>
+        <p className="muted">{preview.location} · {compactNumber(preview.fanBase)} fans · {preview.prestige} prestige</p>
+        <p>{preview.blurb}</p>
+        <p className="job-strategy">{preview.strategy}</p>
+        <dl>
+          <div><dt>Roster now</dt><dd>{preview.rosterOverall}</dd></div>
+          <div><dt>Roster ceiling</dt><dd>{preview.rosterCeiling}</dd></div>
+          <div><dt>Future stars</dt><dd>{preview.futureStars}</dd></div>
+          <div><dt>Best ceiling</dt><dd>{preview.bestCeiling}</dd></div>
+        </dl>
+        <div className="facility-strip">{facilityOrder.map((type) =>
+          <span className="facility-pip" key={type}>
+            <small>{type.slice(0, 4)}</small>
+            <b>{preview.facilities[type]}</b>
+          </span>)}
+        </div>
+        <ul className="plan-notes">{preview.notes.map((note) => <li key={note}>{note}</li>)}</ul>
+        <button disabled={busy} onClick={() => onTake(preview.programId)}>Take this job</button>
+      </article>)}
+    </section>
+  </main>;
 }
 
 function NewGame({ busy, onStart }: { busy: boolean; onStart: (path: CareerPath) => void }): ReactElement {

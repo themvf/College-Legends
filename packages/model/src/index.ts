@@ -19,6 +19,13 @@ export type StaffRole = "HEAD_COACH" | "OFFENSIVE_COORDINATOR" | "DEFENSIVE_COOR
  */
 export type StaffFocus = "PREPARE" | "SCOUT" | "RECRUIT" | "DEVELOP" | "RECOVER";
 export type FacilityType = "TRAINING" | "STADIUM" | "ACADEMICS" | "RECRUITING" | "SCOUTING";
+/**
+ * A program's lasting character, authored rather than generated so the league
+ * has the same landmarks across every save. Character changes *strategy*, not
+ * difficulty — a front-running base and a diehard base are two different games
+ * at the same tier.
+ */
+export type ProgramCharacter = "BLUEBLOOD" | "DIEHARD" | "FRONTRUNNER" | "TALENT_MAGNET" | "DEVELOPER";
 export type DivisionId = "ATLANTIC" | "GREAT_LAKES" | "HEARTLAND" | "GULF" | "MOUNTAIN" | "PACIFIC";
 export type PlayerRating = "technique" | "strength" | "conditioning" | "injuryPrevention" | "armStrength";
 export type PlayerMediaAction = "FOOTBALL_FOCUS" | "MEDIA_DAY" | "SOCIAL_MEDIA" | "COMMUNITY_APPEARANCE";
@@ -362,6 +369,14 @@ export interface Prospect {
   ratings: PlayerRatings;
   homeStateCode: string;
   homeDivisionId: DivisionId;
+  /**
+   * What the recruiting world thinks he is worth — free to every program, and
+   * usually close to the truth. Occasionally badly wrong in either direction,
+   * which is the only reason digging pays: a diamond in the rough is a prospect
+   * whose `potential` far exceeds his `hype`.
+   */
+  hype: number;
+  /** Derived from `hype`, not from the truth. */
   reputation: "UNRANKED" | "REGIONAL" | "NATIONAL" | "ELITE";
   priorities: RecruitPriority[];
   /** A prospect's private fit with each school, generated from the save seed. */
@@ -412,6 +427,24 @@ export interface Program {
   nationalPress: number;
   nationalRank: number;
   schemeIdentity: SchemeIdentity;
+  /**
+   * What kind of program this is, beyond how good it is. Two programs in the
+   * same tier should play differently, not merely at different difficulty —
+   * that is what makes choosing a job, and restarting, a real decision.
+   */
+  character: ProgramCharacter;
+  /**
+   * How hard the fan base swings with results and with price. Below 1 is a
+   * diehard base that turns up through bad years; above 1 is a front-running
+   * base that collapses when losing and floods back when winning.
+   */
+  fanElasticity: number;
+  /** Flat standing in every contested commitment, before anything is spent. */
+  recruitAppeal: number;
+  /** Multiplier on what supporters will fund beyond the gate. */
+  donorCulture: number;
+  /** Standing in this program's own division before any relationship is built. */
+  homeRegionBias: number;
   /** Price of a home-game ticket. Demand falls as it rises above what the
    *  program's standing justifies, and goodwill falls with it. */
   ticketPrice: number;

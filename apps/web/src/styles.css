@@ -340,3 +340,21 @@ dd { margin:0; font-weight:700; text-align:right; }
 .replace-button { border: 1px dashed #e8b552; color: #e8b552; background: transparent; border-radius: 8px; padding: 0.4rem 0.8rem; cursor: pointer; }
 .assignment-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-top: 0.9rem; }
 .assignment-row span { opacity: 0.7; font-size: 0.85rem; }
+
+/* Choosing a job: two programs at the same tier are different games. */
+.job-actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
+.job-card { display: flex; flex-direction: column; gap: 0.5rem; }
+.job-card .job-strategy { font-size: 0.85rem; opacity: 0.75; border-left: 2px solid #e8b552; padding-left: 0.6rem; margin: 0; }
+.job-card dl { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.35rem 1rem; margin: 0; }
+.job-card .plan-notes { margin: 0; }
+.job-card .plan-notes li { font-size: 0.8rem; }
+.facility-strip { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.facility-pip { display: flex; flex-direction: column; align-items: center; min-width: 3rem; padding: 0.3rem 0.2rem;
+  border: 1px solid var(--line, #2a2f3a); border-radius: 8px; background: rgba(255,255,255,0.02); }
+.facility-pip small { font-size: 0.6rem; letter-spacing: 0.06em; opacity: 0.6; text-transform: uppercase; }
+.facility-pip b { font-size: 1rem; }
+.job-card.blueblood { border-color: #b08b4f; }
+.job-card.diehard { border-color: #4f7fb0; }
+.job-card.frontrunner { border-color: #b0564f; }
+.job-card.talent_magnet { border-color: #6f4fb0; }
+.job-card.developer { border-color: #4fb07f; }

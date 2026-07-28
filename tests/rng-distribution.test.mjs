@@ -845,3 +845,146 @@ test("information is worth games: a scouted half of the league beats a blind hal
   assert.ok(winRate > 0.51, `scouting must be worth winning games (${(winRate * 100).toFixed(1)}%)`);
   assert.ok(margin > 1, `scouting must be worth points on the board (${margin.toFixed(2)})`);
 });
+
+test("program character makes two jobs in the same tier different games", () => {
+  const state = beginSeason(createFictionalLeague("program-character", 72));
+  const lows = Object.values(state.programs).filter((program) => program.tier === "LOW");
+  assert.ok(lows.length > 20, "a full league should offer plenty of low-tier jobs");
+
+  // Facilities used to be one level applied to everything, so every program in a
+  // tier was the same program. Choosing a job has to mean something.
+  const training = lows.map((program) => program.facilities.TRAINING);
+  const recruiting = lows.map((program) => program.facilities.RECRUITING);
+  assert.ok(Math.max(...training) - Math.min(...training) >= 2, "training facilities must vary between jobs");
+  assert.ok(Math.max(...recruiting) - Math.min(...recruiting) >= 1, "recruiting facilities must vary between jobs");
+
+  const elasticity = lows.map((program) => program.fanElasticity);
+  assert.ok(Math.min(...elasticity) < 0.5, "some fan bases must be diehards");
+  assert.ok(Math.max(...elasticity) > 1.4, "some fan bases must be front-runners");
+  assert.ok(new Set(lows.map((program) => program.character)).size >= 3, "a tier must offer several characters");
+
+  // A developer trades recruiting for a weight room; a talent magnet the reverse.
+  const developer = lows.find((program) => program.character === "DEVELOPER");
+  const magnet = lows.find((program) => program.character === "TALENT_MAGNET");
+  assert.ok(developer && magnet);
+  assert.ok(developer.facilities.TRAINING > magnet.facilities.TRAINING, "a developer must out-develop a talent magnet");
+  assert.ok(magnet.recruitAppeal > developer.recruitAppeal, "a talent magnet must out-recruit a developer");
+});
+
+test("a fan base's character decides how hard the gate swings", () => {
+  const state = beginSeason(createFictionalLeague("fan-elasticity", 72));
+  const diehard = Object.values(state.programs).find((program) => program.character === "DIEHARD");
+  const frontrunner = Object.values(state.programs).find((program) => program.character === "FRONTRUNNER");
+  assert.ok(diehard && frontrunner);
+
+  // Overprice both by the same margin and compare what it costs them.
+  const loss = (program) => {
+    const capacity = stadiumCapacity(program.facilities.STADIUM);
+    const fair = fairTicketPrice(program, null, false);
+    const atFair = projectGate(program, null, capacity, false, fair, 0).attendance;
+    const gouged = projectGate(program, null, capacity, false, Math.round(fair * 1.5), 0).attendance;
+    return (atFair - gouged) / Math.max(1, atFair);
+  };
+  assert.ok(
+    loss(frontrunner) > loss(diehard) * 1.5,
+    `front-runners must punish overpricing far harder (${(loss(frontrunner) * 100).toFixed(0)}% vs ${(loss(diehard) * 100).toFixed(0)}%)`
+  );
+});
+
+test("rerolling a save changes the roster you inherit", () => {
+  // Six independent leagues used to hand the same low-tier program a best
+  // available ceiling of 86 every single time, so restarting bought nothing.
+  const inherited = ["a", "b", "c", "d", "e", "f", "g", "h"].map((seed) => {
+    const state = createFictionalLeague(`reroll-variance-${seed}`, 72);
+    const program = Object.values(state.programs).find((candidate) => candidate.tier === "LOW");
+    const roster = Object.values(state.players).filter((player) =>
+      player.programId === program.id && player.eligibility.rosterStatus === "SCHOLARSHIP");
+    return {
+      stars: roster.filter((player) => player.potential >= 88).length,
+      best: Math.max(...roster.map((player) => player.potential))
+    };
+  });
+  const stars = inherited.map((entry) => entry.stars);
+  assert.ok(
+    Math.max(...stars) - Math.min(...stars) >= 3,
+    `what you inherit must vary between saves (future stars ranged ${Math.min(...stars)}–${Math.max(...stars)})`
+  );
+  assert.ok(Math.max(...inherited.map((entry) => entry.best)) >= 90, "some saves must hand you a genuine ceiling");
+});
+
+test("a struggling program has more room to develop than a powerhouse", () => {
+  const state = createFictionalLeague("upside-asymmetry", 72);
+  const headroom = (tier) => {
+    const rosters = Object.values(state.programs).filter((program) => program.tier === tier).flatMap((program) =>
+      Object.values(state.players).filter((player) =>
+        player.programId === program.id && player.eligibility.rosterStatus === "SCHOLARSHIP"));
+    return rosters.reduce((total, player) => total + (player.potential - player.overall), 0) / rosters.length;
+  };
+  const low = headroom("LOW");
+  const power = headroom("POWER");
+  assert.ok(
+    low > power * 1.3,
+    `low-tier rosters need more headroom than power rosters (${low.toFixed(1)} vs ${power.toFixed(1)}) or development can never close the gap`
+  );
+});
+
+test("diamonds in the rough exist: reputation is not a proxy for the truth", () => {
+  const state = beginSeason(createFictionalLeague("diamonds", 72));
+  const pool = Object.values(state.prospects);
+  assert.ok(pool.length > 1000);
+
+  const overlooked = (prospect) => ["UNRANKED", "REGIONAL"].includes(prospect.reputation);
+  const elite = pool.filter((prospect) => prospect.potential >= 88);
+  const hidden = elite.filter(overlooked);
+  assert.ok(
+    hidden.length / elite.length > 0.08,
+    `enough high-ceiling prospects must look unremarkable (${hidden.length} of ${elite.length}) or digging finds nothing`
+  );
+  assert.ok(
+    hidden.length / elite.length < 0.4,
+    "but not so many that the rankings are noise"
+  );
+
+  // Busts too — a reveal must not always be good news.
+  assert.ok(
+    pool.some((prospect) => prospect.reputation === "ELITE" && prospect.potential < prospect.hype),
+    "some highly-rated prospects must be worse than advertised"
+  );
+
+  // Hidden upside must grow as reputation falls, which is what makes a raw
+  // prospect worth projecting rather than a lottery ticket.
+  const gap = (reputation) => {
+    const group = pool.filter((prospect) => prospect.reputation === reputation);
+    return group.reduce((total, prospect) => total + (prospect.potential - prospect.hype), 0) / group.length;
+  };
+  assert.ok(
+    gap("UNRANKED") > gap("ELITE"),
+    `an unranked prospect must carry more hidden upside than an elite one (${gap("UNRANKED").toFixed(1)} vs ${gap("ELITE").toFixed(1)})`
+  );
+});
+
+test("rivals recruit the rankings, not the truth", () => {
+  // The AI used to sort prospects by real potential, so every overlooked gem was
+  // gone before the player could find one. Rivals must chase hype like everyone
+  // who has not paid to look closer.
+  let state = beginSeason(createFictionalLeague("ai-hype", 24));
+  const pool = Object.values(state.prospects);
+  const gems = new Set(pool.filter((prospect) =>
+    ["UNRANKED", "REGIONAL"].includes(prospect.reputation) && prospect.potential >= 85).map((prospect) => prospect.id));
+  const overhyped = new Set(pool.filter((prospect) =>
+    prospect.reputation === "ELITE" && prospect.potential < prospect.hype).map((prospect) => prospect.id));
+  assert.ok(gems.size > 0 && overhyped.size > 0, "the pool must contain both gems and busts");
+
+  for (let week = 0; week < 10; week += 1) state = advanceWeek(state, planWeeklyCommands(state)).state;
+  const committed = Object.values(state.prospects).filter((prospect) => prospect.status !== "AVAILABLE");
+  assert.ok(committed.length > 20, "rivals should be signing people");
+
+  const signedGems = committed.filter((prospect) => gems.has(prospect.id)).length;
+  const signedBusts = committed.filter((prospect) => overhyped.has(prospect.id)).length;
+  const gemRate = signedGems / gems.size;
+  const bustRate = signedBusts / overhyped.size;
+  assert.ok(
+    bustRate >= gemRate,
+    `rivals must chase reputation over truth (bust rate ${(bustRate * 100).toFixed(0)}% vs gem rate ${(gemRate * 100).toFixed(0)}%)`
+  );
+});
