@@ -17,6 +17,7 @@ import type {
   RecruitingEvaluation,
   RecruitingSearchType,
   SeasonAwardType,
+  SchemeIdentity,
   StaffFocus
 } from "@college-legends/model";
 import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
@@ -40,6 +41,12 @@ import {
   planExecution,
   staffModifiers,
   staffCandidatesFor,
+  OFFENSIVE_SCHEMES,
+  DEFENSIVE_SCHEMES,
+  rosterSchemeFit,
+  programRoster,
+  coachSchemeFit,
+  schemeFitLabel,
   SCOUTING_TIER_DESCRIPTIONS,
   SCOUTING_TIER_LABELS,
   scoutingBoard,
@@ -114,6 +121,8 @@ export function App(): ReactElement {
   const [pendingCommands, setPendingCommands] = useState<GameCommand[]>([]);
   /** The jobs on offer, between choosing a career path and taking one. */
   const [offers, setOffers] = useState<{ careerPath: CareerPath; previews: ProgramPreview[] }>();
+  /** Scheme and staff are settled once, at takeover, before the first season. */
+  const [setupDone, setSetupDone] = useState(false);
 
   useEffect(() => {
     const worker = new Worker(new URL("./simulation.worker.ts", import.meta.url), { type: "module" });
@@ -145,6 +154,7 @@ export function App(): ReactElement {
   const startGame = (careerPath: CareerPath, reroll = 0): void => {
     setScreen("ROSTER");
     setPendingCommands([]);
+    setSetupDone(false);
     setOffers({ careerPath, previews: [] });
     // The seed carries the reroll, so "look at another league" is a real reroll
     // rather than the same 72 programs shuffled.
@@ -207,6 +217,10 @@ export function App(): ReactElement {
     send({ type: "ADVANCE_WEEK", requestId: nextRequestId(), playerProgramId: game.playerProgramId, commands: pendingCommands });
   };
 
+  if (game && game.state.phase === "ROSTER_REVIEW" && !setupDone) {
+    return <SetUpProgram busy={busy} game={game} onPrepare={prepare}
+      onDone={() => { setSetupDone(true); setScreen("ROSTER"); }} />;
+  }
   if (offers) return <ChooseJob busy={busy} careerPath={offers.careerPath} previews={offers.previews}
     onTake={takeJob} onReroll={() => startGame(offers.careerPath, Math.floor(Math.random() * 100_000))}
     onBack={() => setOffers(undefined)} />;
@@ -289,6 +303,124 @@ function ChooseJob({ busy, careerPath, previews, onTake, onReroll, onBack }: {
         <button disabled={busy} onClick={() => onTake(preview.programId)}>Take this job</button>
       </article>)}
     </section>
+  </main>;
+}
+
+/**
+ * The rest of the takeover: what this program is going to run, and who is going
+ * to install it. Presented together on purpose — the interesting case is when
+ * the roster wants one scheme and the only coach who will take the job coaches
+ * another.
+ */
+function SetUpProgram({ busy, game, onPrepare, onDone }: {
+  busy: boolean;
+  game: GameView;
+  onPrepare: (command: GameCommand) => void;
+  onDone: () => void;
+}): ReactElement {
+  const programId = game.playerProgramId;
+  const program = game.state.programs[programId]!;
+  const roster = programRoster(game.state, programId);
+  const identity = program.schemeIdentity;
+  const [openPost, setOpenPost] = useState<string>();
+
+  const offensiveFit = rosterSchemeFit(roster, "OFFENSE", 0.72);
+  const defensiveFit = rosterSchemeFit(roster, "DEFENSE", 0.72);
+  const staff = Object.values(game.state.staff).filter((member) => member.programId === programId);
+  const roleOrder = ["HEAD_COACH", "OFFENSIVE_COORDINATOR", "DEFENSIVE_COORDINATOR", "STRENGTH_COACH"] as const;
+
+  const schemePanel = (side: "OFFENSE" | "DEFENSE") => {
+    const fits = side === "OFFENSE" ? offensiveFit : defensiveFit;
+    const chosen = side === "OFFENSE" ? identity.offense : identity.defense;
+    const best = fits[0]!;
+    return <article className="panel">
+      <p className="eyebrow">{side === "OFFENSE" ? "Offensive scheme" : "Defensive scheme"}</p>
+      <h2>{fits.find((fit) => fit.scheme === chosen)?.label ?? "—"}</h2>
+      <p className="muted">
+        This roster is built for <strong>{best.label}</strong> ({best.summary}). Picking something else is a
+        rebuild, not a mistake — it will cost you until the roster catches up.
+      </p>
+      <div className="plan-options">{fits.map((fit) =>
+        <button className={chosen === fit.scheme ? "plan-option active" : "plan-option"} key={fit.scheme}
+          disabled={busy}
+          onClick={() => onPrepare({
+            type: "SET_SCHEME", programId,
+            scheme: (side === "OFFENSE" ? { offense: fit.scheme } : { defense: fit.scheme }) as Partial<SchemeIdentity>
+          })}>
+          <strong>{fit.label} · {fit.summary}</strong>
+          <span className="effect">{fit.blurb}</span>
+          <div className="execution-bar" aria-label={`${fit.label} roster fit`}>
+            <span className="execution-band" style={{ left: `${fit.low}%`, width: `${Math.max(2, fit.high - fit.low)}%` }} />
+          </div>
+        </button>)}
+      </div>
+    </article>;
+  };
+
+  return <main className="new-game setup-screen">
+    <header className="masthead">
+      <p className="eyebrow">{program.name} · {program.city}, {program.stateCode}</p>
+      <h1>What are you going to run?</h1>
+      <p>
+        Scheme is where this program starts, not where it has to end. Your roster suits some of these
+        far better than others, and the coach who installs it has to know it.
+      </p>
+    </header>
+
+    <section className="setup-grid">
+      {schemePanel("OFFENSE")}
+      {schemePanel("DEFENSE")}
+    </section>
+
+    <section className="setup-grid">{roleOrder.map((role) => {
+      const member = staff.find((candidate) => candidate.role === role);
+      if (!member) return null;
+      const fit = coachSchemeFit(member, identity);
+      const side = role === "OFFENSIVE_COORDINATOR" ? "offense" : role === "DEFENSIVE_COORDINATOR" ? "defense" : null;
+      const runs = side === "offense" ? OFFENSIVE_SCHEMES : side === "defense" ? DEFENSIVE_SCHEMES : null;
+      const candidates = openPost === member.id ? staffCandidatesFor(game.state, programId, member.id) : [];
+      return <article className="panel staff-card" key={member.id}>
+        <div className="staff-head">
+          <div>
+            <p className="eyebrow">{label(role)}</p>
+            <h2>{member.name}</h2>
+            <p className="muted">{member.rating} rated · {money(member.salary)} a year</p>
+          </div>
+          <button className="replace-button" disabled={busy}
+            onClick={() => setOpenPost(openPost === member.id ? undefined : member.id)}>
+            {openPost === member.id ? "Close" : "Replace"}
+          </button>
+        </div>
+        {role !== "STRENGTH_COACH" && <p className={fit < 0.9 ? "attention" : "muted"}>
+          Coaches {label(side === "defense" ? member.schemePreference.defense : member.schemePreference.offense)} — {schemeFitLabel(fit).toLowerCase()}.
+        </p>}
+        <div className="snapshot-list">{staffModifiers(member).map((modifier) =>
+          <p key={modifier.label}><span>{modifier.label}</span><strong>{modifier.value}</strong></p>)}
+        </div>
+        {candidates.length > 0 && <div className="plan-options">{candidates.map((candidate) => {
+          const affordable = program.budget >= candidate.signingCost;
+          const blocked = Boolean(candidate.unavailableReason) || !affordable;
+          return <button className={candidate.unavailableReason ? "plan-option locked" : "plan-option"}
+            key={candidate.id} disabled={busy || blocked}
+            onClick={() => { onPrepare({ type: "REPLACE_STAFF", programId, staffId: member.id, candidateId: candidate.id }); setOpenPost(undefined); }}>
+            <strong>{candidate.name} · {candidate.rating} rated</strong>
+            <span className="effect">
+              {money(candidate.salary)} a year · {money(candidate.signingCost)} to sign
+              {runs ? ` · runs ${label(side === "defense" ? candidate.schemePreference.defense : candidate.schemePreference.offense)}` : ""}
+            </span>
+            <span className="tradeoff">
+              {candidate.unavailableReason
+                ?? (!affordable ? "Cannot afford the signing cost"
+                  : `${candidate.rating > member.rating ? "+" : ""}${candidate.rating - member.rating} on ${member.name} · ${candidate.schemeFitNote.toLowerCase()}`)}
+            </span>
+          </button>;
+        })}</div>}
+      </article>;
+    })}</section>
+
+    <div className="job-actions">
+      <button disabled={busy} onClick={onDone}>This is my program — continue</button>
+    </div>
   </main>;
 }
 

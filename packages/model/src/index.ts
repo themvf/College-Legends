@@ -43,8 +43,8 @@ export type PassRushPressure = "HEAVY_BLITZ" | "SITUATIONAL" | "COVERAGE_FIRST";
 export type PlayType = "RUN" | "PASS";
 /** A program's lasting football identity. Rivals are recognisable because of it,
  *  and it is what an opponent scouting report has to reveal. */
-export type OffensiveIdentity = "POWER_RUN" | "PRO_BALANCED" | "SPREAD_PASS";
-export type DefensiveIdentity = "AGGRESSIVE" | "DISCIPLINED" | "CONSERVATIVE";
+export type OffensiveIdentity = "POWER_RUN" | "TRIPLE_OPTION" | "PRO_BALANCED" | "SPREAD_TEMPO" | "AIR_RAID";
+export type DefensiveIdentity = "BEND_DONT_BREAK" | "FOUR_THREE_BASE" | "ZONE_BLITZ" | "NICKEL_PRESSURE";
 export type ScoutingTier = "TENDENCIES" | "PERSONNEL" | "GAME_PLAN";
 export type SeasonAwardType =
   | "PLAYER_OF_THE_YEAR"
@@ -222,6 +222,15 @@ export interface StaffCandidate {
   salary: number;
   signingCost: number;
   modifiers: StaffModifier[];
+  schemePreference: SchemeIdentity;
+  /** 0.55–1. How well his scheme matches what this program runs. */
+  schemeFit: number;
+  schemeFitNote: string;
+  /**
+   * Set when the program's pull is not enough to attract him. He is shown
+   * anyway, greyed out, so the ceiling reads as a goal rather than an absence.
+   */
+  unavailableReason: string | null;
 }
 
 /** Why a weekly decision is worth revisiting. Absent when nothing has changed. */
@@ -478,6 +487,12 @@ export interface StaffMember {
   salary: number;
   /** How this coach divides his week across the things a staff does. */
   allocation: StaffAllocation;
+  /**
+   * The scheme this coach actually knows. Installing something else costs
+   * execution — which is what makes hiring a coach who fits the plan a decision
+   * rather than a search for the highest rating.
+   */
+  schemePreference: SchemeIdentity;
 }
 
 export interface GameState {
@@ -536,6 +551,8 @@ export type GameCommand =
   | { type: "SET_ADVERTISING"; programId: ProgramId; spend: number }
   | { type: "SET_PRACTICE_REPS"; programId: ProgramId; side: "OFFENSE" | "DEFENSE"; reps: number }
   | { type: "SET_STAFF_ALLOCATION"; programId: ProgramId; staffId: string; allocation: Partial<StaffAllocation> }
+  /** The program's scheme. A takeover and offseason decision, not a weekly one. */
+  | { type: "SET_SCHEME"; programId: ProgramId; scheme: Partial<SchemeIdentity> }
   | { type: "ALLOCATE_SCOUTING"; programId: ProgramId; opponentProgramId: ProgramId; points: number }
   | { type: "REPLACE_STAFF"; programId: ProgramId; staffId: string; candidateId: string }
   | { type: "SCHEDULE_MARQUEE_HOME_GAME"; programId: ProgramId; opponentProgramId: ProgramId };
@@ -683,6 +700,7 @@ export type GameEvent =
       schoolFanLift: number;
     }
   | { type: "STAFF_ALLOCATION_SET"; season: Season; week: number; programId: ProgramId; staffId: string; allocation: StaffAllocation }
+  | { type: "SCHEME_SET"; season: Season; week: number; programId: ProgramId; scheme: SchemeIdentity }
   | { type: "SCOUTING_ALLOCATED"; season: Season; week: number; programId: ProgramId; opponentProgramId: ProgramId; points: number; totalPoints: number; tiers: ScoutingTier[] }
   | { type: "PRACTICE_REPS_SET"; season: Season; week: number; programId: ProgramId; side: "OFFENSE" | "DEFENSE"; reps: number; pointsSpent: number; expectedExecution: number }
   | { type: "STAFF_REPLACED"; season: Season; week: number; programId: ProgramId; departingStaffId: string; arrivingStaffId: string; name: string; role: StaffRole; rating: number; salary: number; signingCost: number }

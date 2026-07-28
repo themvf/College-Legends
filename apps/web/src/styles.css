@@ -358,3 +358,10 @@ dd { margin:0; font-weight:700; text-align:right; }
 .job-card.frontrunner { border-color: #b0564f; }
 .job-card.talent_magnet { border-color: #6f4fb0; }
 .job-card.developer { border-color: #4fb07f; }
+
+/* Takeover: scheme and staff settled together. */
+.setup-screen { gap: 1.25rem; }
+.setup-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1rem; }
+.setup-screen .plan-option .execution-bar { margin-top: 0.4rem; height: 8px; }
+.plan-option.locked { opacity: 0.45; border-style: dashed; cursor: not-allowed; }
+.plan-option.locked .tradeoff { color: #e8b552; }

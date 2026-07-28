@@ -26,7 +26,11 @@ import {
   MAXIMUM_REPS_PER_SIDE,
   planExecution,
   staffCandidatesFor,
-  staffModifiers
+  staffModifiers,
+  programRoster,
+  rosterSchemeFit,
+  schemeAffinity,
+  OFFENSIVE_SCHEMES
 } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
@@ -694,7 +698,15 @@ test("staff cards post what they change and can be replaced", () => {
   assert.ok(modifiers.every((modifier) => modifier.label && modifier.value), "every modifier needs a label and a value");
 
   const candidates = staffCandidatesFor(state, programId, coordinator.id);
-  assert.equal(candidates.length, 3);
+  assert.equal(candidates.length, 5, "three reachable candidates plus two shown out of reach");
+  const reachable = candidates.filter((candidate) => !candidate.unavailableReason);
+  assert.equal(reachable.length, 3);
+  const outOfReach = candidates.filter((candidate) => candidate.unavailableReason);
+  assert.equal(outOfReach.length, 2, "the pull ceiling must be visible, not silent");
+  assert.ok(
+    Math.min(...outOfReach.map((candidate) => candidate.rating)) > Math.max(...reachable.map((candidate) => candidate.rating)),
+    "the coaches you cannot get must be better than the ones you can"
+  );
   assert.ok(candidates.every((candidate) => candidate.role === coordinator.role), "candidates must fit the post");
   assert.ok(candidates.every((candidate) => candidate.salary > 0 && candidate.signingCost > 0), "a hire must cost something");
   assert.ok(
@@ -986,5 +998,97 @@ test("rivals recruit the rankings, not the truth", () => {
   assert.ok(
     bustRate >= gemRate,
     `rivals must chase reputation over truth (bust rate ${(bustRate * 100).toFixed(0)}% vs gem rate ${(gemRate * 100).toFixed(0)}%)`
+  );
+});
+
+test("a roster suits some schemes better than others, and it is never an exact number", () => {
+  const state = beginSeason(createFictionalLeague("scheme-fit", 72));
+  const programId = "program-1";
+  const roster = programRoster(state, programId);
+
+  for (const side of ["OFFENSE", "DEFENSE"]) {
+    const fits = rosterSchemeFit(roster, side, 0.72);
+    assert.equal(fits.length, side === "OFFENSE" ? 5 : 4);
+    assert.ok(fits.every((fit) => fit.high > fit.low), `${side} fit must be a band, never a point estimate`);
+    // Sorted best-first so the screen can lead with what the roster is built for.
+    assert.ok(fits[0].expected >= fits[1].expected);
+
+    // A single roster can legitimately have no preference, so the claim is about
+    // the league: most programs must be built for something in particular.
+    const spreads = Object.values(state.programs).map((program) => {
+      const ordered = rosterSchemeFit(programRoster(state, program.id), side, 0.72);
+      return ordered[0].expected - ordered[ordered.length - 1].expected;
+    }).sort((left, right) => left - right);
+    const median = spreads[Math.floor(spreads.length / 2)];
+    assert.ok(median >= 6, `${side}: the median roster must prefer some schemes (spread ${median})`);
+    assert.ok(Math.max(...spreads) >= 12, `${side}: some rosters must be strongly suited to one scheme`);
+  }
+
+  // Better information narrows the read without ever collapsing it.
+  const vague = rosterSchemeFit(roster, "OFFENSE", 0.2)[0];
+  const sharp = rosterSchemeFit(roster, "OFFENSE", 0.95)[0];
+  assert.ok(sharp.high - sharp.low < vague.high - vague.low, "confidence must narrow the band");
+  assert.ok(sharp.high > sharp.low, "and never collapse it");
+});
+
+test("a coordinator installing someone else's scheme costs execution, not options", () => {
+  const state = beginSeason(createFictionalLeague("coach-scheme-fit", 24));
+  const programId = "program-1";
+  const identity = state.programs[programId].schemeIdentity;
+
+  const matched = structuredClone(state);
+  const mismatched = structuredClone(state);
+  const furthest = OFFENSIVE_SCHEMES
+    .map((scheme) => ({ scheme, fit: schemeAffinity(scheme, identity.offense) }))
+    .sort((left, right) => left.fit - right.fit)[0].scheme;
+  for (const member of Object.values(matched.staff)) {
+    if (member.programId !== programId || member.role !== "OFFENSIVE_COORDINATOR") continue;
+    member.schemePreference = { ...member.schemePreference, offense: identity.offense };
+  }
+  for (const member of Object.values(mismatched.staff)) {
+    if (member.programId !== programId || member.role !== "OFFENSIVE_COORDINATOR") continue;
+    member.schemePreference = { ...member.schemePreference, offense: furthest };
+  }
+
+  const good = planExecution(matched, programId, "OFFENSE", 6);
+  const bad = planExecution(mismatched, programId, "OFFENSE", 6);
+  assert.ok(
+    bad.expected < good.expected,
+    `a coordinator in the wrong scheme must install less of it (${bad.expected} vs ${good.expected})`
+  );
+  assert.ok(bad.limits.length > 0, "the screen must say why execution dropped");
+
+  // But never worse than having nobody install it at all — a real coach in the
+  // wrong system still beats the players working it out themselves.
+  const nobody = structuredClone(mismatched);
+  for (const member of Object.values(nobody.staff)) {
+    if (member.programId !== programId) continue;
+    member.allocation = { PREPARE: 0, SCOUT: staffCapacity(member.rating), RECRUIT: 0, DEVELOP: 0, RECOVER: 0 };
+  }
+  assert.ok(
+    planExecution(nobody, programId, "OFFENSE", 6).expected <= bad.expected,
+    "a mismatched coordinator must still beat nobody at all"
+  );
+});
+
+test("the coaching market shows what the program cannot yet attract", () => {
+  const state = beginSeason(createFictionalLeague("coach-ceiling", 72));
+  const low = Object.values(state.programs).find((program) => program.tier === "LOW");
+  const power = Object.values(state.programs).find((program) => program.tier === "POWER");
+  const coordinatorFor = (program) => Object.values(state.staff)
+    .find((member) => member.programId === program.id && member.role === "OFFENSIVE_COORDINATOR");
+
+  const lowMarket = staffCandidatesFor(state, low.id, coordinatorFor(low).id);
+  const powerMarket = staffCandidatesFor(state, power.id, coordinatorFor(power).id);
+
+  assert.ok(lowMarket.some((candidate) => candidate.unavailableReason), "a low-tier job must show coaches it cannot get");
+  assert.ok(
+    lowMarket.every((candidate) => candidate.schemeFit >= 0.55 && candidate.schemeFit <= 1),
+    "every candidate must post a scheme fit"
+  );
+  const reachable = (market) => Math.max(...market.filter((candidate) => !candidate.unavailableReason).map((candidate) => candidate.rating));
+  assert.ok(
+    reachable(powerMarket) > reachable(lowMarket),
+    `prestige must widen who will take the job (${reachable(powerMarket)} vs ${reachable(lowMarket)})`
   );
 });

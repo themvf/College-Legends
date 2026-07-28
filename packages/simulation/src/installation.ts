@@ -1,5 +1,6 @@
 import type {
   GameState,
+  SchemeIdentity,
   PlanExecution,
   Program,
   StaffCandidate,
@@ -9,6 +10,7 @@ import type {
 } from "@college-legends/model";
 import { AddressableRng } from "./rng.js";
 import { focusShare } from "./department.js";
+import { coachSchemeFit, schemeFitLabel, OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES } from "./scheme.js";
 
 const clamp = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value));
 
@@ -44,17 +46,26 @@ export function planInstaller(
   side: "OFFENSE" | "DEFENSE"
 ): { staff: StaffMember | null; rating: number; name: string; note: string } {
   const staff = Object.values(state.staff).filter((member) => member.programId === programId);
+  const identity = state.programs[programId]?.schemeIdentity;
   const coordinator = staff.find((member) => member.role === INSTALLER_ROLE[side]);
   const coordinatorShare = coordinator ? focusShare(coordinator, "PREPARE") : 0;
   if (coordinator && coordinatorShare >= 0.5) {
+    // A coach installing someone else's scheme installs less of it. The plan is
+    // never unavailable, only worse — the emphasis matchup matrix is calibrated
+    // on every call staying selectable.
+    const fit = identity ? coachSchemeFit(coordinator, identity) : 1;
     return {
       staff: coordinator,
       // Full attention is par; a coordinator splitting his week installs less.
-      rating: coordinator.rating * (0.72 + coordinatorShare * 0.28),
+      // Floored: a coordinator in the wrong scheme is worse, never worse than
+      // having nobody install it at all.
+      rating: Math.max(42, coordinator.rating * (0.72 + coordinatorShare * 0.28) * fit),
       name: coordinator.name,
-      note: coordinatorShare >= 0.99
-        ? "Coordinator installing"
-        : `Coordinator installing on ${Math.round(coordinatorShare * 100)}% of his week`
+      note: fit < 0.9
+        ? `Coordinator installing a scheme that is not his (${schemeFitLabel(fit).toLowerCase()})`
+        : coordinatorShare >= 0.99
+          ? "Coordinator installing"
+          : `Coordinator installing on ${Math.round(coordinatorShare * 100)}% of his week`
     };
   }
   const headCoach = staff.find((member) => member.role === "HEAD_COACH");
@@ -101,6 +112,7 @@ export function planExecution(
   if (!installer.staff) limits.push("Nobody is preparing the team, so the plan installs itself badly.");
   else if (installer.note === "Head coach covering") limits.push(`${installer.name} is covering for a coordinator who is working elsewhere.`);
   else if (installer.note.startsWith("Coordinator installing on")) limits.push(`${installer.name} is only part-time on preparation; the rest of his week is scouting or recruiting.`);
+  else if (installer.note.startsWith("Coordinator installing a scheme")) limits.push(`${installer.name} does not coach this scheme, so less of it survives to Saturday.`);
   if (reps === 0) limits.push("No reps have been spent, so the plan is only walked through.");
   if (reps >= MAXIMUM_REPS_PER_SIDE) limits.push("The players have this fully installed; more reps would only tire them.");
 
@@ -190,9 +202,20 @@ export function staffCandidates(
   // A program's pull decides the calibre it can attract at all.
   const ceiling = clamp(52 + program.prestige * 0.42 + program.nationalPress * 0.1, 55, 96);
 
-  return [0, 1, 2].map((index) => {
-    const rating = Math.round(clamp(rng.between(`${index}:rating`, ceiling - 22, ceiling), 40, 99));
+  const identity = program.schemeIdentity;
+  // Two above the ceiling are shown anyway, greyed out. A silent cap teaches
+  // nothing; a named one turns prestige into a goal.
+  return [0, 1, 2, 3, 4].map((index) => {
+    const reach = index >= 3;
+    const rating = reach
+      ? Math.round(clamp(rng.between(`${index}:reach-rating`, ceiling + 3, ceiling + 14), 40, 99))
+      : Math.round(clamp(rng.between(`${index}:rating`, ceiling - 22, ceiling), 40, 99));
     const salary = staffSalary(rating, outgoing.role);
+    const schemePreference: SchemeIdentity = {
+      offense: OFFENSIVE_SCHEMES[Math.floor(rng.between(`${index}:offense`, 0, OFFENSIVE_SCHEMES.length - 0.0001))]!,
+      defense: DEFENSIVE_SCHEMES[Math.floor(rng.between(`${index}:defense`, 0, DEFENSIVE_SCHEMES.length - 0.0001))]!
+    };
+    const fit = coachSchemeFit({ role: outgoing.role, schemePreference }, identity);
     return {
       id: `${staffId}:candidate:${index}`,
       name: nameFor(Math.floor(rng.between(`${index}:name`, 0, 4_000))),
@@ -200,7 +223,13 @@ export function staffCandidates(
       rating,
       salary,
       signingCost: Math.round(salary * 0.35),
-      modifiers: staffModifiers({ rating, role: outgoing.role })
+      modifiers: staffModifiers({ rating, role: outgoing.role }),
+      schemePreference,
+      schemeFit: fit,
+      schemeFitNote: schemeFitLabel(fit),
+      unavailableReason: reach
+        ? `Will not take this job — ${program.name} does not have the standing yet.`
+        : null
     };
-  }).sort((left, right) => right.rating - left.rating);
+  }).sort((left, right) => Number(Boolean(left.unavailableReason)) - Number(Boolean(right.unavailableReason)) || right.rating - left.rating);
 }

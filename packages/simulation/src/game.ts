@@ -245,28 +245,21 @@ export function overallStrength(units: TeamUnitRatings): number {
  * way and a tendency report says nothing.
  */
 export const IDENTITY_BASE_PLAN: Readonly<Record<OffensiveIdentity, Pick<GamePlan, "runPassBalance" | "backfieldUsage" | "targetDistribution" | "tempo">>> = {
-  POWER_RUN: { runPassBalance: "RUN_HEAVY", backfieldUsage: "FEATURE_BACK", targetDistribution: "SPREAD_IT", tempo: "CONTROL_CLOCK" },
+  POWER_RUN: { runPassBalance: "RUN_HEAVY", backfieldUsage: "FEATURE_BACK", targetDistribution: "FEED_THE_STAR", tempo: "CONTROL_CLOCK" },
+  TRIPLE_OPTION: { runPassBalance: "RUN_HEAVY", backfieldUsage: "COMMITTEE", targetDistribution: "SPREAD_IT", tempo: "CONTROL_CLOCK" },
   PRO_BALANCED: { runPassBalance: "BALANCED", backfieldUsage: "FEATURE_BACK", targetDistribution: "SPREAD_IT", tempo: "NORMAL" },
-  SPREAD_PASS: { runPassBalance: "PASS_HEAVY", backfieldUsage: "COMMITTEE", targetDistribution: "FEED_THE_STAR", tempo: "HURRY_UP" }
+  SPREAD_TEMPO: { runPassBalance: "PASS_HEAVY", backfieldUsage: "COMMITTEE", targetDistribution: "SPREAD_IT", tempo: "HURRY_UP" },
+  AIR_RAID: { runPassBalance: "PASS_HEAVY", backfieldUsage: "COMMITTEE", targetDistribution: "FEED_THE_STAR", tempo: "HURRY_UP" }
 };
 
 export const IDENTITY_BASE_DEFENSE: Readonly<Record<DefensiveIdentity, Pick<GamePlan, "defensivePosture" | "pressure">>> = {
-  AGGRESSIVE: { defensivePosture: "TAKEAWAY_HUNT", pressure: "HEAVY_BLITZ" },
-  DISCIPLINED: { defensivePosture: "CONTAIN", pressure: "SITUATIONAL" },
-  CONSERVATIVE: { defensivePosture: "BEND_DONT_BREAK", pressure: "COVERAGE_FIRST" }
+  BEND_DONT_BREAK: { defensivePosture: "BEND_DONT_BREAK", pressure: "COVERAGE_FIRST" },
+  FOUR_THREE_BASE: { defensivePosture: "CONTAIN", pressure: "SITUATIONAL" },
+  ZONE_BLITZ: { defensivePosture: "TAKEAWAY_HUNT", pressure: "SITUATIONAL" },
+  NICKEL_PRESSURE: { defensivePosture: "TAKEAWAY_HUNT", pressure: "HEAVY_BLITZ" }
 };
 
-export const OFFENSIVE_IDENTITY_LABELS: Readonly<Record<OffensiveIdentity, string>> = {
-  POWER_RUN: "Power run",
-  PRO_BALANCED: "Pro balanced",
-  SPREAD_PASS: "Spread pass"
-};
-
-export const DEFENSIVE_IDENTITY_LABELS: Readonly<Record<DefensiveIdentity, string>> = {
-  AGGRESSIVE: "Aggressive",
-  DISCIPLINED: "Disciplined",
-  CONSERVATIVE: "Conservative"
-};
+export { OFFENSIVE_IDENTITY_LABELS, DEFENSIVE_IDENTITY_LABELS } from "./scheme.js";
 
 /**
  * What a program intends to call this week: its identity, bent by the matchup
@@ -291,8 +284,8 @@ export function intendedGamePlan(
   // raw ratings alone left almost every defense balanced, which is the same as
   // having no read at all.
   const identityTilt = opponentIdentity === null ? 0
-    : opponentIdentity.offense === "SPREAD_PASS" ? 3
-      : opponentIdentity.offense === "POWER_RUN" ? -3 : 0;
+    : opponentIdentity.offense === "AIR_RAID" || opponentIdentity.offense === "SPREAD_TEMPO" ? 3
+      : opponentIdentity.offense === "POWER_RUN" || opponentIdentity.offense === "TRIPLE_OPTION" ? -3 : 0;
   const personnelTilt = opponentUnits ? opponentUnits.passOffense - opponentUnits.rushOffense : 0;
   const opponentTilt = identityTilt + personnelTilt;
   base.defensivePriority = opponentTilt > 1.2 ? "STOP_THE_PASS" : opponentTilt < -1.2 ? "STOP_THE_RUN" : "BALANCED";

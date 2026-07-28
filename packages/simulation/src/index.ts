@@ -1,6 +1,7 @@
 import type { AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffFocus, StaffMember, StaffRole, OpponentDossier } from "@college-legends/model";
 import { FICTIONAL_PROGRAMS, fictionalPersonName, PROGRAM_CHARACTERS } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
+import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES } from "./scheme.js";
 import { DEFAULT_GAME_PLAN, OFFENSIVE_IDENTITY_LABELS, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
 import { opponentScoutingReport, preparationWeeklyPoints, projectedGamePlan, scheduledOpponent, scoutingConfidence, filmGamesAvailable } from "./scouting.js";
 import {
@@ -47,6 +48,19 @@ export {
   SCOUTING_TIER_LABELS,
   SCOUTING_TIERS
 } from "./scouting.js";
+export {
+  coachSchemeFit,
+  DEFENSIVE_SCHEME_BLURBS,
+  DEFENSIVE_SCHEMES,
+  OFFENSIVE_SCHEME_BLURBS,
+  OFFENSIVE_SCHEMES,
+  programRoster,
+  rosterSchemeFit,
+  schemeAffinity,
+  schemeFitLabel,
+  staffSide
+} from "./scheme.js";
+export type { SchemeFit } from "./scheme.js";
 export {
   allocatedTotal,
   defaultAllocation,
@@ -582,7 +596,8 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
         // Priced by the same formula the hiring market uses, so a replacement is
         // never both better and cheaper by accident.
         salary: staffSalary(rating, role),
-        allocation: defaultAllocation(role, rating)
+        allocation: defaultAllocation(role, rating),
+        schemePreference: assignSchemeIdentity(rng, `${staffId}:scheme`)
       };
     }
     for (let rosterIndex = 0; rosterIndex < rosterPositions.length; rosterIndex += 1) {
@@ -627,8 +642,8 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
   return state;
 }
 
-const OFFENSIVE_IDENTITIES: readonly OffensiveIdentity[] = ["POWER_RUN", "PRO_BALANCED", "SPREAD_PASS"];
-const DEFENSIVE_IDENTITIES: readonly DefensiveIdentity[] = ["AGGRESSIVE", "DISCIPLINED", "CONSERVATIVE"];
+const OFFENSIVE_IDENTITIES = OFFENSIVE_SCHEMES;
+const DEFENSIVE_IDENTITIES = DEFENSIVE_SCHEMES;
 
 /**
  * Programs are given a lasting football identity at creation. It is what makes
@@ -958,7 +973,8 @@ function refreshPreparation(state: GameState, events: GameEvent[]): void {
 export function prepareWeek(input: Readonly<GameState>, commands: readonly GameCommand[] = []): SimulationResult {
   const state = clone<GameState>(input);
   const events: GameEvent[] = [];
-  const preparationCommands = commands.filter((command) => command.type === "ALLOCATE_SCOUTING");
+  const preparationCommands = commands.filter((command) =>
+    command.type === "ALLOCATE_SCOUTING" || command.type === "SET_SCHEME" || command.type === "REPLACE_STAFF");
   if (preparationCommands.length > 0) {
     resolveCommands(state, preparationCommands, new AddressableRng(state.identity.rootSeed).fork("preparation", String(state.season), String(state.week)), events);
   }
@@ -1060,6 +1076,17 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         pointsSpent: points,
         totalInvestment: scouting.pursuitPoints
       });
+      continue;
+    }
+    if (command.type === "SET_SCHEME") {
+      // Scheme is what the program *is*, so it only moves when the roster is
+      // being reviewed — never mid-season, where it would be a free reset.
+      if (state.phase !== "ROSTER_REVIEW") {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "A program's scheme can only change between seasons." });
+        continue;
+      }
+      program.schemeIdentity = { ...program.schemeIdentity, ...command.scheme };
+      events.push({ type: "SCHEME_SET", season: state.season, week: state.week, programId: program.id, scheme: { ...program.schemeIdentity } });
       continue;
     }
     if (command.type === "SET_STAFF_ALLOCATION") {
@@ -1206,6 +1233,10 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That candidate is no longer available." });
         continue;
       }
+      if (candidate.unavailableReason) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: candidate.unavailableReason });
+        continue;
+      }
       if (program.budget < candidate.signingCost) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The program cannot afford that signing cost." });
         continue;
@@ -1221,7 +1252,8 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         rating: candidate.rating,
         salary: candidate.salary,
         // The post keeps its hours; the person filling it changes.
-        allocation: { ...outgoing.allocation }
+        allocation: { ...outgoing.allocation },
+        schemePreference: { ...candidate.schemePreference }
       };
       events.push({
         type: "STAFF_REPLACED",
@@ -1796,8 +1828,8 @@ export function weeklyDecisions(state: Readonly<GameState>, programId: string): 
   });
 
   const counteredOffense = report.identity && (
-    (plan.runPassBalance === "RUN_HEAVY" && report.identity.defense === "DISCIPLINED")
-    || (plan.runPassBalance === "PASS_HEAVY" && report.identity.defense === "CONSERVATIVE")
+    (plan.runPassBalance === "RUN_HEAVY" && report.identity.defense === "FOUR_THREE_BASE")
+    || (plan.runPassBalance === "PASS_HEAVY" && report.identity.defense === "NICKEL_PRESSURE")
   );
   decisions.push({
     id: "OFFENSE",
@@ -1820,9 +1852,9 @@ export function weeklyDecisions(state: Readonly<GameState>, programId: string): 
       ? `They run a ${OFFENSIVE_IDENTITY_LABELS[report.identity.offense].toLowerCase()} offense.`
       : opponent ? "Their offensive identity is unscouted." : "No opponent scheduled.",
     attention: !opponent ? null
-      : report.identity?.offense === "POWER_RUN" && plan.defensivePriority !== "STOP_THE_RUN"
+      : (report.identity?.offense === "POWER_RUN" || report.identity?.offense === "TRIPLE_OPTION") && plan.defensivePriority !== "STOP_THE_RUN"
         ? "They are a running programme and you are not committed to stopping it."
-        : report.identity?.offense === "SPREAD_PASS" && plan.defensivePriority !== "STOP_THE_PASS"
+        : (report.identity?.offense === "AIR_RAID" || report.identity?.offense === "SPREAD_TEMPO") && plan.defensivePriority !== "STOP_THE_PASS"
           ? "They throw it and you are not committed to stopping that."
           : null
   });
