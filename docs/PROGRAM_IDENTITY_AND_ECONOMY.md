@@ -4,7 +4,7 @@ Specification. Nothing here is built yet. Numbers are **hypotheses to be measure
 not settled values — see "Validation" at the end.
 
 This covers one connected arc: what a player chooses when they take a job, what
-money is actually for, and how a bad program climbs.
+money is actually for, how relationships compound, and how a bad program climbs.
 
 ---
 
@@ -25,17 +25,6 @@ POWER roster: overall avg 83.4   potential avg 90.7   best ceiling on roster 99
 A low-tier roster that maxed every player's potential — roughly six seasons of
 perfect development — would still sit ~8 points below where a power program
 starts on day one.
-
-**Rerolling changes nothing.** Six independent 72-program leagues:
-
-```
-best available low-tier ceiling: 86 potential in every single seed
-roster potential average: 75.0 – 76.5   (1.5 points of variance across all rerolls)
-```
-
-Root cause is one line: `facilities: { TRAINING: facilityLevel, STADIUM: facilityLevel, ... }`.
-Every program in a tier is identical, and rosters are drawn from a tight uniform
-band with no tail.
 
 **Money has faucets and no drains.** One 14-week season:
 
@@ -59,6 +48,34 @@ climbs to 99–100 for most programs while `prestige` moves **+0 for low-tier**.
 (56 across two seasons, 24 programs). `REDSHIRT_STATUS_CHANGED` fired **zero
 times**. Depth is free because nothing ever happens to it.
 
+### 1.1 The systemic cause: bands without tails
+
+The same root cause surfaced three separate times, and it is one work item, not
+three.
+
+| symptom | measurement | cause |
+|---|---|---|
+| rerolling is meaningless | six independent leagues, best low-tier ceiling **86 potential every time**, roster potential 75.0–76.5 | `rng.between(baseline−5, baseline+5)`, uniform, no tail |
+| every program feels identical | — | `facilities: { TRAINING: facilityLevel, STADIUM: facilityLevel, ... }`, one level per tier |
+| no diamonds in the rough | upside is **flat across every reputation tier** | reputation is a near-perfect proxy for potential |
+
+```
+reputation    n     overall   potential   upside
+ELITE        201     77.8       89.9       12.1
+NATIONAL     410     73.8       85.6       11.8
+REGIONAL     724     66.9       79.0       12.1
+UNRANKED     825     57.2       68.9       11.8
+```
+
+Scouting a prospect today is *confirmatory*, never revelatory — digging finds
+nothing a power program doesn't already see for free. Of 290 prospects with 88+
+true potential, only **27 look unremarkable**, while the `SLEEPERS` search returns
+947 candidates. A needle hunt with no signal.
+
+Everything is drawn from tight uniform bands. Fix the pattern once — long tails,
+deliberate outliers, visible-versus-true decoupling — and rerolling, program
+character, and sleepers are all fixed in one pass.
+
 ---
 
 ## 2. Design invariants
@@ -69,24 +86,27 @@ These are load-bearing. Breaking one is a design change, not a refactor.
    The one legacy exception kept deliberately: `facilities.TRAINING` multiplies
    development. Everything new routes through the attention layer.
 2. **Every tier of power creates a proportional obligation.** No upgrade may be
-   purely additive. A tier bought must add a recurring cost that scales with what
-   it grants.
+   purely additive.
 3. **Fit and familiarity modify execution, never availability.** The emphasis
    matchup matrix is calibrated over 400 games a cell and only works while every
    call stays selectable. Misfit widens and lowers the execution band; it never
    greys out an option.
-4. **Recruiting and roster-fit screens read Scheme only**, never concepts. Keeps
-   the fit surface one-dimensional across a decade.
+4. **Recruiting and roster-fit screens read Scheme only**, never concepts.
 5. **Everything uncertain is shown as a band, a range, or a number** — never
    hidden, never an exact lookup where a range is honest.
-6. **Contested outcomes resolve in the order-independent market.** NIL offers and
+6. **Two spendables, two stocks, and nothing else at the top level.** Money and
+   Hours are budgeted; Relationships and Reputation accumulate. Every point pool
+   is presented as a *consequence* of Hours, never as a sixth budget. See §13.
+7. **Contested outcomes resolve in the order-independent market.** NIL offers and
    portal signings included.
-7. **Balance values are hypotheses.** Constants land in code as named symbols with
+8. **Balance values are hypotheses.** Constants land in code as named symbols with
    a stated expectation, then get settled by the simulator.
 
 ---
 
-## 3. Program archetypes and the takeover choice
+## 3. Generation: tails, not bands
+
+One work item covering §1.1. Three outputs.
 
 ### 3.1 Program character
 
@@ -100,10 +120,10 @@ of the game" has to be a recognizable thing.
 | `facilities` | per-facility 1–5 | **no longer uniform per tier** |
 | `recruitAppeal` | −10 – +10 | flat modifier into `recruitingScore` |
 | `donorCulture` | 0.5 – 1.5 | multiplier on NIL donor capacity |
-| `academicProfile` | 1–5 | already partly exists as `facilities.ACADEMICS` |
+| `homeRegionBias` | 0 – 30 | starting pipeline in its own division (§9) |
 
-Three named characters to tune against (the player picks from more than three,
-but these are the poles):
+Three named characters to tune against — the player picks from more, but these
+are the poles:
 
 | | fans | strength | the run it suits |
 |---|---|---|---|
@@ -116,65 +136,114 @@ meaningful in a way raw rating variance would not.
 
 ### 3.2 Roster tails
 
-Player generation gains a fat tail so a reroll can hand you a genuine future star:
-
 - `potential` draws from a distribution with a long right tail rather than
   `between(baseline−5, baseline+5)`.
-- **Low-tier rosters get *more* upside than power rosters**, not equal. Currently
-  both sit at avg 7.2 / best 13.0 points of headroom. Development cannot be an
-  equalizer while it is symmetric.
+- **Low-tier rosters get *more* upside than power rosters**, not equal. Both
+  currently sit at avg 7.2 / best 13.0 points of headroom. Development cannot be
+  an equalizer while it is symmetric.
 
-### 3.3 The takeover screen
+### 3.3 Hype versus truth
+
+Split the single visible quality signal into two:
+
+- **`hype`** — the consensus rating. Free to everyone. Drives who the power
+  programs chase.
+- **`potential`** — the truth. Revealed only by investment.
+
+Then break the correlation *for a minority*, in both directions: some ELITE-hype
+busts, some UNRANKED gems. The bulk of the pool stays correlated so the rankings
+remain broadly useful and the exceptions stay meaningful.
+
+Three conditions, all required, or the mechanic is decorative:
+
+1. The gap must exist (it does not today — upside is flat at ~12).
+2. It must be findable **only** by investment — pipeline presence (§9),
+   evaluations, or a coach with ties to the region.
+3. The prospect must be **winnable**: low initial interest from big programs, and
+   priorities a small program can serve (`EARLY_PLAYING_TIME`, `CLOSE_TO_HOME`).
+
+The `SLEEPERS` search definition is already correct
+(`reputation ∈ {UNRANKED, REGIONAL} && potential − overall ≥ 10`). Only the
+generation is flat.
+
+---
+
+## 4. The takeover choice
 
 The player picks, in order:
 
 1. **Career path** (existing) — sets the tier and the expectation clock
-2. **Program** — from the programs in that tier, each showing character, facilities, fan profile, and inherited roster summary
+2. **Program** — see below
 3. **Offensive scheme** and **defensive scheme** — with roster fit shown per scheme
 4. **Head coach, OC, DC, strength coach** — from a market gated by program pull
+
+**Program selection is hybrid.** Tier counts are 32 LOW / 31 MID / 13 POWER, so
+"all of them" is a wall of 32. Every program in the tier is playable, but ~5 are
+**featured** with hand-written pitches and hand-tuned character (the A/B/C poles).
+The rest get generated character within authored bands, browsable in a list
+showing the same fields. Tuned onboarding for the first few runs, a long tail for
+run twenty.
 
 Steps 3 and 4 are **one decision presented together**, because the interesting
 case is when they disagree:
 
 > Your roster fits Power Run at 74–86%. The best coordinator who will take this
 > job is an Air Raid specialist rated 74. The Power Run coordinators available to
-> you top out at 61.
+> you top out at 61. He also brings +22 in the Gulf.
 
 ---
 
-## 4. Scheme, concepts, and the game plan
+## 5. Scheme, concepts, and identity drift
 
-### 4.1 Three layers
+### 5.1 Three layers
 
 | layer | timescale | changeable | status |
 |---|---|---|---|
-| **Scheme** — the program's DNA | years | offseason only; expensive; resets concepts and familiarity | `schemeIdentity` exists but is randomly assigned |
+| **Scheme** — the program's DNA | years | by drift, not by switch (§5.3) | `schemeIdentity` exists but is randomly assigned |
 | **Concepts** — installed packages inside the scheme | weeks | mid-season, costs prep points, temporary execution penalty while installing | **not built** |
 | **Weekly emphasis** — run/pass, backfield, targets, tempo, priority, posture, pressure | one week | free, every week | **built and calibrated** |
 
 Playbooks are **not** a second enum nested under Scheme. The micro layer is
 *accumulated concepts* — a WR screen package, a counter run, a coverage trap —
-each installed over weeks and each buying a narrow situational edge. This gives
-the two-tier scouting report (their Scheme, plus which concepts they've installed)
-without a combinatorial surface for the AI planner to reason about.
+each installed over weeks, each buying a narrow situational edge. This gives the
+two-tier scouting report (their Scheme, plus which concepts they have installed)
+without a combinatorial surface for the AI planner.
 
-This is also the answer to "we built an air raid and developed a star running
+This is also the answer to "we built an Air Raid and developed a star running
 back": you do not switch playbooks. You call more runs **this week for free**, and
 you **install a heavy-back concept over three or four weeks** if it is permanent.
 
-### 4.2 Scheme set
+### 5.2 Scheme set
 
-Reconcile the two vocabularies currently in the repo. `schemeIdentity` (3 offensive
-+ 3 defensive, built, drives the AI planner and scouting reports) is **replaced**
-by the playbook set from `GAMEPLAN_AND_PREPARATION.md`:
+Reconcile the two vocabularies in the repo. `schemeIdentity` (3 offensive +
+3 defensive, built, drives the AI planner and scouting reports) is **replaced** by
+the playbook set from `GAMEPLAN_AND_PREPARATION.md`:
 
 - Offense: `SPREAD_TEMPO`, `PRO_BALANCED`, `POWER_RUN`, `AIR_RAID`, `TRIPLE_OPTION`
 - Defense: `FOUR_THREE_BASE`, `NICKEL_PRESSURE`, `ZONE_BLITZ`, `BEND_DONT_BREAK`
 
-Two parallel names for "how this team plays" would be a mess in the scouting
-report especially. Existing 3+3 values fold into the 5+4.
+Existing 3+3 values fold into the 5+4.
 
-### 4.3 Fit
+### 5.3 Declared versus observed
+
+**The scheme chosen at takeover is a starting point, not a binding.** Two fields:
+
+- **`declaredScheme`** — what you are building toward. Sets install targets, coach
+  fit, and the recruiting profile.
+- **`observedIdentity`** — what you have actually *done*: concepts installed, calls
+  made, players recruited, coaches hired. Drifts over seasons.
+
+Three consequences, all free:
+
+- **There is no switch cost to design.** You pivot by doing — installing run
+  concepts, recruiting linemen, hiring the run coordinator. The cost is the time.
+- **Opponents scout `observedIdentity`, which lags.** A program mid-pivot is
+  temporarily *mis-scouted* — a real, earned advantage for exactly the four or five
+  years a rebuild takes.
+- The gap between declared and observed is a readable number: *"you say Power Run;
+  the league still files you as Air Raid."*
+
+### 5.4 Fit
 
 Two fits, both **estimates shown as ranges**:
 
@@ -189,54 +258,54 @@ Uncertainty is asymmetric, because a coach watches his own players every day:
 
 | | shown as | narrowed by |
 |---|---|---|
-| prospect fit | wide range | recruiting scouting spend |
+| prospect fit | wide range | recruiting scouting spend, pipeline presence |
 | your own player's fit | narrow range | **snaps played** |
 
-That asymmetry is what sharpens the bench-or-play dilemma: the poor-fit senior is
+That asymmetry sharpens the bench-or-play dilemma: the poor-fit senior is
 *certain* mediocrity, the perfect-fit freshman is *uncertain* upside.
 
-### 4.4 What misfit costs
+### 5.5 What misfit costs
 
 **Execution, not ratings.** A 90-overall player stays a 90 — he is still the best
 athlete on the field, he just busts more assignments. Misfit feeds
 `planExecution`, which already models exactly this (`EXECUTION_COMPETENCE_WEIGHT`
-against a 0.55 baseline, measured install bands 40–61% up to 66–87%).
+against a 0.55 baseline; measured install bands 40–61% up to 66–87%).
 
-Three properties, all of which fall out rather than being authored:
+Three properties, all emergent rather than authored:
 
 - **Playable but worse.** Beats bad teams on raw talent; loses to equals on
   inefficiency.
-- **Erratic, not merely weak.** Misfit *widens* the band as well as lowering it,
-  so a bad-fit team beats anyone on its best day. Far more interesting than a flat
-  penalty, and true to football.
-- **Position-weighted.** A QB in the wrong scheme is catastrophic; a tackle is
-  mildly worse; a punter does not care. This produces the "Air Raid collapses when
-  the QB is hurt" sensitivity emergently, with no special case.
+- **Erratic, not merely weak.** Misfit *widens* the band as well as lowering it, so
+  a bad-fit team beats anyone on its best day.
+- **Position-weighted.** A QB in the wrong scheme is catastrophic; a tackle mildly
+  worse; a punter does not care. This produces the "Air Raid collapses when the QB
+  is hurt" sensitivity with no special case.
 
-Never apply a flat rating haircut across the roster. A 15-point suppression is the
-entire LOW→POWER tier gap.
+Never apply a flat rating haircut. A 15-point suppression is the entire LOW→POWER
+tier gap.
 
 ---
 
-## 5. Familiarity
+## 6. Familiarity
 
 **Familiarity attaches to the coordinator, not the scheme.** A coordinator change
 is a real-world choice that can set a team back a year or transform it.
 
-- Each player carries `systemFamiliarity` — one number, floor to ceiling.
-- **Innate floor** — where he starts, from physical fit. Never falls below it.
-- **Learnable ceiling** — set by a *hidden trait* (football IQ / coachability).
-  Well below 100%. A 240-lb power back never becomes an Air Raid slot receiver.
+- Each player carries `systemFamiliarity` — one number, floor to ceiling,
+  **displayed as a band** per player and an aggregate band per unit.
+- **Innate floor** — from physical fit. Never falls below it.
+- **Learnable ceiling** — set by a *hidden trait* (football IQ / coachability),
+  well below 100%. A 240-lb power back never becomes an Air Raid slot receiver.
 - **Snaps move him from floor toward ceiling.** Slow: a full season of starts
   closes roughly a third of the gap.
-- **Young players learn faster.** A freshman adapts; a senior is set. This
-  protects the bench-the-senior decision, since the player you would most want to
-  improve improves slowest.
+- **Young players learn faster.** A freshman adapts; a senior is set. This protects
+  the bench-the-senior decision, since the player you would most want to improve
+  improves slowest.
 
 ### Coordinator change
 
-Loss on a change is **graduated by continuity**, which makes "hire a coach who
-fits" matter twice:
+Loss is **graduated by continuity**, which makes "hire a coach who fits" matter
+twice:
 
 | new coordinator | familiarity retained |
 |---|---|
@@ -245,27 +314,24 @@ fits" matter twice:
 | different scheme | little |
 
 The confirmation dialog states the price concretely — *"22 starters will lose an
-average of 340 reps of system familiarity"* — so a coordinator upgrade is a
-visible trade rather than a free improvement.
+average of 340 reps of system familiarity"* — so a coordinator upgrade is a visible
+trade rather than a free improvement.
 
 **Redshirting finally earns its keep**: a redshirt year is a year of learning the
 system without burning eligibility. The rule is fully modeled today and has been
 used zero times.
 
-Displayed as a band per player and an aggregate band for the unit. Never hidden.
-
 ---
 
-## 6. Hidden traits
+## 7. Hidden traits
 
-Designed to *generate* the adapt-vs-commit dilemma, not to decorate the roster.
+Designed to *generate* the adapt-versus-commit dilemma, not to decorate the roster.
 
 - **Scheme-flavored.** A `GUNSLINGER` QB is worth more in Air Raid; a
   `GAME_MANAGER` more in Power Run. A reveal can tell you that you chose the wrong
   scheme — or that a concept is worth installing.
-- **Hidden at first, revealed by investment** — snaps, development spotlight, or
-  scouting spend. This is the "find the successful artist" loop: you do not know
-  what you have until you pay to find out.
+- **Hidden at first, revealed by investment** — snaps, development spotlight,
+  scouting, or pipeline presence in his home region.
 - **Some are liabilities** — `INJURY_PRONE`, `NEEDS_TOUCHES` — so a reveal is not
   always good news.
 - One of them is the familiarity ceiling.
@@ -276,9 +342,7 @@ attention, and scouting.
 
 ---
 
-## 7. Coaching market
-
-Mostly exists; needs to become visible and gain fit.
+## 8. Coaching market
 
 **Already built:** `staffCandidates` gates candidate quality by program pull —
 `ceiling = clamp(52 + prestige × 0.42 + nationalPress × 0.1, 55, 96)`. A low-tier
@@ -290,24 +354,114 @@ market from one formula. `staffModifiers` posts what each post changes.
 - **Show the ceiling.** Coaches above your pull appear **greyed out with the
   reason**, turning an invisible cap into a stated goal.
 - **`schemeArchetype` per coach**, with a fit table across the five schemes.
+- **`regionTies` per coach** — see §9. Posted on the hire card as a headline number.
 - **Hiring is a meeting, and it can fail.** A candidate's rating is an *estimate*
   that narrows with interview rounds or scouting spend. A cheap hire is a gamble;
   vetting is insurance. This is the one CD Market primitive we have nowhere else —
   **paid variance reduction** — and hiring is its natural home.
 
-**Powerhouse decline** runs on the same mechanism: AI programs hire, occasionally
-hire badly, and a bad scheme fit drops them out of contention for a few years.
-Powerhouses mostly stay intact; decline is *caused* and rare, never random drift.
+### Mid-season firing
 
-Consequence to accept: with the top mostly static, the 15.3-point gap stays. **The
-entire year-2 climb rests on the portal and NIL being genuinely powerful.** Those
-two cannot be tuned timidly.
+Permitted, and expensive in **three currencies at once**: buyout (money), the
+graduated familiarity reset (§6), and this season's results.
+
+The intended use is a deliberate long-term play — sign a recruit who counters your
+current approach, then sacrifice this season to start the rebuild a year early.
+For that to be a decision rather than a gamble, the confirmation must post the
+damage: buyout cost, reps of familiarity lost across the starters, and a projected
+effect on the remaining schedule.
 
 ---
 
-## 8. The two economies
+## 9. Relationships and pipelines
 
-### 8.1 Shape
+### 9.1 A stock, not a currency
+
+| | you… |
+|---|---|
+| **currency** | spend it, it is gone, it refreshes — money, hours, points |
+| **stock** | build it, it decays slowly, **you never spend it — it discounts everything else** |
+
+A pipeline is a stock. It is intuitive precisely *because* there is no budgeting
+decision attached. **Passive only** — no callable favours. The player-facing
+sentence is:
+
+> *It costs 20 points to chase this kid. In the Gulf, where you are established,
+> it costs 8.*
+
+### 9.2 Program share plus coach share
+
+One number per region (six divisions, evenly stocked at ~360 prospects each),
+composed of two parts:
+
+```
+effectivePipeline(program, region)
+    = programPipeline[program][region]                   // 0–70, slow, stays
+    + Σ regionTies[staff][region] for employed staff     // 0–30 each, capped in total
+```
+
+- **`programPipeline`** — institutional standing. Built by roster composition
+  (scholarship players from that region), those players starring, sustained
+  recruiting presence, and coach hours directed at the region. **Does not leave
+  when a coach leaves.**
+- **`regionTies`** — a coach's personal relationships. Arrives with him, leaves
+  with him. Posted on the hire card: *"Coach Diaz brings +22 in the Gulf."*
+
+This is a deliberate tradeoff, accepted: **a specific hire can unlock a region,
+and losing him closes part of it.** The program share is the floor, so turnover
+costs you real ground without ever zeroing you out — which is what keeps this from
+being a second punitive-turnover system on top of familiarity.
+
+It also gives a low-tier program a concrete cheap strategy: hire an unremarkable
+coordinator specifically for his regional ties.
+
+### 9.3 What a pipeline pays
+
+Three effects, one sentence each:
+
+1. **Cheaper.** Recruits from that region cost fewer Recruiting Points and start
+   with higher `interestByProgram`.
+2. **You see what others miss.** Above a threshold, `hype`-versus-`potential` gaps
+   in that region are revealed for free. **This is the diamond-in-the-rough
+   mechanic** — gems are not scattered for anyone with a scouting budget, they are
+   in the regions where you did the work.
+3. **They take your call.** A pipeline offsets some of the reputation gap that
+   would otherwise make an elite prospect unreachable.
+
+### 9.4 Sources and decay — hypotheses
+
+```
++ per season, per scholarship player from that region on the roster
++ bonus when such a player wins an award or posts a high game rating
++ coach hours directed at the region (SCOUT focus, regional target)
++ homeRegionBias at league creation
+− slow decay per season with no signings from that region
+```
+
+Money is **not** a source. That is the whole point: it is the one advantage a
+richer program cannot simply buy, and the reason it works as the low-tier moat.
+
+### 9.5 The compounding loop
+
+```
+sign a Gulf player  ->  he stars  ->  Gulf pipeline rises
+       ^                                      |
+       +------- next Gulf recruit is cheaper --+
+```
+
+Pipelines are also the first mechanical reason the six divisions matter beyond
+scheduling.
+
+**Guard against:** pipelines becoming a weekly regional-allocation minigame. The
+protection is that the stock is never spent and cannot be built quickly — it should
+move on the order of seasons, driven mostly by who is on the roster and where they
+are from, so it feels like a consequence of playing rather than a screen to visit.
+
+---
+
+## 10. The two economies
+
+### 10.1 Shape
 
 ```
 [Wins / Prestige / Fan base]
@@ -322,10 +476,10 @@ two cannot be tuned timidly.
        \-------------> [Facilities + recurring upkeep]
                               |
                               v
-                     +-------------------+
-                     | Attention budget  |   <- already the only tight economy
-                     | hours, prep,      |
-                     | scouting points   |
+                     +-------------------+        +------------------+
+                     | Attention budget  |        |  Relationships   |
+                     | hours, prep,      | <----- |  (not buyable)   |
+                     | scouting points   | discount+------------------+
                      +-------------------+
                               |
                               v
@@ -339,31 +493,28 @@ two cannot be tuned timidly.
                         [Team strength]
 ```
 
-### 8.2 Money sinks to add
+### 10.2 Money sinks to add
 
 | sink | shape |
 |---|---|
-| **Recurring facility upkeep** | weekly, scaling superlinearly with level. A tier-5 department costs every week, not once. |
-| **Recruiting costs money as well as points** | closes the severed arrow — but only after the drains above land, or a $34.9M surplus makes it a no-op |
+| **Recurring facility upkeep** | weekly, scaling superlinearly with level |
+| **Recruiting costs money as well as points** | closes the severed arrow — but only after the drains land, or a $34.9M surplus makes it a no-op |
 | **NIL commitments** | recurring weekly, per player, for as long as he is rostered |
 | **PR / buzz spend** | recurring, because buzz decays |
 | **Dynamic `weeklyRevenue` / `weeklyExpenses`** | functions of fan base, press, prestige, results — not stored constants |
+| **Coach buyouts** | mid-season firing (§8) |
 
-### 8.3 Failure condition
+### 10.3 Failure condition
 
 **A debt ceiling, not a spend block.** The player may go negative to a cap
 (−$10M in normal mode). A runway you can deliberately spend into is a decision; a
 hard block is a wall that just makes the UI say "cannot afford."
 
 Breaching it triggers the consequences `coachSecurity` was built for and has never
-had: `coachSecurity` currently only ever *increases* and is never read by the
-simulation. This is where firing lives, and it is what makes every sink above
-matter.
+had: it currently only ever *increases* and is never read by the simulation. This
+is where firing lives, and it is what makes every sink above matter.
 
-### 8.4 Reputation: split narrative from achievement
-
-`prestige` and `nationalPress` are currently two versions of the same idea and
-neither does its job. Give them opposite characters:
+### 10.4 Reputation: split narrative from achievement
 
 - **`prestige` = achievement.** Results only. Slow, sticky, **never purchasable**.
   This is what stops PR from being a win button.
@@ -373,25 +524,26 @@ neither does its job. Give them opposite characters:
 The decay does double duty: it fixes the saturation we measured *and* makes a
 reputation stat into a permanent recurring money sink.
 
-### 8.5 The PR department
+### 10.5 The PR department
 
 Same shape as the scouting department already shipped — funding tier, coach hours,
-weekly output — so the vocabulary stays consistent. Output raises `buzz`.
+weekly output. Output raises `buzz`.
 
 This is the low-tier climb path: **you cannot move prestige, but you can buy buzz,
 and buzz feeds the prospect priorities you are able to serve.**
 
-### 8.6 Recruiting weights
+### 10.6 Recruiting weights
 
 Four of the eight `RecruitPriority` values are already winnable while losing —
 `EARLY_PLAYING_TIME`, `PLAYER_DEVELOPMENT`, `ACADEMICS`, `FACILITIES` — and two
 more partly. The skeleton is right; it is not load-bearing because press
-contributes at most 7.0 against a 0–35 fit term. Rebalance so buzz and program
-character can decide contested commitments a losing program should win.
+contributes at most 7.0 against a 0–35 fit term. Rebalance so buzz, program
+character, and pipeline can decide contested commitments a losing program should
+win.
 
 ---
 
-## 9. NIL
+## 11. NIL
 
 ```
         [fanBase x fanSupport x prestige x donorCulture]
@@ -399,7 +551,6 @@ character can decide contested commitments a losing program should win.
                      v
           +----------------------+
           |  Donor capacity      |  <- the CEILING. Money cannot raise it.
-          |  (max NIL committed) |     Only fans, support, history, culture can.
           +----------------------+
                      | caps
                      v
@@ -419,29 +570,24 @@ character can decide contested commitments a losing program should win.
   EARLY_PLAYING_TIME low
 ```
 
-Five constraints, because unconstrained NIL is exactly the "spend more and win"
-failure mode:
+Five constraints, because unconstrained NIL is the "spend more and win" failure:
 
 1. **Capped by donor capacity, not budget.** A rich-but-unloved program cannot buy
-   stars. Gives `fanBase` a second job beyond the gate and makes ticket pricing and
-   advertising matter far more.
-2. **Recurring, not a signing bonus.** Sign four stars and you have committed four
-   years of payroll. This *is* the retention sink.
-3. **Diminishing returns per prospect.** Doubling an offer must not double the
-   odds, or recruiting collapses into a slider.
-4. **Weighted by the prospect's own priorities.** Powerful on a
-   `PERSONAL_STARDOM` recruit, weak on `CLOSE_TO_HOME` or `ACADEMICS`. This is what
-   makes the low-tier strategy real: do not fight for money-motivated five-stars —
-   find prospects whose priorities you can serve, and use PR to raise them.
+   stars. Gives `fanBase` a second job beyond the gate.
+2. **Recurring, not a signing bonus.** Four stars signed is four years of committed
+   payroll. This *is* the retention sink.
+3. **Diminishing returns per prospect.** Doubling an offer must not double the odds.
+4. **Weighted by the prospect's own priorities.** Powerful on `PERSONAL_STARDOM`,
+   weak on `CLOSE_TO_HOME` or `ACADEMICS`. Combined with pipeline (§9), this is the
+   low-tier strategy: do not fight for money-motivated five-stars — find prospects
+   whose priorities you can serve, in regions where you are known.
 5. **Resolved in the order-independent market.**
 
-**One budget**, per decision — with a cap on how much of it can be committed to
-NIL. That forces the genuinely interesting trade (a new weight room versus keeping
-your quarterback) while keeping a ceiling money alone cannot raise.
+**One budget**, with a cap on how much can be committed to NIL.
 
 ---
 
-## 10. Offseason and the portal
+## 12. Offseason, portal, and depth
 
 The offseason phase is the gate almost everything waits behind. `rolloverSeason`
 currently goes week 14 → week 1 with `phase` still `REGULAR_SEASON`.
@@ -449,46 +595,78 @@ currently goes week 14 → week 1 with `phase` still `REGULAR_SEASON`.
 **The portal opens at the start of the offseason before season 2.**
 
 Phases: awards → playoff → **portal window** → signing day → coach hiring/firing →
-NIL renegotiation → scheme/concept installation → training camp → week 1.
+NIL renegotiation → concept installation → training camp → week 1.
 
 The portal is currently **outbound only** — 160 players measured sitting in
 `PORTAL` across two seasons, unsignable by anyone forever.
 
 **The portal is the climb.** It is the only system that can add double-digit rating
-points to a roster in one offseason. Recruiting high schoolers is structurally the
-slow path: freshmen arrive at ~68 overall and replace departing ~68s, netting
-roughly zero. NIL's primary job is buying portal players, not high schoolers.
+points to a roster in one offseason. Freshmen arrive at ~68 overall and replace
+departing ~68s, netting roughly zero. NIL's primary job is buying portal players,
+not high schoolers.
 
 Bittersweet by design: developing a star at a low-tier program makes him a poaching
-target. That is true to the sport and it is the tension the whole climb runs on.
+target.
 
----
+### Injuries and the hedge
 
-## 11. Injuries, depth, and the hedge
+No special rule for "the Air Raid QB got hurt." `passOffense` derives from the QB
+and receiver groups, so being Air Raid simply means you were more dependent on it.
+Position-weighted fit (§5.5) sharpens this further.
 
-No special rule for "the Air Raid QB got hurt." The engine already handles it
-proportionally — `passOffense` derives from the QB and receiver groups, so being
-Air Raid simply means you were more dependent on it. Position-weighted fit
-(§4.4) sharpens this further.
-
-What is missing is that **the hedge does not exist**, because injuries never
-happen (0.06 per team-game) and redshirting has never once been used.
-
-- Raise injury rates until depth matters.
-- A developed backup becomes insurance the player chose to buy.
-- Redshirting becomes a real decision, doubly so with familiarity.
+What is missing is that **the hedge does not exist**, because injuries never happen
+and redshirting has never been used. Raise injury rates until depth matters; a
+developed backup becomes insurance the player chose to buy.
 
 **New emphasis axis: a simplified plan.** Narrows the execution band in both
-directions — lowers the ceiling to raise the floor. Exactly what a real staff does
-with a backup quarterback, and it sits naturally alongside tempo and pressure.
+directions — lowers the ceiling to raise the floor. What a real staff does with a
+backup quarterback.
 
 ---
 
-## 12. Sequencing
+## 13. The resource model and how it is presented
+
+The player currently tracks money, Recruiting Points, prep points, scouting points,
+and coach hours — five meters, six with NIL. That fights comprehension.
+
+### 13.1 Two spendables, two stocks
+
+| | | player-facing sentence |
+|---|---|---|
+| **Money** | spend | "what you can afford — facilities, coaches, NIL, marketing" |
+| **Hours** | spend, refreshes weekly | "what your people can actually get done this week" |
+| **Relationships** | build | "where you are already known — cheaper there, and you see what others miss" |
+| **Reputation** | build | "who takes your call at all" |
+
+### 13.2 Point pools are consequences, not budgets
+
+Prep, scouting, and Recruiting Points are all *coach hours cashed out through a
+facility tier*. They are not independent decisions — they are the result of one
+allocation the player already made on the staff screen. Presenting them as three
+separate budgets triples the perceived complexity of a single choice.
+
+- **Header shows two numbers only**: budget (with a runway indicator — weeks to the
+  debt ceiling at current burn) and `Hours: 32 · Available: 0`.
+- **Each department shows its own conversion** as a result, not a meter:
+  *"6 hours + Tier 3 funding → 24 scouting points a week."*
+- **One "where it goes" screen** draws the whole chain once: money → what it buys →
+  hours → points → outcomes.
+
+Same systems, half the cognitive load.
+
+### 13.3 Pipeline display
+
+Six rows, one per division. Each shows a band, the split (program X + coaches Y),
+the current discount, and whether the reveal threshold is met. No allocation
+controls — it is a stock, not a budget.
+
+---
+
+## 14. Sequencing
 
 ```
-[A] roster tails + program character     independent, cheap
-        |                                unblocks: rerolling means something
+[A] generation: tails, character, hype-vs-truth   independent, cheap
+        |                                         unblocks rerolling AND sleepers
         v
 [B] economy drains                       recurring upkeep, dynamic revenue,
         |                                debt ceiling + firing
@@ -500,27 +678,26 @@ with a backup quarterback, and it sits naturally alongside tempo and pressure.
         |                                 |
         +--> [E] NIL ---------------------+--> the climb
         |
-[F] scheme set + fit + familiarity       depends on nothing structural;
-        |                                pairs naturally with [C] takeover flow
+[F] scheme set + fit + familiarity        parallel to the economy work
+        |
         v
 [G] concepts as staged installs
         |
-[H] PR / buzz department + recruiting reweight
+[H] relationships/pipelines + PR/buzz + recruiting reweight
+        |
+[I] resource-model UI pass                can land any time after [B]
 ```
 
-Rationale for the order:
-
-- **[A] first** because it is cheap, isolated, and a headline promise
-  ("restart until it works") is currently false.
-- **[B] before [D]/[E]** because NIL against a $34.9M surplus is free, exactly as
-  paid recruiting would be.
-- **[C] gates the climb.** Nothing about year-2 playoffs is expressible without it.
-- **[F] can run in parallel** with the economy work — it touches game resolution
-  and the takeover screen, not the ledger.
+- **[A] first** — cheap, isolated, and it fixes three symptoms at once. A headline
+  promise ("restart until it works") is currently false.
+- **[B] before [D]/[E]** — NIL against a $34.9M surplus is free.
+- **[C] gates the climb.** Year-2 playoffs is not expressible without it.
+- **[F] runs in parallel** — it touches game resolution and the takeover screen,
+  not the ledger.
 
 ---
 
-## 13. Decisions made
+## 15. Decisions made
 
 | | decision |
 |---|---|
@@ -528,42 +705,50 @@ Rationale for the order:
 | Portal | Opens at the start of the offseason **before season 2** |
 | Climb target | Playoffs year 2, title year 4 — **perfect play plus luck**; restarts expected |
 | League churn | Powerhouses **mostly intact**; decline caused by failed coach hires, never drift |
-| Archetypes | **Permanent** on the 72 programs, so the league has lore across saves |
+| Archetypes | **Permanent** on the 72 programs |
+| Program selection | **Hybrid** — ~5 featured and hand-tuned per tier, all playable |
 | Takeover choice | Program, offensive scheme, defensive scheme, HC, OC, DC, strength coach |
-| Coach availability | Gated by program pull; unavailable coaches **shown greyed out with the reason** |
+| Coach availability | Gated by program pull; unavailable coaches **greyed out with the reason** |
 | Playbooks | **Nested as accumulated concepts**, not a second enum |
+| Scheme choice | **A starting point, not a binding.** `declaredScheme` vs `observedIdentity`; no switch cost — you drift by doing |
 | Fit | A **scouted estimate**, shown as a range |
-| Wrong scheme | **Playable but worse** — suppression via the execution band, never a rating haircut |
-| Familiarity | Attaches to the **coordinator** |
+| Wrong scheme | **Playable but worse** — execution band, never a rating haircut |
+| Familiarity | Attaches to the **coordinator**; loss graduated by scheme continuity; **shown as a band** |
+| Mid-season firing | Allowed; costs buyout + familiarity + season |
+| Pipelines | A **stock, passive only.** Split **program share + coach share** — an accepted tradeoff |
+| Resource model | **Two spendables, two stocks.** Point pools presented as consequences of Hours |
 | Presentation | Always a band, a range, or a number. Never hidden. |
 
-## 14. Open
+## 16. Open
 
-1. **How many programs does the player choose between at start** — a curated
-   handful per tier, or all 24?
-2. **Does the player's scheme choice bind the program's identity permanently**, or
-   only set the starting point? Matters for what opponents read in a scouting
-   report and whether a coordinator change can drag identity with it.
-3. **Does familiarity show as an exact percentage or a band?** We agreed fit is an
-   estimate; an exact familiarity number could reintroduce the spreadsheet through
-   the back door. Current lean: band for individuals, aggregate band for the unit.
-4. **Scheme-switch cost** — one offseason, or a multi-season project?
+1. **Reveal threshold for pipeline job #2** — at what pipeline value do hidden gems
+   become visible, and is it a cliff or a gradient? A gradient is more honest; a
+   cliff is more legible.
+2. **Do coach `regionTies` grow while employed**, or are they fixed at hire? Growing
+   ties make a long-tenured recruiter enormously valuable; fixed ties keep the hire
+   decision cleaner.
+3. **How many concepts exist per scheme**, and are they authored or generated?
+4. **Does `buzz` feed donor capacity**, or only recruiting and the gate? Feeding it
+   would make PR the fastest lever on NIL, which may be too strong.
 
-## 15. Validation
+## 17. Validation
 
-Every constant above ships as a named symbol with a stated expectation, then gets
-settled by measurement at 72 programs. Committed distribution tests, per the
-existing balance philosophy:
+Every constant ships as a named symbol with a stated expectation, then gets settled
+by measurement at 72 programs. Committed distribution tests, per the existing
+balance philosophy:
 
 | claim | test |
 |---|---|
-| The climb is possible | a perfectly-played low-tier program reaches the playoff by season 2 in some seeds and not most |
-| The climb is not easy | the median low-tier run does **not** reach the playoff by season 2 |
+| The climb is possible | a perfectly-played low-tier program reaches the playoff by season 2 in **some** seeds |
+| The climb is not easy | the **median** low-tier run does not reach the playoff by season 2 |
 | Rerolling matters | best-available low-tier ceiling varies materially across seeds |
+| Diamonds exist and are findable | prospects whose `potential` far exceeds `hype` exist, and a program with pipeline presence signs them at a materially higher rate than one without |
 | Obligations scale | a program at tier 5 across the board shows superlinear expense growth |
 | Money cannot buy wins | a max-budget, low-fan program loses to a high-fan, low-budget one |
+| Money cannot buy pipeline | budget has no measurable correlation with pipeline growth |
 | Misfit is playable | a 40%-fit program beats bottom-quartile opponents and loses to median ones |
 | Misfit is erratic | its margin variance exceeds a well-fit program's |
 | Familiarity pays | continuity across three seasons beats equivalent talent with annual coordinator churn |
+| Losing a recruiter hurts, but not fatally | pipeline drops on his exit and stays above the program floor |
 | Depth matters | injury to a starter costs materially less with a developed backup |
 | NIL is capped by love, not cash | donor capacity correlates with fan base, not budget |
