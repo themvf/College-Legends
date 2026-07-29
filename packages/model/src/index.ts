@@ -18,6 +18,19 @@ export type StaffRole = "HEAD_COACH" | "OFFENSIVE_COORDINATOR" | "DEFENSIVE_COOR
  * recruit, and how he divides those is the decision.
  */
 export type StaffFocus = "PREPARE" | "SCOUT" | "RECRUIT" | "DEVELOP" | "RECOVER";
+
+/**
+ * What a coach is known for. Rating says how good he is; the trait says what he
+ * is good *at*, which is what makes two coaches of the same calibre a genuine
+ * choice rather than a sort.
+ */
+export type StaffTrait =
+  | "TACTICIAN"
+  | "FILM_RAT"
+  | "CLOSER"
+  | "TEACHER"
+  | "PLAYERS_COACH"
+  | "GRINDER";
 export type FacilityType = "TRAINING" | "STADIUM" | "ACADEMICS" | "RECRUITING" | "SCOUTING";
 /**
  * A program's lasting character, authored rather than generated so the league
@@ -213,6 +226,20 @@ export interface StaffModifier {
   value: string;
 }
 
+/**
+ * One job-specific number on a coach, on the same 0–99 scale as his overall
+ * rating. It is the engine's own multiplier rendered, not a display-only score:
+ * an 88 at recruiting really does put 88 rating-points a week on the trail.
+ */
+export interface StaffSkill {
+  focus: StaffFocus;
+  label: string;
+  /** 1–99. Rating scaled by what his role and his trait are worth at this job. */
+  value: number;
+  /** True when this is one of the two jobs he is best at. */
+  strength: boolean;
+}
+
 /** A hireable replacement, with what they cost and what they change. */
 export interface StaffCandidate {
   id: string;
@@ -222,6 +249,12 @@ export interface StaffCandidate {
   salary: number;
   signingCost: number;
   modifiers: StaffModifier[];
+  trait: StaffTrait;
+  traitLabel: string;
+  traitBlurb: string;
+  /** Hours a week he works, before the player splits them up. */
+  hours: number;
+  skills: StaffSkill[];
   schemePreference: SchemeIdentity;
   /** 0.55–1. How well his scheme matches what this program runs. */
   schemeFit: number;
@@ -487,6 +520,8 @@ export interface StaffMember {
   salary: number;
   /** How this coach divides his week across the things a staff does. */
   allocation: StaffAllocation;
+  /** What he is known for. Scales what his hours are worth, job by job. */
+  trait: StaffTrait;
   /**
    * The scheme this coach actually knows. Installing something else costs
    * execution — which is what makes hiring a coach who fits the plan a decision

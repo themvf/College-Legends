@@ -570,6 +570,12 @@ The game plan used to be pure selection: pick a preset, and the outcome came
 entirely from roster ratings. There was no way to make *this week's* version of
 a plan better than last week's. It is now built during the week.
 
+The screen that explains this is written for somebody who has never played a
+management game: three numbered sentences, a band with both ends named
+("Nothing works" / "average team" / "Flawless"), the before-and-after range on
+one line, and the cost of the reps posted beside the slider. A control whose
+units are unstated is a control nobody touches.
+
 Two inputs decide **execution** — how much of the plan survives to Saturday:
 
 - **Who installs it.** The coordinator does it, but only while assigned to
@@ -618,6 +624,50 @@ salaries used to be drawn at random and uncorrelated with rating, so the market
 routinely offered coaches who were both better *and* cheaper — replacing was a
 free lunch. Pricing both from one formula makes an upgrade cost what it is
 worth: +12 rating on a head coach runs about +$540k a year plus $395k to sign.
+
+## A coach is a tendency, not a number
+
+Hiring was a sort: the highest rating you could afford was always right. Every
+coach now carries a `trait` that says what his hours are *worth*, job by job — a
+tactician's PREPARE hour is 1.3, a closer's 0.85, and the closer gets 1.4 on the
+recruiting trail. The grinder has no spike at all and works two extra hours a
+week. Neither dominates: maxing one job wants a specialist, covering four wants
+the grinder. Traits are drawn from role-weighted pools, so a strength coach who
+is a film rat never turns up.
+
+`staffContribution` multiplies by the aptitude, so the trait reaches the
+scouting department, the recruiting trail, the weight room, and the install band
+rather than living on a card. `planInstaller` applies the PREPARE aptitude too:
+a 76-rated tactician coordinator installs about 8 points more of the plan than a
+76-rated closer, worth roughly 1.5 points of margin a game.
+
+**The takeover screen picks every post.** It used to show the incumbent behind a
+"Replace" button. All four posts now list who is in the chair alongside everybody
+who would take it — six candidates, four reachable and two held back by the
+program's pull — each with his tendency, his salary, his buyout, the scheme he
+coaches, and one number per job. The market is keyed on the *post* rather than
+the person, so hiring somebody no longer re-rolls the list: a player who works
+down it can still go back to the coach he passed on.
+
+**Skill bars are normalised against the post, not the league.** Rendering the raw
+`rating x roleFit x aptitude` pegged every coordinator at 99 on game prep — the
+role weight there is 1.4, so the one bar that decides the hire carried no
+information. `focusWeight` stays raw for anything the engine posts per hour;
+`focusSkill` divides by the post's own best weight, which is what makes the six
+candidates in a chair actually comparable.
+
+## The recap is a box score
+
+`boxScore(state, gameId)` returns both teams as the tables a newspaper prints —
+passing, rushing, receiving, defense, kicking, punting — each sorted best first
+and closed with a TEAM line, plus a head-to-head team-stats panel. Columns the
+engine does not model (longest play, solo tackles, fumbles) are left out rather
+than filled with a plausible-looking zero.
+
+Grouping lives in the engine rather than the UI because the totals are
+assertions: a test checks the passing table's team line equals the yardage the
+drive loop produced, that receiving reconciles with passing, and that touchdowns
+and field goals still add up to the number on the scoreboard.
 
 ## The weekly decision loop
 

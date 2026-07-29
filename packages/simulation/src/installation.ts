@@ -6,10 +6,18 @@ import type {
   StaffCandidate,
   StaffMember,
   StaffModifier,
-  StaffRole
+  StaffRole,
+  StaffTrait
 } from "@college-legends/model";
 import { AddressableRng } from "./rng.js";
-import { focusShare } from "./department.js";
+import {
+  STAFF_TRAITS,
+  focusShare,
+  pickStaffTrait,
+  staffCapacity,
+  staffSkills,
+  traitAptitude
+} from "./department.js";
 import { coachSchemeFit, schemeFitLabel, planAlignment, OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES } from "./scheme.js";
 
 const clamp = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value));
@@ -57,9 +65,13 @@ export function planInstaller(
     return {
       staff: coordinator,
       // Full attention is par; a coordinator splitting his week installs less.
-      // Floored: a coordinator in the wrong scheme is worse, never worse than
-      // having nobody install it at all.
-      rating: Math.max(42, coordinator.rating * (0.72 + coordinatorShare * 0.28) * fit),
+      // A tactician gets more of it in than a recruiter does. Floored: a
+      // coordinator in the wrong scheme is worse, never worse than having
+      // nobody install it at all.
+      rating: Math.max(
+        42,
+        coordinator.rating * (0.72 + coordinatorShare * 0.28) * fit * traitAptitude(coordinator.trait, "PREPARE")
+      ),
       name: coordinator.name,
       note: fit < 0.9
         ? `Coordinator installing a scheme that is not his (${schemeFitLabel(fit).toLowerCase()})`
@@ -74,7 +86,7 @@ export function planInstaller(
     // A head coach covering a coordinator's job does it worse than the specialist would.
     return {
       staff: headCoach,
-      rating: headCoach.rating * 0.82 * (0.72 + headCoachShare * 0.28),
+      rating: headCoach.rating * 0.82 * (0.72 + headCoachShare * 0.28) * traitAptitude(headCoach.trait, "PREPARE"),
       name: headCoach.name,
       note: "Head coach covering"
     };
@@ -158,18 +170,20 @@ export function repsFatigue(reps: number): number {
  * number, and "payoffs are visible" is a load-bearing invariant.
  */
 export function staffModifiers(
-  member: Pick<StaffMember, "rating" | "role">,
+  member: Pick<StaffMember, "rating" | "role"> & { trait?: StaffTrait },
   context?: { schemeFit?: number; prepareShare?: number; facilityBonus?: number }
 ): StaffModifier[] {
   const rating = member.rating;
   const fit = context?.schemeFit ?? 1;
   const share = context?.prepareShare ?? 1;
   const facilityBonus = context?.facilityBonus ?? 0;
-  const prep = (roleWeight: number): string => `+${(rating * roleWeight * share / 100).toFixed(1)} to all four phases`;
+  const prepAptitude = traitAptitude(member.trait, "PREPARE");
+  const prep = (roleWeight: number): string =>
+    `+${(rating * roleWeight * share * prepAptitude / 100).toFixed(1)} to all four phases`;
 
   if (member.role === "OFFENSIVE_COORDINATOR" || member.role === "DEFENSIVE_COORDINATOR") {
     const side = member.role === "OFFENSIVE_COORDINATOR" ? "offense" : "defense";
-    const effective = Math.max(42, rating * (0.72 + clamp(share, 0, 1) * 0.28) * fit);
+    const effective = Math.max(42, rating * (0.72 + clamp(share, 0, 1) * 0.28) * fit * prepAptitude);
     // Includes the weight-room term planExecution applies, so the posted
     // number is the number the engine will actually run.
     const centre = Math.round((0.3 + effective / 100 * 0.28 + facilityBonus) * 100);
@@ -190,8 +204,8 @@ export function staffModifiers(
   }
   return [
     { label: "Game prep", value: prep(0.55) },
-    { label: "Weekly player growth", value: `+${Math.round(rating / 5)}%` },
-    { label: "Knocks off fatigue", value: `-${(rating / 30).toFixed(1)} a week` }
+    { label: "Weekly player growth", value: `+${Math.round(rating * traitAptitude(member.trait, "DEVELOP") / 5)}%` },
+    { label: "Knocks off fatigue", value: `-${(rating * traitAptitude(member.trait, "RECOVER") / 30).toFixed(1)} a week` }
   ];
 }
 
@@ -237,15 +251,18 @@ export function staffCandidates(
   const outgoing = state.staff[staffId];
   const program = state.programs[programId];
   if (!outgoing || !program) return [];
-  const rng = new AddressableRng(state.identity.rootSeed).fork("staff-market", String(state.season), programId, staffId);
+  // Keyed on the post rather than the person, so hiring somebody does not
+  // re-roll the market: a player who works down the list can still go back to
+  // the coach he passed on.
+  const rng = new AddressableRng(state.identity.rootSeed).fork("staff-market", String(state.season), programId, outgoing.role);
   // A program's pull decides the calibre it can attract at all.
   const ceiling = clamp(52 + program.prestige * 0.42 + program.nationalPress * 0.1, 55, 96);
 
   const identity = program.schemeIdentity;
   // Two above the ceiling are shown anyway, greyed out. A silent cap teaches
   // nothing; a named one turns prestige into a goal.
-  return [0, 1, 2, 3, 4].map((index) => {
-    const reach = index >= 3;
+  return [0, 1, 2, 3, 4, 5].map((index) => {
+    const reach = index >= 4;
     const rating = reach
       ? Math.round(clamp(rng.between(`${index}:reach-rating`, ceiling + 3, ceiling + 14), 40, 99))
       : Math.round(clamp(rng.between(`${index}:rating`, ceiling - 22, ceiling), 40, 99));
@@ -255,19 +272,26 @@ export function staffCandidates(
       defense: DEFENSIVE_SCHEMES[Math.floor(rng.between(`${index}:defense`, 0, DEFENSIVE_SCHEMES.length - 0.0001))]!
     };
     const fit = coachSchemeFit({ role: outgoing.role, schemePreference }, identity);
+    const trait = pickStaffTrait(outgoing.role, rng.at(`${index}:trait`));
+    const profile = STAFF_TRAITS[trait];
     return {
-      id: `${staffId}:candidate:${index}`,
+      id: `${programId}:${outgoing.role}:candidate:${index}`,
       name: nameFor(Math.floor(rng.between(`${index}:name`, 0, 4_000))),
       role: outgoing.role,
       rating,
       salary,
       signingCost: Math.round(salary * 0.35),
       // Priced against the post he would fill, so the card compares like for like.
-      modifiers: staffModifiers({ rating, role: outgoing.role }, {
+      modifiers: staffModifiers({ rating, role: outgoing.role, trait }, {
         schemeFit: fit,
         prepareShare: focusShare(outgoing, "PREPARE"),
         facilityBonus: Math.max(0, program.facilities.TRAINING - 1) * 0.012
       }),
+      trait,
+      traitLabel: profile.label,
+      traitBlurb: profile.blurb,
+      hours: staffCapacity(rating, trait),
+      skills: staffSkills({ rating, role: outgoing.role, trait }),
       schemePreference,
       schemeFit: fit,
       schemeFitNote: schemeFitLabel(fit),

@@ -18,10 +18,13 @@ import type {
   RecruitingSearchType,
   SeasonAwardType,
   SchemeIdentity,
-  StaffFocus
+  StaffCandidate,
+  StaffFocus,
+  StaffMember,
+  StaffSkill
 } from "@college-legends/model";
 import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
-import type { ProgramPreview } from "@college-legends/simulation";
+import type { BoxScore, BoxScoreTeam, ProgramPreview } from "@college-legends/simulation";
 import {
   DEFAULT_GAME_PLAN,
   DEFENSIVE_IDENTITY_LABELS,
@@ -36,6 +39,7 @@ import {
   weeklyDecisions,
   weeklyBriefing,
   seasonExpectation,
+  latestBoxScore,
   MAXIMUM_WEEKLY_ADVERTISING,
   MAXIMUM_TICKET_PRICE,
   MINIMUM_TICKET_PRICE,
@@ -59,7 +63,9 @@ import {
   SCOUTING_FUNDING_LABELS,
   STAFF_FOCUSES,
   STAFF_FOCUS_LABELS,
+  STAFF_TRAITS,
   staffCapacity,
+  staffSkills,
   staffFocusPayoff,
   weeklyScoutingOutput,
   GAME_PLAN_OPTIONS,
@@ -311,6 +317,137 @@ function ChooseJob({ busy, careerPath, previews, onTake, onReroll, onBack }: {
   </main>;
 }
 
+/** What the post is for, in one line, so a player never has to guess. */
+const ROLE_JOB: Record<string, string> = {
+  HEAD_COACH: "Runs the program. Covers for a missing coordinator and carries the recruiting trail.",
+  OFFENSIVE_COORDINATOR: "Installs your offense every week. His hours are the offensive game plan.",
+  DEFENSIVE_COORDINATOR: "Installs your defense every week. His hours are the defensive game plan.",
+  STRENGTH_COACH: "Develops your players and gets them back on their feet after Saturday."
+};
+
+/** Short enough to sit above a bar. The long form is on the staff screen. */
+const SKILL_SHORT: Record<StaffFocus, string> = {
+  PREPARE: "Game plan",
+  SCOUT: "Scouting",
+  RECRUIT: "Recruiting",
+  DEVELOP: "Developing",
+  RECOVER: "Training room"
+};
+
+/** Everything one hire's row needs to say, from either an incumbent or the market. */
+interface CoachOptionView {
+  key: string;
+  name: string;
+  rating: number;
+  traitLabel: string;
+  traitBlurb: string;
+  hours: number;
+  skills: StaffSkill[];
+  /** The scheme he coaches, when the post has one. */
+  runs: string | null;
+  fitNote: string | null;
+  fitWarning: boolean;
+  price: string;
+  /** Why he is worth taking, or why you cannot. */
+  note: string | null;
+  blocked: string | null;
+  current: boolean;
+  onPick: (() => void) | null;
+}
+
+/**
+ * One coach, as a row you can compare against the others in the same post.
+ * Rating alone made this a sort — the tendency and the five job numbers are
+ * what turn it into a choice, so they are on the row rather than behind a click.
+ */
+function CoachOption({ option, busy }: { option: CoachOptionView; busy: boolean }): ReactElement {
+  const classes = ["coach-option"];
+  if (option.current) classes.push("current");
+  if (option.blocked) classes.push("locked");
+  return <button className={classes.join(" ")} type="button"
+    disabled={busy || Boolean(option.blocked) || !option.onPick}
+    onClick={() => option.onPick?.()}>
+    <div className="coach-line">
+      <strong>{option.name}</strong>
+      <span className="coach-rating">{option.rating}</span>
+    </div>
+    <p className="coach-trait"><b>{option.traitLabel}</b> — {option.traitBlurb}</p>
+    <ul className="skill-strip">{option.skills.map((skill) =>
+      <li className={skill.strength ? "strong" : ""} key={skill.focus}>
+        <span>{SKILL_SHORT[skill.focus]}</span>
+        <i><em style={{ width: `${skill.value}%` }} /></i>
+        <b>{skill.value}</b>
+      </li>)}
+    </ul>
+    <p className="coach-meta">{option.hours}-hour week{option.runs ? ` · ${option.runs}` : ""}</p>
+    {option.fitNote && <p className={option.fitWarning ? "attention" : "muted"}>{option.fitNote}</p>}
+    <p className="coach-price">{option.price}</p>
+    {option.note && <p className="tradeoff">{option.note}</p>}
+    {option.blocked && <p className="tradeoff">{option.blocked}</p>}
+  </button>;
+}
+
+/** The scheme a coach runs, in the words the rest of the game uses. */
+function coachRuns(preference: SchemeIdentity, side: "offense" | "defense" | null): string | null {
+  if (side === "offense") return `${OFFENSIVE_IDENTITY_LABELS[preference.offense]} guy`;
+  if (side === "defense") return `${DEFENSIVE_IDENTITY_LABELS[preference.defense]} guy`;
+  return null;
+}
+
+/**
+ * Every option for one post: whoever is in the chair, then everybody who would
+ * take it. Shared by the takeover screen and the in-season staff screen so a
+ * hire is described the same way whenever you make it.
+ */
+function coachOptions({ member, candidates, identity, budget, onHire }: {
+  member: StaffMember;
+  candidates: StaffCandidate[];
+  identity: SchemeIdentity;
+  budget: number;
+  onHire: (candidateId: string) => void;
+}): CoachOptionView[] {
+  const side = member.role === "OFFENSIVE_COORDINATOR" ? "offense"
+    : member.role === "DEFENSIVE_COORDINATOR" ? "defense" : null;
+  const memberFit = coachSchemeFit(member, identity);
+  const incumbent: CoachOptionView = {
+    key: member.id,
+    name: member.name,
+    rating: member.rating,
+    traitLabel: STAFF_TRAITS[member.trait].label,
+    traitBlurb: STAFF_TRAITS[member.trait].blurb,
+    hours: staffCapacity(member.rating, member.trait),
+    skills: staffSkills(member),
+    runs: coachRuns(member.schemePreference, side),
+    fitNote: side ? schemeFitLabel(memberFit) : null,
+    fitWarning: Boolean(side) && memberFit < 0.9,
+    price: `${money(member.salary)} a year · already on staff, no buyout`,
+    note: null,
+    blocked: null,
+    current: true,
+    onPick: null
+  };
+  return [incumbent, ...candidates.map((candidate) => {
+    const affordable = budget >= candidate.signingCost;
+    return {
+      key: candidate.id,
+      name: candidate.name,
+      rating: candidate.rating,
+      traitLabel: candidate.traitLabel,
+      traitBlurb: candidate.traitBlurb,
+      hours: candidate.hours,
+      skills: candidate.skills,
+      runs: coachRuns(candidate.schemePreference, side),
+      fitNote: side ? candidate.schemeFitNote : null,
+      fitWarning: Boolean(side) && candidate.schemeFit < 0.9,
+      price: `${money(candidate.salary)} a year · ${money(candidate.signingCost)} to sign him`,
+      note: `${candidate.rating >= member.rating ? "+" : ""}${candidate.rating - member.rating} on ${member.name}`,
+      blocked: candidate.unavailableReason ?? (affordable ? null : "You can't cover the signing cost."),
+      current: false,
+      onPick: () => onHire(candidate.id)
+    } satisfies CoachOptionView;
+  })];
+}
+
 /**
  * The rest of the takeover: what this program is going to run, and who is going
  * to install it. Presented together on purpose — the interesting case is when
@@ -378,49 +515,43 @@ function SetUpProgram({ busy, game, onPrepare, onDone }: {
       {schemePanel("DEFENSE")}
     </section>
 
+    <header className="masthead staff-masthead">
+      <p className="eyebrow">Hiring · {money(program.budget)} to work with</p>
+      <h2>Now put your staff together.</h2>
+      <p>
+        The number on the right is how good he is. The tendency underneath is what he’s good <em>at</em> —
+        and the five bars are what an hour of his week is actually worth on each job. Whoever’s in the chair
+        stays for free; anybody else costs you a buyout today and a salary every year after.
+      </p>
+    </header>
+
     <section className="setup-grid">{roleOrder.map((role) => {
       const member = staff.find((candidate) => candidate.role === role);
       if (!member) return null;
-      const fit = coachSchemeFit(member, identity);
-      const side = role === "OFFENSIVE_COORDINATOR" ? "offense" : role === "DEFENSIVE_COORDINATOR" ? "defense" : null;
-      const runs = side === "offense" ? OFFENSIVE_SCHEMES : side === "defense" ? DEFENSIVE_SCHEMES : null;
-      const candidates = openPost === member.id ? staffCandidatesFor(game.state, programId, member.id) : [];
-      return <article className="panel staff-card" key={member.id}>
+      const open = openPost === role;
+      const candidates = open ? staffCandidatesFor(game.state, programId, member.id) : [];
+      const options = coachOptions({
+        member, candidates, identity, budget: program.budget,
+        onHire: (candidateId) => onPrepare({ type: "REPLACE_STAFF", programId, staffId: member.id, candidateId })
+      });
+      return <article className={open ? "panel staff-card span-two" : "panel staff-card"} key={role}>
         <div className="staff-head">
           <div>
             <p className="eyebrow">{label(role)}</p>
             <h2>{member.name}</h2>
-            <p className="muted">{member.rating} rated · {money(member.salary)} a year</p>
+            <p className="muted">{ROLE_JOB[role]}</p>
           </div>
-          <button className="replace-button" disabled={busy}
-            onClick={() => setOpenPost(openPost === member.id ? undefined : member.id)}>
-            {openPost === member.id ? "Close" : "Replace"}
+          <button className="replace-button" disabled={busy} onClick={() => setOpenPost(open ? undefined : role)}>
+            {open ? "Keep him" : "See who’s available"}
           </button>
         </div>
-        {role !== "STRENGTH_COACH" && <p className={fit < 0.9 ? "attention" : "muted"}>
-          {side === "defense" ? DEFENSIVE_IDENTITY_LABELS[member.schemePreference.defense] : OFFENSIVE_IDENTITY_LABELS[member.schemePreference.offense]} guy — {schemeFitLabel(fit).toLowerCase()}.
-        </p>}
         <div className="snapshot-list">{staffCard(game.state, programId, member.id).map((modifier) =>
           <p key={modifier.label}><span>{modifier.label}</span><strong>{modifier.value}</strong></p>)}
         </div>
-        {candidates.length > 0 && <div className="plan-options">{candidates.map((candidate) => {
-          const affordable = program.budget >= candidate.signingCost;
-          const blocked = Boolean(candidate.unavailableReason) || !affordable;
-          return <button className={candidate.unavailableReason ? "plan-option locked" : "plan-option"}
-            key={candidate.id} disabled={busy || blocked}
-            onClick={() => { onPrepare({ type: "REPLACE_STAFF", programId, staffId: member.id, candidateId: candidate.id }); setOpenPost(undefined); }}>
-            <strong>{candidate.name} · {candidate.rating} rated</strong>
-            <span className="effect">
-              {money(candidate.salary)} a year · {money(candidate.signingCost)} to buy him out
-              {runs ? ` · ${side === "defense" ? DEFENSIVE_IDENTITY_LABELS[candidate.schemePreference.defense] : OFFENSIVE_IDENTITY_LABELS[candidate.schemePreference.offense]} guy` : ""}
-            </span>
-            <span className="tradeoff">
-              {candidate.unavailableReason
-                ?? (!affordable ? "You can't cover the buyout"
-                  : `${candidate.rating > member.rating ? "+" : ""}${candidate.rating - member.rating} on ${member.name} · ${candidate.schemeFitNote.toLowerCase()}`)}
-            </span>
-          </button>;
-        })}</div>}
+        <div className="coach-list">
+          {(open ? options : options.slice(0, 1)).map((option) =>
+            <CoachOption busy={busy} key={option.key} option={option} />)}
+        </div>
       </article>;
     })}</section>
 
@@ -936,7 +1067,7 @@ function Staff({ game, pending, onQueue }: { game: GameView; pending: GameComman
   const staff = Object.values(game.state.staff).filter((item) => item.programId === programId);
   const [openMarket, setOpenMarket] = useState<string>();
 
-  const totalHours = staff.reduce((sum, member) => sum + staffCapacity(member.rating), 0);
+  const totalHours = staff.reduce((sum, member) => sum + staffCapacity(member.rating, member.trait), 0);
   const allocationOf = (memberId: string): Record<StaffFocus, number> => {
     const member = game.state.staff[memberId]!;
     const queued = pending.find((item): item is Extract<GameCommand, { type: "SET_STAFF_ALLOCATION" }> =>
@@ -957,7 +1088,7 @@ function Staff({ game, pending, onQueue }: { game: GameView; pending: GameComman
     </article>
 
     {staff.map((member) => {
-      const capacity = staffCapacity(member.rating);
+      const capacity = staffCapacity(member.rating, member.trait);
       const allocation = allocationOf(member.id);
       const spent = STAFF_FOCUSES.reduce((total, focus) => total + allocation[focus], 0);
       const setFocus = (focus: StaffFocus, hours: number): void => {
@@ -978,12 +1109,19 @@ function Staff({ game, pending, onQueue }: { game: GameView; pending: GameComman
       const queuedReplacement = pending.find((item): item is Extract<GameCommand, { type: "REPLACE_STAFF" }> =>
         item.type === "REPLACE_STAFF" && item.staffId === member.id);
       const candidates = openMarket === member.id ? staffCandidatesFor(game.state, programId, member.id) : [];
+      const options = coachOptions({
+        member, candidates, identity: program.schemeIdentity, budget: program.budget,
+        onHire: (candidateId) => {
+          onQueue({ type: "REPLACE_STAFF", programId, staffId: member.id, candidateId });
+          setOpenMarket(undefined);
+        }
+      });
       return <article className="panel staff-card" key={member.id}>
         <div className="staff-head">
           <div>
             <p className="eyebrow">{label(member.role)}</p>
             <h2>{member.name}</h2>
-            <p className="muted">{member.rating} rated · {money(member.salary)} a year</p>
+            <p className="muted">{STAFF_TRAITS[member.trait].label} · {member.rating} rated · {money(member.salary)} a year</p>
           </div>
           <button className="replace-button" onClick={() => setOpenMarket(openMarket === member.id ? undefined : member.id)}>
             {openMarket === member.id ? "Close" : "Replace"}
@@ -1001,18 +1139,9 @@ function Staff({ game, pending, onQueue }: { game: GameView; pending: GameComman
           <p className="muted">{staffFocusPayoff(member, focus)}</p>
         </div>)}
         {queuedReplacement && <p className="attention">Hire is queued — it goes through when you advance the week.</p>}
-        {candidates.length > 0 && <div className="plan-options">{candidates.map((candidate) => {
-          const affordable = program.budget >= candidate.signingCost;
-          return <button className="plan-option" key={candidate.id} disabled={!affordable}
-            onClick={() => { onQueue({ type: "REPLACE_STAFF", programId, staffId: member.id, candidateId: candidate.id }); setOpenMarket(undefined); }}>
-            <strong>{candidate.name} · {candidate.rating} rated</strong>
-            <span className="effect">{money(candidate.salary)} a year · {money(candidate.signingCost)} to sign</span>
-            <span className="tradeoff">
-              {candidate.rating > member.rating ? `+${candidate.rating - member.rating} on ${member.name}` : `${candidate.rating - member.rating} on ${member.name}`}
-              {affordable ? "" : " · cannot afford the signing cost"}
-            </span>
-          </button>;
-        })}</div>}
+        {candidates.length > 0 && <div className="coach-list">{options.map((option) =>
+          <CoachOption busy={false} key={option.key} option={option} />)}
+        </div>}
       </article>;
     })}
   </section>;
@@ -1640,14 +1769,62 @@ function WeekScouting({ game, pending, onQueue }: {
   </div>;
 }
 
+/** One team's half of the box score: a table per phase, TEAM line at the foot. */
+function BoxScoreTeamTables({ team, yours }: { team: BoxScoreTeam; yours: boolean }): ReactElement {
+  return <div className="box-team">
+    <h3>{team.name} <span className="box-team-score">{team.score}</span>{yours && <em>you</em>}</h3>
+    {team.groups.map((group) => <div className="box-group" key={group.id}>
+      <p className="box-group-label">{group.label}</p>
+      <table className="stat-table box-table">
+        <thead><tr>
+          <th>{group.label}</th>
+          {group.columns.map((column) => <th key={column}>{column}</th>)}
+        </tr></thead>
+        <tbody>{group.rows.map((row) =>
+          <tr className={row.total ? "box-total" : ""} key={row.playerId}>
+            <th scope="row">{row.name}{row.position && <small> {row.position}</small>}</th>
+            {row.values.map((value, index) => <td key={group.columns[index] ?? index}>{value}</td>)}
+          </tr>)}
+        </tbody>
+      </table>
+    </div>)}
+  </div>;
+}
+
+/** The whole game, printed the way a box score is printed. */
+function BoxScorePanel({ box, programId }: { box: BoxScore; programId: string }): ReactElement {
+  return <article className="panel box-score">
+    <p className="eyebrow">Week {box.week} final</p>
+    <h2>
+      {box.away.abbreviation} {box.away.score} &nbsp;at&nbsp; {box.home.abbreviation} {box.home.score}
+    </h2>
+    <table className="stat-table team-stats-table">
+      <thead><tr><th>Team stats</th><th>{box.away.abbreviation}</th><th>{box.home.abbreviation}</th></tr></thead>
+      <tbody>{box.teamStats.map((stat) =>
+        <tr key={stat.label}>
+          <th scope="row">{stat.label}</th>
+          <td>{stat.away}</td>
+          <td>{stat.home}</td>
+        </tr>)}
+      </tbody>
+    </table>
+    <div className="box-teams">
+      <BoxScoreTeamTables team={box.away} yours={box.away.programId === programId} />
+      <BoxScoreTeamTables team={box.home} yours={box.home.programId === programId} />
+    </div>
+  </article>;
+}
+
 function WeekReport({ game }: { game: GameView }): ReactElement {
   const programId = game.playerProgramId;
   const lastReport = [...game.events]
     .reverse()
     .find((event): event is Extract<GameEvent, { type: "GAME_PLAN_REPORT" }> =>
       event.type === "GAME_PLAN_REPORT" && event.programId === programId);
+  const box = useMemo(() => latestBoxScore(game.state, programId), [game.state, programId]);
 
   return <div className="week-tab-body">
+    {box && <BoxScorePanel box={box} programId={programId} />}
     {!lastReport && <article className="panel">
       <p className="eyebrow">Last week</p>
       <h2>Nothing to review yet</h2>
@@ -1699,9 +1876,13 @@ function WeekInstall({ game, pending, onQueue }: {
 
   return <div className="week-tab-body">
     <article className="panel">
-      <p className="eyebrow">Installing the plan · {remainingPrep} of {preparation?.weeklyPoints ?? 0} prep left</p>
-      <h2>How much of it actually lands</h2>
-      <p className="muted">A plan is built during the week, not just chosen. Reps raise how much of it survives to Saturday; who installs it sets the floor and how much it swings.</p>
+      <p className="eyebrow">Practice · {remainingPrep} of {preparation?.weeklyPoints ?? 0} practice hours left this week</p>
+      <h2>How much of your game plan actually shows up on Saturday</h2>
+      <ol className="eli5">
+        <li><strong>Picking a play call isn’t the same as running it.</strong> Whatever you called on the Game plan tab, your guys have to practise it first.</li>
+        <li><strong>Every rep you buy puts more of it on the field.</strong> Twelve reps a side is a full week of work. It costs practice hours and it tires the roster out.</li>
+        <li><strong>You get a range, not a number.</strong> The coloured band is your best day to your worst day. A better coordinator lifts the whole band <em>and</em> squeezes it tighter, so you know what you’re getting.</li>
+      </ol>
       {(["OFFENSE", "DEFENSE"] as const).map((side) => {
         const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_PRACTICE_REPS" }> =>
           command.type === "SET_PRACTICE_REPS" && command.side === side);
@@ -1710,24 +1891,37 @@ function WeekInstall({ game, pending, onQueue }: {
         const current = planExecution(game.state, programId, side, reps);
         const without = planExecution(game.state, programId, side, 0);
         return <div className="install-row" key={side}>
-          <p className="plan-label">{side === "OFFENSE" ? "Offensive install" : "Defensive install"} · {current.installerName} ({current.installerRating})</p>
+          <p className="plan-label">
+            {side === "OFFENSE" ? "Offense" : "Defense"} — {current.installerName} runs this practice
+          </p>
           <div className="execution-bar" aria-label={`${side} execution band`}>
             <span className="execution-band" style={{ left: `${current.low * 100}%`, width: `${Math.max(2, (current.high - current.low) * 100)}%` }} />
             <span className="execution-par" style={{ left: "55%" }} />
           </div>
+          <p className="execution-scale">
+            <span>Nothing works</span>
+            <span className="par-note">average team</span>
+            <span>Flawless</span>
+          </p>
           <p className="execution-summary">
-            <strong>{current.summary}</strong>
-            {reps > 0 && <span className="muted"> — was {without.summary} with no reps</span>}
+            <strong>{Math.round(current.low * 100)}–{Math.round(current.high * 100)}% of it works on Saturday</strong>
+            {reps > 0 && <span className="muted"> — it was {Math.round(without.low * 100)}–{Math.round(without.high * 100)}% before you practised</span>}
           </p>
           <input type="range" min={0} max={MAXIMUM_REPS_PER_SIDE} value={reps}
             onChange={(event) => onQueue({ type: "SET_PRACTICE_REPS", programId, side, reps: Number(event.target.value) })} />
-          <p className="muted">{reps} rep{reps === 1 ? "" : "s"} · costs {reps} prep · {(reps * 0.22).toFixed(1)} roster fatigue</p>
+          <p className="rep-caption">
+            <span className="rep-count">{reps} of {MAXIMUM_REPS_PER_SIDE} reps</span>
+            <span className="muted">{reps === 0
+              ? "You haven’t practised this at all — drag right to start"
+              : `Costs ${reps} practice hour${reps === 1 ? "" : "s"} · tires the roster by ${(reps * 0.22).toFixed(1)}`}</span>
+          </p>
           {current.limits.map((limit) => <p className="attention" key={limit}>{limit}</p>)}
         </div>;
       })}
       <p className="muted">
-        Who installs it is set on the Staff screen. A coordinator only installs the side he is hired for, and only
-        for the share of his week he actually spends preparing the team.
+        Your offensive coordinator runs offensive practice and your defensive coordinator runs defensive practice.
+        If you've sent one of them out recruiting or scouting on the Staff screen, he has less time for this and
+        your head coach fills in.
       </p>
     </article>
   </div>;

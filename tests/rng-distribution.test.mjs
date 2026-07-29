@@ -10,6 +10,11 @@ import {
   scoutingBoard,
   scoutingReport,
   staffCapacity,
+  staffContribution,
+  staffSkills,
+  latestBoxScore,
+  boxScore,
+  STAFF_TRAITS,
   weeklyScoutingOutput,
   DOSSIER_THRESHOLDS,
   DEFENSIVE_PRESETS,
@@ -701,9 +706,9 @@ test("staff cards post what they change and can be replaced", () => {
   assert.ok(modifiers.every((modifier) => modifier.label && modifier.value), "every modifier needs a label and a value");
 
   const candidates = staffCandidatesFor(state, programId, coordinator.id);
-  assert.equal(candidates.length, 5, "three reachable candidates plus two shown out of reach");
+  assert.equal(candidates.length, 6, "four reachable candidates plus two shown out of reach");
   const reachable = candidates.filter((candidate) => !candidate.unavailableReason);
-  assert.equal(reachable.length, 3);
+  assert.equal(reachable.length, 4);
   const outOfReach = candidates.filter((candidate) => candidate.unavailableReason);
   assert.equal(outOfReach.length, 2, "the pull ceiling must be visible, not silent");
   assert.ok(
@@ -718,6 +723,18 @@ test("staff cards post what they change and can be replaced", () => {
   );
   // Deterministic: the market must not re-roll every time it is opened.
   assert.deepEqual(staffCandidatesFor(state, programId, coordinator.id), candidates);
+  // Every candidate is a comparable hire: a tendency, an hours-a-week figure,
+  // and one number per job on the same scale as his rating.
+  for (const candidate of candidates) {
+    assert.ok(candidate.traitLabel && candidate.traitBlurb, "a candidate must say what he is known for");
+    assert.ok(candidate.hours >= 4, "a candidate must say how long a week he works");
+    assert.equal(candidate.skills.length, 5, "every job a coach does gets a number");
+    assert.ok(candidate.skills.filter((skill) => skill.strength).length === 2, "his two best jobs are flagged");
+    assert.ok(
+      candidate.skills[0].value >= candidate.skills[4].value,
+      "skills are presented best first"
+    );
+  }
 
   const target = candidates[0];
   const result = advanceWeek(state, [
@@ -1176,4 +1193,94 @@ test("your scheme anchors the weekly call without killing the matchup game", () 
   for (const balance of ["RUN_HEAVY", "BALANCED", "PASS_HEAVY"]) {
     assert.ok(planAlignment({ runPassBalance: balance }, identity, "OFFENSE") >= 0.85);
   }
+});
+
+
+test("a coach's tendency decides what his week is worth, and the league carries a spread of them", () => {
+  const state = beginSeason(createFictionalLeague("staff-traits", 24));
+  const staff = Object.values(state.staff);
+
+  // A league where everybody is a tactician is a league where the trait is
+  // decoration. Rating alone was the old system; this is the thing that
+  // replaces it, so it has to actually vary.
+  const traits = new Set(staff.map((member) => member.trait));
+  assert.ok(traits.size >= 5, `expected a spread of tendencies, saw ${[...traits].join(", ")}`);
+  assert.ok(staff.every((member) => STAFF_TRAITS[member.trait]), "every coach carries a known tendency");
+
+  // The five posted numbers are the engine's own multipliers, so a specialist
+  // must be measurably better at his speciality than a generalist of the same
+  // calibre — and worse somewhere else, or the choice is free.
+  const rating = 75;
+  const filmRat = staffSkills({ rating, role: "OFFENSIVE_COORDINATOR", trait: "FILM_RAT" });
+  const closer = staffSkills({ rating, role: "OFFENSIVE_COORDINATOR", trait: "CLOSER" });
+  const scoutOf = (skills) => skills.find((skill) => skill.focus === "SCOUT").value;
+  const recruitOf = (skills) => skills.find((skill) => skill.focus === "RECRUIT").value;
+  assert.ok(scoutOf(filmRat) > scoutOf(closer) + 10, "a film rat must out-scout a closer of the same rating");
+  assert.ok(recruitOf(closer) > recruitOf(filmRat) + 10, "and the closer must out-recruit him");
+
+  // The same must be true through the engine rather than only on the card.
+  const programId = "program-1";
+  const withCoordinator = (trait) => {
+    const next = structuredClone(state);
+    for (const member of Object.values(next.staff)) {
+      if (member.programId !== programId) continue;
+      member.trait = trait;
+    }
+    return staffContribution(next, programId, "SCOUT");
+  };
+  assert.ok(
+    withCoordinator("FILM_RAT") > withCoordinator("CLOSER"),
+    "the trait has to reach the scouting department, not just the card"
+  );
+});
+
+test("the box score prints the game that was actually played", () => {
+  let state = beginSeason(createFictionalLeague("box-score-page", 24));
+  for (let week = 0; week < 4; week += 1) state = advanceWeek(state).state;
+
+  const box = latestBoxScore(state, "program-1");
+  assert.ok(box, "a played game must produce a box score");
+  assert.equal(boxScore(state, box.gameId).gameId, box.gameId, "and it must be reachable by game id");
+
+  for (const team of [box.home, box.away]) {
+    const lines = state.playerGameStats.filter(
+      (line) => line.gameId === box.gameId && line.programId === team.programId
+    );
+    assert.ok(lines.length > 0);
+
+    const group = (id) => team.groups.find((entry) => entry.id === id);
+    // Every table ends in a TEAM line, and that line is the sum of the rows
+    // above it. A total that disagrees with its own table is worse than none.
+    for (const entry of team.groups) {
+      const last = entry.rows[entry.rows.length - 1];
+      assert.equal(last.total, true, `${entry.id} must end with a team line`);
+      assert.ok(entry.rows.length > 1, `${entry.id} must have somebody in it`);
+      assert.ok(
+        entry.rows.every((row) => row.values.length === entry.columns.length),
+        `${entry.id} rows must fill every column`
+      );
+    }
+
+    const passing = group("PASSING");
+    const passTotal = passing.rows[passing.rows.length - 1].values;
+    assert.equal(
+      passTotal[1],
+      String(lines.reduce((sum, line) => sum + line.passingYards, 0)),
+      "the passing team line must equal the yards the drive loop produced"
+    );
+
+    const receiving = group("RECEIVING");
+    const receivingTotal = receiving.rows[receiving.rows.length - 1].values;
+    assert.equal(receivingTotal[1], passTotal[1], "receiving yards must reconcile with passing yards");
+    assert.equal(receivingTotal[0], passTotal[0].split("/")[0], "receptions must reconcile with completions");
+
+    // Touchdowns and field goals still add up to the number on the scoreboard.
+    const touchdowns = lines.reduce((sum, line) => sum + line.passingTouchdowns + line.rushingTouchdowns, 0);
+    const fieldGoals = lines.reduce((sum, line) => sum + line.fieldGoalsMade, 0);
+    assert.equal(touchdowns * 7 + fieldGoals * 3, team.score, "the tables must add up to the final score");
+  }
+
+  assert.ok(box.teamStats.length >= 5, "the comparison panel needs something to compare");
+  const totalYards = box.teamStats.find((stat) => stat.label === "Total yards");
+  assert.ok(Number(totalYards.home) > 0 && Number(totalYards.away) > 0);
 });

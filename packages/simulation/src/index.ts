@@ -11,10 +11,14 @@ import {
   dossierTiers,
   emptyAllocation,
   focusShare,
+  focusWeight,
+  pickStaffTrait,
+  rebalanceAllocation,
   roleFit,
   scoutingDepartmentSummary,
   staffCapacity,
   staffContribution,
+  staffSkills,
   STAFF_FOCUSES,
   upcomingDossiers,
   weeklyScoutingOutput,
@@ -73,6 +77,8 @@ export {
   dossierTiers,
   emptyAllocation,
   focusShare,
+  focusSkill,
+  focusWeight,
   MARQUEE_VALUE,
   opponentValue,
   roleFit,
@@ -80,14 +86,19 @@ export {
   SCOUTING_FUNDING_LABELS,
   staffCapacity,
   staffContribution,
+  staffSkills,
   STAFF_FOCUS_LABELS,
   STAFF_FOCUSES,
+  STAFF_TRAITS,
+  STAFF_TRAIT_LIST,
   weeklyScoutingOutput,
   WORTH_SCOUTING
 } from "./department.js";
 export type { GamePlanOption, UnitEdge } from "./game.js";
 
 export { scheduleAhead, seasonExpectation } from "./briefing.js";
+export { boxScore, latestBoxScore } from "./boxscore.js";
+export type { BoxScore, BoxScoreGroup, BoxScoreRow, BoxScoreTeam, BoxScoreTeamStat } from "./boxscore.js";
 export type { BriefingDestination, BriefingItem, SeasonExpectation } from "./briefing.js";
 export { AddressableRng } from "./rng.js";
 
@@ -320,9 +331,9 @@ export function projectedDevelopmentPayoff(
  * than per coach, because the decision the player makes is how many of his hours
  * go where — not whether he is "on" a job at all.
  */
-export function staffFocusPayoff(member: Pick<StaffMember, "rating" | "role">, focus: StaffFocus): string {
+export function staffFocusPayoff(member: Pick<StaffMember, "rating" | "role" | "trait">, focus: StaffFocus): string {
   const perHour = (multiplier: number): number =>
-    member.rating * roleFit(member.role, focus) * multiplier / staffCapacity(member.rating);
+    focusWeight(member, focus) * multiplier / staffCapacity(member.rating, member.trait);
   if (focus === "PREPARE") return `Every hour sharpens all four phases — run game, pass game, run defense, pass defense — by ${perHour(0.01).toFixed(2)} on Saturday`;
   if (focus === "SCOUT") return `Every hour here is +${perHour(1 / 12).toFixed(1)} scouting points a week`;
   if (focus === "RECRUIT") return `Every hour here is +${perHour(0.05).toFixed(1)} on the recruiting trail`;
@@ -600,6 +611,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       const staffId = `${id}-staff-${staffIndex + 1}`;
       const personOrdinal = index * (STARTING_ROSTER_SIZE + STAFF_ROLES.length) + staffIndex;
       const rating = Math.round(rng.between(`${staffId}:rating`, baseline - 4, baseline + 7));
+      const trait = pickStaffTrait(role, rng.at(`${staffId}:trait`));
       state.staff[staffId] = {
         id: staffId,
         programId: id,
@@ -609,7 +621,8 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
         // Priced by the same formula the hiring market uses, so a replacement is
         // never both better and cheaper by accident.
         salary: staffSalary(rating, role),
-        allocation: defaultAllocation(role, rating),
+        allocation: defaultAllocation(role, rating, trait),
+        trait,
         schemePreference: assignSchemeIdentity(rng, `${staffId}:scheme`)
       };
     }
@@ -1139,7 +1152,7 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That coach does not work for this program." });
         continue;
       }
-      const capacity = staffCapacity(staff.rating);
+      const capacity = staffCapacity(staff.rating, staff.trait);
       const allocation = emptyAllocation();
       for (const focus of STAFF_FOCUSES) {
         allocation[focus] = Math.max(0, Math.trunc(command.allocation[focus] ?? staff.allocation[focus] ?? 0));
@@ -1289,8 +1302,12 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The program cannot afford that signing cost." });
         continue;
       }
-      program.budget -= candidate.signingCost;
       const arrivingId = `${program.id}-staff-${candidate.id.replace(/[^A-Za-z0-9]/g, "-")}`;
+      if (arrivingId === command.staffId) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "He already has the job." });
+        continue;
+      }
+      program.budget -= candidate.signingCost;
       delete state.staff[command.staffId];
       state.staff[arrivingId] = {
         id: arrivingId,
@@ -1299,8 +1316,10 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         role: candidate.role,
         rating: candidate.rating,
         salary: candidate.salary,
-        // The post keeps its hours; the person filling it changes.
-        allocation: { ...outgoing.allocation },
+        // The post keeps its shape; the person filling it changes. A coach who
+        // works a longer week gets his extra hours where the post was heaviest.
+        allocation: rebalanceAllocation(outgoing, candidate.rating, candidate.trait),
+        trait: candidate.trait,
         schemePreference: { ...candidate.schemePreference }
       };
       events.push({
