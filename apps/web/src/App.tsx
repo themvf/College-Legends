@@ -34,6 +34,8 @@ import {
   projectGate,
   stadiumCapacity as capacityForLevel,
   weeklyDecisions,
+  weeklyBriefing,
+  seasonExpectation,
   MAXIMUM_WEEKLY_ADVERTISING,
   MAXIMUM_TICKET_PRICE,
   MINIMUM_TICKET_PRICE,
@@ -117,6 +119,7 @@ export function App(): ReactElement {
   const workerRef = useRef<Worker | undefined>(undefined);
   const [game, setGame] = useState<GameView>();
   const [screen, setScreen] = useState<Screen>("ROSTER");
+  const [weekTab, setWeekTab] = useState<WeekTab>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [pendingCommands, setPendingCommands] = useState<GameCommand[]>([]);
@@ -175,16 +178,16 @@ export function App(): ReactElement {
     send({ type: "PREPARE", requestId: nextRequestId(), playerProgramId: game.playerProgramId, commands: [command] });
   };
   const queue = (command: GameCommand): void => {
-    // Scouting settles now: a file read after the game cannot shape the plan.
-    if (command.type === "ALLOCATE_SCOUTING") { prepare(command); return; }
-    const key = command.type === "SET_PRACTICE_REPS" ? `reps:${command.side}`
-      : command.type === "REPLACE_STAFF" ? `replace:${command.staffId}`
+    // These settle now rather than on advance, so the screens and the dashboard
+    // briefing reflect the decision the moment it is made.
+    if (command.type === "ALLOCATE_SCOUTING" || command.type === "SET_PRACTICE_REPS"
+      || command.type === "SET_STAFF_ALLOCATION") { prepare(command); return; }
+    const key = command.type === "REPLACE_STAFF" ? `replace:${command.staffId}`
       : command.type === "SET_TICKET_PRICE" ? "ticket-price"
       : command.type === "SET_ADVERTISING" ? "advertising"
       : command.type === "SET_GAME_PLAN" ? `game-plan:${Object.keys(command.plan).sort().join(",")}`
       : command.type === "SET_DEVELOPMENT_SPOTLIGHT" ? "development-spotlight"
       : command.type === "SET_PLAYER_MEDIA_ACTION" ? "featured-media"
-      : command.type === "SET_STAFF_ALLOCATION" ? `staff:${command.staffId}`
       : command.type === "UPGRADE_FACILITY" ? `facility:${command.facility}`
       : command.type === "SCHEDULE_MARQUEE_HOME_GAME" ? "marquee-game"
       : command.type === "SEARCH_PROSPECTS" ? `recruit-search:${command.searchType}:${command.position ?? "ALL"}`
@@ -227,7 +230,8 @@ export function App(): ReactElement {
     onBack={() => setOffers(undefined)} />;
   if (!game) return <NewGame busy={busy} onStart={(path) => startGame(path)} />;
   return <Dashboard game={game} screen={screen} busy={busy} error={error} pendingCommands={pendingCommands}
-    onNavigate={setScreen} onQueue={queue} onBegin={begin} onAdvance={advance} />;
+    onNavigate={(next, tab) => { setWeekTab(tab); setScreen(next); }}
+    weekTab={weekTab} onQueue={queue} onBegin={begin} onAdvance={advance} />;
 }
 
 function commandKey(command: GameCommand): string {
@@ -445,9 +449,10 @@ function NewGame({ busy, onStart }: { busy: boolean; onStart: (path: CareerPath)
   </main>;
 }
 
-function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQueue, onBegin, onAdvance }: {
+function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, weekTab, onQueue, onBegin, onAdvance }: {
   game: GameView; screen: Screen; busy: boolean; error: string | undefined; pendingCommands: GameCommand[];
-  onNavigate: (screen: Screen) => void; onQueue: (command: GameCommand) => void; onBegin: () => void; onAdvance: () => void;
+  onNavigate: (screen: Screen, tab?: WeekTab) => void; weekTab: WeekTab | undefined;
+  onQueue: (command: GameCommand) => void; onBegin: () => void; onAdvance: () => void;
 }): ReactElement {
   const program = game.state.programs[game.playerProgramId]!;
   const roster = useMemo(() => Object.values(game.state.players)
@@ -479,8 +484,8 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQ
       <button className={screen === item ? "active" : ""} key={item} onClick={() => onNavigate(item)}>
         {item === "RECRUITING" && isReview ? "Recruiting · Locked" : label(item)}
       </button>)}</nav>
-    {screen === "DASHBOARD" && <ProgramDashboard game={game} roster={roster} />}
-    {screen === "THIS_WEEK" && <WeekHub game={game} pending={pendingCommands} onQueue={onQueue} />}
+    {screen === "DASHBOARD" && <ProgramDashboard game={game} roster={roster} onNavigate={onNavigate} />}
+    {screen === "THIS_WEEK" && <WeekHub game={game} pending={pendingCommands} onQueue={onQueue} initialTab={weekTab} />}
     {screen === "WEEKLY_RECAPS" && <WeeklyRecaps game={game} />}
     {screen === "ROSTER" && <Roster roster={roster} />}
     {screen === "DEPTH_CHART" && <DepthChart game={game} roster={roster} pending={pendingCommands} onQueue={onQueue} />}
@@ -497,25 +502,92 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, onQ
   </main>;
 }
 
-function ProgramDashboard({ game, roster }: { game: GameView; roster: Player[] }): ReactElement {
+/**
+ * The one screen that has to answer "what do I do now".
+ *
+ * This used to be six panels of status — fan base, press, roster average — and
+ * no direction at all, so a player had to hold every system in their head to
+ * work out what was being wasted. It leads with the athletic director's
+ * expectation, then a ranked list of what actually needs them this week, each
+ * one a button that goes straight to the screen that fixes it.
+ */
+function ProgramDashboard({ game, roster, onNavigate }: {
+  game: GameView; roster: Player[]; onNavigate: (screen: Screen, tab?: WeekTab) => void;
+}): ReactElement {
   const program = game.state.programs[game.playerProgramId]!;
-  const average = roster.reduce((sum, player) => sum + player.overall, 0) / Math.max(roster.length, 1);
+  const briefing = weeklyBriefing(game.state, game.playerProgramId);
+  const expectation = seasonExpectation(game.state, game.playerProgramId);
   const nextGame = game.state.schedule.find((item) => !item.played && (item.homeProgramId === program.id || item.awayProgramId === program.id));
   const opponentId = nextGame ? (nextGame.homeProgramId === program.id ? nextGame.awayProgramId : nextGame.homeProgramId) : undefined;
-  const finance = [...game.state.eventHistory].reverse().find((event) => event.type === "WEEKLY_FINANCES" && event.programId === program.id);
+  const opponent = opponentId ? game.state.programs[opponentId] : undefined;
+  const board = scoutingBoard(game.state, game.playerProgramId);
+  const file = board.find((dossier) => dossier.opponentProgramId === opponentId);
   const recap = [...game.state.eventHistory].reverse().find(
     (event): event is Extract<GameEvent, { type: "WEEKLY_RECAP" }> => event.type === "WEEKLY_RECAP" && event.programId === program.id
   );
+
+  const go = (destination: string): void => {
+    if (destination === "WEEK_DECISIONS") return onNavigate("THIS_WEEK", "DECISIONS");
+    if (destination === "WEEK_SCOUTING") return onNavigate("THIS_WEEK", "SCOUTING");
+    if (destination === "WEEK_PRACTICE") return onNavigate("THIS_WEEK", "INSTALL");
+    if (destination === "WEEK_GAMEPLAN") return onNavigate("THIS_WEEK", "PLAYBOOK");
+    if (destination === "DEVELOPMENT") return onNavigate("DEVELOPMENT");
+    onNavigate(destination as Screen);
+  };
+
   return <section className="dashboard-grid">
-    <article className="panel hero-panel"><p className="eyebrow">Program command center</p><h2>{game.state.phase === "ROSTER_REVIEW" ? "Meet the program you inherited" : `Prepare for Week ${game.state.week}`}</h2>
-      <p className="muted">{game.state.phase === "ROSTER_REVIEW" ? "Study your 85-player roster, depth chart, staff, facilities, and schedule before accepting the job." : "Make development, staffing, facility, and recruiting decisions. Everything resolves together when you advance the week."}</p>
+    <article className="panel hero-panel command-hero">
+      <p className="eyebrow">
+        {game.state.phase === "ROSTER_REVIEW" ? "Before the season" : `Week ${game.state.week}`}
+        {expectation ? ` · Job security ${expectation.jobSecurity}/100` : ""}
+      </p>
+      <h2>{game.state.phase === "ROSTER_REVIEW"
+        ? "Get the program ready"
+        : nextGame ? `${nextGame.homeProgramId === program.id ? "Hosting" : "At"} ${opponent?.name}` : "Season's over"}</h2>
+      {expectation && <p className="muted">{expectation.standing}</p>}
+      {nextGame && <p className="muted">
+        {file && file.tiers.length > 0
+          ? `You've got ${file.tiers.length === 3 ? "a complete file" : "a partial file"} on them — ${file.confidence}% reliable.`
+          : "You haven't scouted them at all."}
+        {opponent ? ` They're #${opponent.nationalRank} at ${opponent.wins}–${opponent.losses}.` : ""}
+      </p>}
     </article>
-    <article className="panel"><p className="eyebrow">Next matchup</p><h2>{nextGame ? `${nextGame.homeProgramId === program.id ? "vs." : "at"} ${game.state.programs[opponentId!]?.name}` : "Season complete"}</h2><p className="muted">{nextGame ? `Week ${nextGame.week} · ${nextGame.homeProgramId === program.id ? "Home" : "Away"}` : "No remaining regular-season games."}</p></article>
-    <article className="panel"><p className="eyebrow">Program momentum</p><h2>{compactNumber(program.fanBase)} fans · #{program.nationalRank}</h2><div className="snapshot-list"><p><span>Local press</span><strong>{program.localPress}/100</strong></p><p><span>National press</span><strong>{program.nationalPress}/100</strong></p><p><span>Stadium capacity</span><strong>{compactNumber(stadiumCapacity(program.facilities.STADIUM))}</strong></p></div></article>
-    {recap && <article className="panel recap-feature"><p className="eyebrow">Latest weekly recap</p><h2>{recap.result === "BYE" ? `Week ${recap.week} bye` : `${recap.result}: ${recap.scoreFor}–${recap.scoreAgainst}`}</h2><RecapCascade recap={recap} game={game} /></article>}
-    <article className="panel"><p className="eyebrow">Roster outlook</p><h2>{average.toFixed(1)} team overall</h2><div className="snapshot-list"><p><span>Seniors</span><strong>{roster.filter((player) => player.eligibility.seasonsRemaining === 1).length}</strong></p><p><span>Top-rated player</span><strong>{Math.round(Math.max(...roster.map((player) => player.overall)))}</strong></p></div></article>
-    <article className="panel"><p className="eyebrow">Weekly business</p><h2>{finance && finance.type === "WEEKLY_FINANCES" ? `${finance.net >= 0 ? "+" : ""}${money(finance.net)}` : "Not reported yet"}</h2><p className="muted">Prestige {program.prestige}/100 · Fan support {program.fanSupport}/100</p></article>
-    <article className="panel span-two"><p className="eyebrow">Latest inbox</p><h2>Program activity</h2><EventList events={game.events.length ? game.events : game.state.eventHistory.slice(-5)} game={game} /></article>
+
+    <article className="panel span-two briefing-panel">
+      <p className="eyebrow">What needs you this week</p>
+      {briefing.length === 0
+        ? <><h2>You're square</h2><p className="muted">Nothing is being wasted. Advance the week whenever you're ready.</p></>
+        : <><h2>{(() => {
+          const urgent = briefing.filter((item) => item.urgency === "DO_THIS").length;
+          if (urgent === 0) return `${briefing.length} thing${briefing.length === 1 ? "" : "s"} worth a look`;
+          return `${urgent} thing${urgent === 1 ? "" : "s"} ${urgent === 1 ? "is" : "are"} costing you right now`;
+        })()}</h2>
+          <div className="briefing-list">{briefing.map((item) =>
+            <button className={`briefing-item ${item.urgency.toLowerCase()}`} key={item.id} onClick={() => go(item.destination)}>
+              <span className="briefing-flag">{item.urgency === "DO_THIS" ? "Fix this" : "Worth a look"}</span>
+              <strong>{item.headline}</strong>
+              <span className="briefing-detail">{item.detail}</span>
+              <span className="briefing-action">{item.action} →</span>
+            </button>)}
+          </div></>}
+    </article>
+
+    <article className="panel"><p className="eyebrow">The program</p>
+      <h2>{compactNumber(program.fanBase)} fans · #{program.nationalRank}</h2>
+      <div className="snapshot-list">
+        <p><span>In the bank</span><strong>{money(program.budget)}</strong></p>
+        <p><span>Prestige</span><strong>{program.prestige}/100</strong></p>
+        <p><span>They're talking about you</span><strong>{program.nationalPress}/100</strong></p>
+        <p><span>Roster average</span><strong>{(roster.reduce((sum, player) => sum + player.overall, 0) / Math.max(roster.length, 1)).toFixed(1)}</strong></p>
+      </div>
+    </article>
+
+    {recap && <article className="panel recap-feature"><p className="eyebrow">Last Saturday</p>
+      <h2>{recap.result === "BYE" ? `Week ${recap.week} bye` : `${recap.result}: ${recap.scoreFor}–${recap.scoreAgainst}`}</h2>
+      <RecapCascade recap={recap} game={game} /></article>}
+
+    <article className="panel span-two"><p className="eyebrow">Around the program</p><h2>What happened</h2>
+      <EventList events={game.events.length ? game.events : game.state.eventHistory.slice(-40)} game={game} /></article>
   </section>;
 }
 
@@ -1068,9 +1140,46 @@ function Inbox({ game }: { game: GameView }): ReactElement {
   return <section className="panel"><p className="eyebrow">Program inbox</p><h2>Decisions, results, and reports</h2>{events.length ? <EventList events={events} game={game} /> : <p className="muted">Your inbox is clear. Begin the season to receive weekly reports.</p>}</section>;
 }
 
+/**
+ * Bookkeeping the engine has to emit but nobody wants to read. The inbox showed
+ * nine consecutive "Prep Points Added" entries, which is not news — it is the
+ * simulation talking to itself in front of the player.
+ */
+const INBOX_NOISE: ReadonlySet<GameEvent["type"]> = new Set([
+  "PLAYER_DEVELOPED", "PREP_POINTS_ADDED", "RECRUITING_POINTS_ADDED", "STAFF_ALLOCATION_SET",
+  "SCOUTING_ALLOCATED", "PRACTICE_REPS_SET", "TICKET_PRICE_SET", "ADVERTISING_SET",
+  "GAME_PLAN_SET", "SCHEME_SET", "DEVELOPMENT_SPOTLIGHT_SET", "PLAYER_MEDIA_ACTION_SET",
+  "DEPTH_CHART_UPDATED", "WEEKLY_FINANCES", "PLAYER_BRAND_UPDATED", "GAME_PLAN_REPORT",
+  "WEEKLY_RECAP", "RANKINGS_UPDATED", "COMMAND_REJECTED"
+] as GameEvent["type"][]);
+
+/**
+ * A result is news if it involves somebody the player is about to play, or if a
+ * ranked team just lost to somebody they shouldn't have. Everything else is 216
+ * scores a week that nobody asked for.
+ */
+function resultIsNews(event: Extract<GameEvent, { type: "GAME_COMPLETED" }>, game: GameView): boolean {
+  const upcoming = new Set(game.state.schedule
+    .filter((fixture) => !fixture.played
+      && (fixture.homeProgramId === game.playerProgramId || fixture.awayProgramId === game.playerProgramId))
+    .map((fixture) => fixture.homeProgramId === game.playerProgramId ? fixture.awayProgramId : fixture.homeProgramId));
+  if (upcoming.has(event.homeProgramId) || upcoming.has(event.awayProgramId)) return true;
+  const home = game.state.programs[event.homeProgramId];
+  const away = game.state.programs[event.awayProgramId];
+  if (!home || !away) return false;
+  const homeWon = event.homeScore > event.awayScore;
+  const loser = homeWon ? away : home;
+  const winner = homeWon ? home : away;
+  return loser.nationalRank <= 15 && winner.nationalRank > 40;
+}
+
 function EventList({ events, game }: { events: GameEvent[]; game: GameView }): ReactElement {
-  const visible = events.filter((event) => event.type !== "PLAYER_DEVELOPED" && eventRelevantToProgram(event, game)).slice(-12).reverse();
-  if (!visible.length) return <p className="muted">No new reports.</p>;
+  const visible = events.filter((event) => {
+    if (INBOX_NOISE.has(event.type)) return false;
+    if (event.type === "GAME_COMPLETED") return resultIsNews(event, game);
+    return eventRelevantToProgram(event, game);
+  }).slice(-12).reverse();
+  if (!visible.length) return <p className="muted">Quiet week. Nothing worth reporting.</p>;
   return <div className="inbox-list">{visible.map((event, index) => <article key={`${event.type}-${"week" in event ? event.week : "season" in event ? event.season : 0}-${index}`}><span>{eventIcon(event)}</span><div><strong>{eventTitle(event)}</strong><p>{eventText(event, game)}</p></div></article>)}</div>;
 }
 
@@ -1212,11 +1321,13 @@ const gamePlanLabels: Record<keyof GamePlan, string> = {
  * other. They are one screen now, and the tab bar is the intermediate step —
  * pick the part of the week to work on, then see only its controls.
  */
-function WeekHub({ game, pending, onQueue }: {
-  game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void;
+function WeekHub({ game, pending, onQueue, initialTab }: {
+  game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void; initialTab: WeekTab | undefined;
 }): ReactElement {
   const programId = game.playerProgramId;
-  const [tab, setTab] = useState<WeekTab>("DECISIONS");
+  const [tab, setTab] = useState<WeekTab>(initialTab ?? "DECISIONS");
+  // Arriving from the dashboard briefing should land on the tab that fixes it.
+  useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
   const decisions = weeklyDecisions(game.state, programId);
   const preparation = game.state.preparation?.[programId];
   const scouting = scoutingReport(game.state, programId);
@@ -1395,12 +1506,13 @@ function WeekScouting({ game, pending, onQueue }: {
         <p><span>Opens a file at</span><strong>{DOSSIER_THRESHOLDS.TENDENCIES} / {DOSSIER_THRESHOLDS.PERSONNEL} / {DOSSIER_THRESHOLDS.GAME_PLAN}</strong></p>
       </div>
       <p className="muted">Points never bank. Whatever is not allocated by Saturday is gone.</p>
-      <div className="plan-options">{SCOUTING_TIERS.map((tier) =>
-        <div className="plan-option static" key={tier}>
-          <strong>{SCOUTING_TIER_LABELS[tier]} · {DOSSIER_THRESHOLDS[tier]} points on the file</strong>
-          <span className="effect">{SCOUTING_TIER_DESCRIPTIONS[tier]}</span>
-        </div>)}
-      </div>
+      <p className="eyebrow tier-heading">What a file buys you</p>
+      <ol className="tier-ladder">{SCOUTING_TIERS.map((tier) =>
+        <li key={tier}>
+          <span className="tier-cost">{DOSSIER_THRESHOLDS[tier]} pts</span>
+          <span><strong>{SCOUTING_TIER_LABELS[tier]}</strong> — {SCOUTING_TIER_DESCRIPTIONS[tier].toLowerCase()}</span>
+        </li>)}
+      </ol>
     </article>
 
     <article className="panel">

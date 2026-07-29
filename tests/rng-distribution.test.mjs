@@ -30,7 +30,9 @@ import {
   programRoster,
   rosterSchemeFit,
   schemeAffinity,
-  OFFENSIVE_SCHEMES
+  OFFENSIVE_SCHEMES,
+  weeklyBriefing,
+  seasonExpectation
 } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
@@ -1091,4 +1093,51 @@ test("the coaching market shows what the program cannot yet attract", () => {
     reachable(powerMarket) > reachable(lowMarket),
     `prestige must widen who will take the job (${reachable(powerMarket)} vs ${reachable(lowMarket)})`
   );
+});
+
+test("the dashboard tells the player what is being wasted, and where to fix it", () => {
+  // The one screen a management game has to get right is the one that answers
+  // "what do I do now". This used to be six panels of status and no direction.
+  let state = beginSeason(createFictionalLeague("briefing", 24));
+  const programId = "program-1";
+
+  const opening = weeklyBriefing(state, programId);
+  assert.ok(opening.length > 0, "week one must have something to say");
+  assert.ok(
+    opening.every((item) => item.headline && item.detail && item.action && item.destination),
+    "every item needs a headline, a reason, a verb, and somewhere to go"
+  );
+  assert.ok(
+    opening.some((item) => item.id === "PRACTICE"),
+    "a team that has not practised must be told so before anything else"
+  );
+  assert.ok(opening.length <= 6, "a list nobody can read is the same as no list");
+  // Ordered so the things costing you now come before the upside.
+  const urgencies = opening.map((item) => item.urgency);
+  assert.deepEqual(urgencies, [...urgencies].sort((left, right) =>
+    (left === "DO_THIS" ? 0 : 1) - (right === "DO_THIS" ? 0 : 1)));
+
+  // Acting on an item must clear it immediately — reps settle before the week is
+  // advanced, so the dashboard reflects the decision the moment it is made.
+  const reps = prepareWeek(state, [
+    { type: "SET_PRACTICE_REPS", programId, side: "OFFENSE", reps: 6 },
+    { type: "SET_PRACTICE_REPS", programId, side: "DEFENSE", reps: 6 }
+  ]).state;
+  assert.ok(
+    !weeklyBriefing(reps, programId).some((item) => item.id === "PRACTICE"),
+    "running practice must remove the practice warning"
+  );
+
+  const expectation = seasonExpectation(state, programId);
+  assert.ok(expectation, "a season must have a stated point");
+  assert.ok(expectation.target > 0 && expectation.standing.length > 0);
+  assert.ok(expectation.jobSecurity >= 0 && expectation.jobSecurity <= 100);
+
+  // A program that cannot reach its target should be told, not left guessing.
+  const doomed = structuredClone(state);
+  doomed.programs[programId].wins = 0;
+  doomed.programs[programId].losses = 11;
+  const bad = seasonExpectation(doomed, programId);
+  assert.equal(bad.onTrack, false);
+  assert.match(bad.standing, /next year/i);
 });

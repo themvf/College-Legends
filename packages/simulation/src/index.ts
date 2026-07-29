@@ -1,6 +1,7 @@
 import type { AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffFocus, StaffMember, StaffRole, OpponentDossier } from "@college-legends/model";
 import { FICTIONAL_PROGRAMS, fictionalPersonName, PROGRAM_CHARACTERS } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
+import { weeklyBriefing as buildBriefing, type BriefingItem } from "./briefing.js";
 import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES, bestSchemeFor, programRoster, coachSchemeFit } from "./scheme.js";
 import { DEFAULT_GAME_PLAN, OFFENSIVE_IDENTITY_LABELS, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
 import { opponentScoutingReport, preparationWeeklyPoints, projectedGamePlan, scheduledOpponent, scoutingConfidence, filmGamesAvailable } from "./scouting.js";
@@ -84,6 +85,8 @@ export {
 } from "./department.js";
 export type { GamePlanOption, UnitEdge } from "./game.js";
 
+export { scheduleAhead, seasonExpectation } from "./briefing.js";
+export type { BriefingDestination, BriefingItem, SeasonExpectation } from "./briefing.js";
 export { AddressableRng } from "./rng.js";
 
 const clamp = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value));
@@ -1000,8 +1003,14 @@ function refreshPreparation(state: GameState, events: GameEvent[]): void {
 export function prepareWeek(input: Readonly<GameState>, commands: readonly GameCommand[] = []): SimulationResult {
   const state = clone<GameState>(input);
   const events: GameEvent[] = [];
+  // Everything a coach settles *before* Saturday resolves here. Practice reps
+  // belong with scouting: setting them and then being told you haven't
+  // practised until you advance the week is exactly the confusion this phase
+  // exists to prevent.
   const preparationCommands = commands.filter((command) =>
-    command.type === "ALLOCATE_SCOUTING" || command.type === "SET_SCHEME" || command.type === "REPLACE_STAFF");
+    command.type === "ALLOCATE_SCOUTING" || command.type === "SET_SCHEME"
+    || command.type === "REPLACE_STAFF" || command.type === "SET_PRACTICE_REPS"
+    || command.type === "SET_STAFF_ALLOCATION");
   if (preparationCommands.length > 0) {
     resolveCommands(state, preparationCommands, new AddressableRng(state.identity.rootSeed).fork("preparation", String(state.season), String(state.week)), events);
   }
@@ -1918,6 +1927,14 @@ export function scoutingReport(state: Readonly<GameState>, programId: string): O
 export function scoutingBoard(state: Readonly<GameState>, programId: string): OpponentDossier[] {
   return upcomingDossiers(state, programId, (opponentId, points) =>
     scoutingConfidence(state, programId, filmGamesAvailable(state, opponentId), points));
+}
+
+/**
+ * What needs the coach this week, worst first. The one screen a management game
+ * has to get right is the one that answers "what do I do now".
+ */
+export function weeklyBriefing(state: Readonly<GameState>, programId: string): BriefingItem[] {
+  return buildBriefing(state, programId, scoutingBoard(state, programId));
 }
 
 /**

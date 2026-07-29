@@ -365,3 +365,24 @@ dd { margin:0; font-weight:700; text-align:right; }
 .setup-screen .plan-option .execution-bar { margin-top: 0.4rem; height: 8px; }
 .plan-option.locked { opacity: 0.45; border-style: dashed; cursor: not-allowed; }
 .plan-option.locked .tradeoff { color: #e8b552; }
+
+/* The command center: what needs you this week, worst first. */
+.command-hero h2 { margin: 0.2rem 0 0.4rem; }
+.briefing-panel h2 { margin: 0.2rem 0 0.8rem; }
+.briefing-list { display: grid; gap: 0.6rem; }
+.briefing-item { display: grid; gap: 0.25rem; text-align: left; padding: 0.75rem 0.9rem; border-radius: 12px; cursor: pointer;
+  border: 1px solid var(--line, #2a2f3a); background: rgba(255, 255, 255, 0.02); color: inherit; }
+.briefing-item:hover { background: rgba(255, 255, 255, 0.05); }
+.briefing-item.do_this { border-left: 3px solid #e8b552; }
+.briefing-item.worth_a_look { border-left: 3px solid #4f7fb0; }
+.briefing-flag { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.09em; opacity: 0.65; }
+.briefing-item.do_this .briefing-flag { color: #e8b552; opacity: 1; }
+.briefing-item strong { font-size: 1.02rem; }
+.briefing-detail { font-size: 0.85rem; opacity: 0.75; }
+.briefing-action { font-size: 0.8rem; color: #6ea8fe; margin-top: 0.1rem; }
+
+/* Reference material, not choices — the tier cards used to look clickable. */
+.tier-heading { margin-top: 1rem; }
+.tier-ladder { list-style: none; margin: 0.4rem 0 0; padding: 0; display: grid; gap: 0.4rem; }
+.tier-ladder li { display: flex; gap: 0.7rem; align-items: baseline; font-size: 0.86rem; opacity: 0.9; }
+.tier-cost { flex: 0 0 3.6rem; font-variant-numeric: tabular-nums; opacity: 0.6; font-size: 0.78rem; }

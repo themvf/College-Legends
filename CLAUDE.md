@@ -301,6 +301,37 @@ posted number is the number. A card that disagrees with the engine breaks
 Still open from the spec: economy drains, NIL, portal/offseason, familiarity,
 concepts, pipelines. See `docs/PROGRAM_IDENTITY_AND_ECONOMY.md`.
 
+## The dashboard is the game's answer to "what do I do now"
+
+A playtest found the game unreadable, and the cause was not copy. The dashboard
+was six panels of *status* — fan base, press, roster average — and no direction,
+so a player had to hold fifteen nav items, five sub-tabs, five numbered
+decisions and five currencies in their head to work out what was being wasted.
+
+`weeklyBriefing(state, programId)` returns at most six items, worst first, each
+with a headline, the reason in plain language, a verb, and a destination the UI
+turns into a button. Items fire on: no practice reps, an unscouted opponent this
+week, a marquee game ahead with no file, a coordinator running someone else's
+scheme, recruiting points about to expire, nobody being developed, a ticket
+price well off fair, and a negative budget.
+
+`seasonExpectation()` finally states the point of a season. `coachSecurity` and
+`championshipDeadline` have existed since the beginning and were never once
+shown; a number nobody states is a number nobody plays toward. The header now
+reads *"0–1. You need 5 more wins from 11 games."* against a target of 10/7/5
+wins by tier.
+
+**Pre-week decisions settle pre-week.** `prepareWeek` now also resolves
+`SET_PRACTICE_REPS` and `SET_STAFF_ALLOCATION` alongside scouting. A test caught
+the alternative: you set reps, and the dashboard kept telling you the team
+hadn't practised until you advanced the week.
+
+**The inbox is news, not bookkeeping.** It was showing nine consecutive "Prep
+Points Added" rows — the simulation talking to itself in front of the player.
+Sixteen system event types are filtered out, weekly recaps have their own panel,
+and a result only appears if it involves a future opponent or a top-15 team
+losing to somebody outside the top 40.
+
 ## Direction: the game is a decision engine
 
 The reference is a business simulation where nearly every screen is a decision
