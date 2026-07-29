@@ -1,4 +1,6 @@
-import type { GameState, PlayerGameStatLine, ProgramId } from "@college-legends/model";
+import type { GameEvent, GameState, PlayerGameStatLine, ProgramId } from "@college-legends/model";
+
+type CompletedGameEvent = Extract<GameEvent, { type: "GAME_COMPLETED" }>;
 
 /**
  * A played game as a newspaper would print it. The engine already emits every
@@ -75,7 +77,7 @@ const GROUPS: readonly GroupSpec[] = [
   {
     id: "PASSING",
     label: "Passing",
-    columns: ["C/ATT", "YDS", "AVG", "TD", "INT", "SACKS"],
+    columns: ["Completions / attempts", "Yards", "Yards / attempt", "Touchdowns", "Interceptions", "Sacks allowed"],
     qualifies: (line) => line.passingAttempts > 0,
     rank: (line) => line.passingYards,
     row: (line) => [
@@ -98,7 +100,7 @@ const GROUPS: readonly GroupSpec[] = [
   {
     id: "RUSHING",
     label: "Rushing",
-    columns: ["CAR", "YDS", "AVG", "TD"],
+    columns: ["Carries", "Yards", "Yards / carry", "Touchdowns"],
     qualifies: (line) => line.rushingAttempts > 0,
     rank: (line) => line.rushingYards,
     row: (line) => [
@@ -117,7 +119,7 @@ const GROUPS: readonly GroupSpec[] = [
   {
     id: "RECEIVING",
     label: "Receiving",
-    columns: ["REC", "YDS", "AVG", "TD", "TGTS"],
+    columns: ["Receptions", "Yards", "Yards / reception", "Touchdowns", "Targets"],
     qualifies: (line) => line.targets > 0 || line.receptions > 0,
     rank: (line) => line.receivingYards,
     row: (line) => [
@@ -138,7 +140,7 @@ const GROUPS: readonly GroupSpec[] = [
   {
     id: "DEFENSE",
     label: "Defense",
-    columns: ["TOT", "TFL", "SACKS", "INT", "PD"],
+    columns: ["Tackles", "Tackles for loss", "Sacks", "Interceptions", "Pass breakups"],
     qualifies: (line) =>
       line.tackles > 0 || line.sacks > 0 || line.defensiveInterceptions > 0 || line.passBreakups > 0,
     rank: (line) => line.tackles + line.sacks * 3 + line.defensiveInterceptions * 4,
@@ -160,7 +162,7 @@ const GROUPS: readonly GroupSpec[] = [
   {
     id: "KICKING",
     label: "Kicking",
-    columns: ["FG", "PCT", "PTS"],
+    columns: ["Made / attempted", "Made %", "Points"],
     qualifies: (line) => line.fieldGoalsAttempted > 0,
     rank: (line) => line.fieldGoalsMade,
     row: (line) => [
@@ -177,7 +179,7 @@ const GROUPS: readonly GroupSpec[] = [
   {
     id: "PUNTING",
     label: "Punting",
-    columns: ["NO", "YDS", "AVG"],
+    columns: ["Punts", "Punt yards", "Yards / punt"],
     qualifies: (line) => line.punts > 0,
     rank: (line) => line.punts,
     row: (line) => [
@@ -242,8 +244,8 @@ function teamStats(home: readonly PlayerGameStatLine[], away: readonly PlayerGam
   const right = of(away);
   return [
     { label: "Total yards", home: String(left.total), away: String(right.total) },
-    { label: "Passing", home: String(left.passing), away: String(right.passing) },
-    { label: "Rushing", home: String(left.rushing), away: String(right.rushing) },
+    { label: "Passing yards", home: String(left.passing), away: String(right.passing) },
+    { label: "Rushing yards", home: String(left.rushing), away: String(right.rushing) },
     { label: "Yards per play", home: average(left.total, left.plays), away: average(right.total, right.plays) },
     { label: "Sacks", home: String(left.sacks), away: String(right.sacks) },
     { label: "Turnovers", home: String(left.turnovers), away: String(right.turnovers) }
@@ -253,23 +255,38 @@ function teamStats(home: readonly PlayerGameStatLine[], away: readonly PlayerGam
 /** The box score for a played game, or null if it has not been played. */
 export function boxScore(state: Readonly<GameState>, gameId: string): BoxScore | null {
   const game = state.schedule.find((fixture) => fixture.id === gameId);
-  if (!game || !game.played || game.homeScore === null || game.awayScore === null) return null;
+  const completed = [...state.eventHistory].reverse().find(
+    (event): event is CompletedGameEvent => event.type === "GAME_COMPLETED" && event.gameId === gameId
+  );
+  const homeProgramId = game?.homeProgramId ?? completed?.homeProgramId;
+  const awayProgramId = game?.awayProgramId ?? completed?.awayProgramId;
+  const homeScore = game?.homeScore ?? completed?.homeScore;
+  const awayScore = game?.awayScore ?? completed?.awayScore;
+  const week = game?.week ?? completed?.week;
+  const season = completed?.season ?? state.season;
+  if (!homeProgramId || !awayProgramId || homeScore === null || homeScore === undefined
+    || awayScore === null || awayScore === undefined || week === undefined) return null;
   const lines = state.playerGameStats.filter((line) => line.gameId === gameId);
   if (lines.length === 0) return null;
-  const homeLines = lines.filter((line) => line.programId === game.homeProgramId);
-  const awayLines = lines.filter((line) => line.programId === game.awayProgramId);
+  const homeLines = lines.filter((line) => line.programId === homeProgramId);
+  const awayLines = lines.filter((line) => line.programId === awayProgramId);
   return {
     gameId,
-    season: state.season,
-    week: game.week,
-    home: buildTeam(state, game.homeProgramId, game.homeScore, homeLines),
-    away: buildTeam(state, game.awayProgramId, game.awayScore, awayLines),
+    season,
+    week,
+    home: buildTeam(state, homeProgramId, homeScore, homeLines),
+    away: buildTeam(state, awayProgramId, awayScore, awayLines),
     teamStats: teamStats(homeLines, awayLines)
   };
 }
 
 /** The most recent played game involving this program, for the recap screen. */
 export function latestBoxScore(state: Readonly<GameState>, programId: ProgramId): BoxScore | null {
+  const completed = state.eventHistory
+    .filter((event): event is CompletedGameEvent => event.type === "GAME_COMPLETED"
+      && (event.homeProgramId === programId || event.awayProgramId === programId))
+    .sort((left, right) => right.season - left.season || right.week - left.week)[0];
+  if (completed) return boxScore(state, completed.gameId);
   const played = state.schedule
     .filter((fixture) => fixture.played && (fixture.homeProgramId === programId || fixture.awayProgramId === programId))
     .sort((left, right) => right.week - left.week)[0];

@@ -139,11 +139,7 @@ export function emptyAllocation(): StaffAllocation {
 export function defaultAllocation(role: StaffRole, rating: number, trait?: StaffTrait): StaffAllocation {
   const capacity = staffCapacity(rating, trait);
   const allocation = emptyAllocation();
-  if (role === "STRENGTH_COACH") {
-    allocation.DEVELOP = Math.ceil(capacity * 0.6);
-    allocation.RECOVER = capacity - allocation.DEVELOP;
-    return allocation;
-  }
+  if (role === "STRENGTH_COACH") return allocation;
   if (role === "HEAD_COACH") {
     allocation.PREPARE = Math.ceil(capacity * 0.5);
     allocation.RECRUIT = capacity - allocation.PREPARE;
@@ -168,6 +164,7 @@ export function rebalanceAllocation(
   rating: number,
   trait: StaffTrait
 ): StaffAllocation {
+  if (outgoing.role === "STRENGTH_COACH") return emptyAllocation();
   const target = staffCapacity(rating, trait);
   const previous = outgoing.allocation ?? emptyAllocation();
   const spent = allocatedTotal(previous);
@@ -199,12 +196,60 @@ export function staffContribution(
   focus: StaffFocus
 ): number {
   return Object.values(state.staff)
-    .filter((member) => member.programId === programId)
+    // The strength coach is a fixed health investment, not part of the weekly
+    // attention economy. Ignore stale allocations from older saves too.
+    .filter((member) => member.programId === programId && member.role !== "STRENGTH_COACH")
     .reduce((total, member) => {
       const capacity = staffCapacity(member.rating, member.trait);
       const share = clamp((member.allocation?.[focus] ?? 0) / Math.max(1, capacity), 0, 1);
       return total + member.rating * share * roleFit(member.role, focus) * traitAptitude(member.trait, focus);
     }, 0);
+}
+
+export interface StrengthCoachBenefits {
+  /** Additional progress applied only to the strength player rating. */
+  strengthGrowthPercent: number;
+  /** Fatigue rating points removed from every scholarship player each week. */
+  fatigueRecoveryPoints: number;
+  /** Percentage reduction applied to each active player's weekly injury risk. */
+  injuryRiskReductionPercent: number;
+  /** Chance to remove one additional week from an existing injury. */
+  extraRecoveryChancePercent: number;
+}
+
+/**
+ * A strength coach has no weekly sliders. Salary buys four automatic, named
+ * health outcomes; none of these values feed preparation, scouting, recruiting,
+ * or general overall development.
+ */
+export function strengthCoachBenefits(
+  member: (Pick<StaffMember, "rating" | "role"> & { trait?: StaffTrait }) | undefined
+): StrengthCoachBenefits {
+  if (!member || member.role !== "STRENGTH_COACH") {
+    return {
+      strengthGrowthPercent: 0,
+      fatigueRecoveryPoints: 0,
+      injuryRiskReductionPercent: 0,
+      extraRecoveryChancePercent: 0
+    };
+  }
+  const strengthAptitude = traitAptitude(member.trait, "DEVELOP");
+  const healthAptitude = traitAptitude(member.trait, "RECOVER");
+  return {
+    strengthGrowthPercent: Math.round(member.rating * strengthAptitude / 5),
+    fatigueRecoveryPoints: Number((member.rating * healthAptitude / 30).toFixed(1)),
+    injuryRiskReductionPercent: Math.round(clamp(member.rating * healthAptitude / 4, 5, 35)),
+    extraRecoveryChancePercent: Math.round(clamp(member.rating * healthAptitude / 2, 10, 60))
+  };
+}
+
+export function programStrengthCoachBenefits(
+  state: Readonly<GameState>,
+  programId: string
+): StrengthCoachBenefits {
+  const coach = Object.values(state.staff)
+    .find((member) => member.programId === programId && member.role === "STRENGTH_COACH");
+  return strengthCoachBenefits(coach);
 }
 
 /**

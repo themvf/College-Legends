@@ -14,6 +14,7 @@ import {
   STAFF_TRAITS,
   focusShare,
   pickStaffTrait,
+  strengthCoachBenefits,
   staffCapacity,
   staffSkills,
   traitAptitude
@@ -202,10 +203,12 @@ export function staffModifiers(
       { label: "Fills in for a missing coordinator at", value: `${Math.round(rating * 0.82)} effective` }
     ];
   }
+  const health = strengthCoachBenefits(member);
   return [
-    { label: "Game prep", value: prep(0.55) },
-    { label: "Weekly player growth", value: `+${Math.round(rating * traitAptitude(member.trait, "DEVELOP") / 5)}%` },
-    { label: "Knocks off fatigue", value: `-${(rating * traitAptitude(member.trait, "RECOVER") / 30).toFixed(1)} a week` }
+    { label: "Player strength gains", value: `+${health.strengthGrowthPercent}% per training week` },
+    { label: "Fatigue recovery", value: `${health.fatigueRecoveryPoints} fatigue points per player per week` },
+    { label: "Injury prevention", value: `${health.injuryRiskReductionPercent}% lower injury risk per player-game` },
+    { label: "Injury recovery", value: `${health.extraRecoveryChancePercent}% chance to shorten an injury by 1 extra week` }
   ];
 }
 

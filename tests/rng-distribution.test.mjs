@@ -12,6 +12,7 @@ import {
   staffCapacity,
   staffContribution,
   staffSkills,
+  strengthCoachBenefits,
   latestBoxScore,
   boxScore,
   STAFF_TRAITS,
@@ -728,17 +729,19 @@ test("staff cards post what they change and can be replaced", () => {
   );
   // Deterministic: the market must not re-roll every time it is opened.
   assert.deepEqual(staffCandidatesFor(state, programId, coordinator.id), candidates);
-  // Every candidate is a comparable hire: a tendency, an hours-a-week figure,
-  // and one number per job on the same scale as his rating.
+  // Attention-economy coaches expose hours and jobs. The strength coach is a
+  // salary-for-health decision and exposes automatic outcomes instead.
   for (const candidate of candidates) {
     assert.ok(candidate.traitLabel && candidate.traitBlurb, "a candidate must say what he is known for");
-    assert.ok(candidate.hours >= 4, "a candidate must say how long a week he works");
-    assert.equal(candidate.skills.length, 5, "every job a coach does gets a number");
-    assert.ok(candidate.skills.filter((skill) => skill.strength).length === 2, "his two best jobs are flagged");
-    assert.ok(
-      candidate.skills[0].value >= candidate.skills[4].value,
-      "skills are presented best first"
-    );
+    if (candidate.role !== "STRENGTH_COACH") {
+      assert.ok(candidate.hours >= 4, "an allocatable coach must say how long a week he works");
+      assert.equal(candidate.skills.length, 5, "every allocatable job gets a number");
+      assert.ok(candidate.skills.filter((skill) => skill.strength).length === 2, "his two best jobs are flagged");
+      assert.ok(
+        candidate.skills[0].value >= candidate.skills[4].value,
+        "skills are presented best first"
+      );
+    }
   }
 
   const target = candidates[0];
@@ -753,6 +756,58 @@ test("staff cards post what they change and can be replaced", () => {
     Object.values(result.state.staff).some((member) => member.programId === programId && member.name === target.name),
     "the arriving coach should be on staff"
   );
+});
+
+test("the strength coach buys automatic strength and health outcomes, never staff attention", () => {
+  const state = beginSeason(createFictionalLeague("strength-coach-boundary", 24));
+  const programId = "program-1";
+  const coach = Object.values(state.staff)
+    .find((member) => member.programId === programId && member.role === "STRENGTH_COACH");
+  assert.ok(coach);
+  assert.deepEqual(
+    coach.allocation,
+    { PREPARE: 0, SCOUT: 0, RECRUIT: 0, DEVELOP: 0, RECOVER: 0 },
+    "a new strength coach must not enter the weekly allocation puzzle"
+  );
+
+  const benefits = strengthCoachBenefits(coach);
+  assert.ok(benefits.strengthGrowthPercent > 0, "the coach must improve strength-rating gains");
+  assert.ok(benefits.fatigueRecoveryPoints > 0, "the coach must recover fatigue points");
+  assert.ok(benefits.injuryRiskReductionPercent > 0, "the coach must lower injury risk");
+  assert.ok(benefits.extraRecoveryChancePercent > 0, "the coach must help shorten injuries");
+
+  const baseline = ["PREPARE", "SCOUT", "RECRUIT", "DEVELOP", "RECOVER"]
+    .map((focus) => staffContribution(state, programId, focus));
+  coach.allocation = { PREPARE: 99, SCOUT: 99, RECRUIT: 99, DEVELOP: 99, RECOVER: 99 };
+  assert.deepEqual(
+    ["PREPARE", "SCOUT", "RECRUIT", "DEVELOP", "RECOVER"]
+      .map((focus) => staffContribution(state, programId, focus)),
+    baseline,
+    "stale strength-coach allocations from an older save must have no engine effect"
+  );
+
+  const rejected = advanceWeek(state, [{
+    type: "SET_STAFF_ALLOCATION",
+    programId,
+    staffId: coach.id,
+    allocation: { PREPARE: 0, SCOUT: 0, RECRUIT: 0, DEVELOP: 0, RECOVER: 1 }
+  }]);
+  assert.ok(
+    rejected.events.some((event) => event.type === "COMMAND_REJECTED"
+      && event.command.type === "SET_STAFF_ALLOCATION"
+      && event.command.staffId === coach.id),
+    "the command boundary must reject strength-coach allocation"
+  );
+
+  const modifiers = staffModifiers(coach);
+  assert.deepEqual(
+    modifiers.map((modifier) => modifier.label),
+    ["Player strength gains", "Fatigue recovery", "Injury prevention", "Injury recovery"]
+  );
+  assert.match(modifiers[0].value, /% per training week$/);
+  assert.match(modifiers[1].value, /fatigue points per player per week$/);
+  assert.match(modifiers[2].value, /% lower injury risk per player-game$/);
+  assert.match(modifiers[3].value, /% chance to shorten an injury by 1 extra week$/);
 });
 
 test("the scouting department scales with funding and with the hours coaches give it", () => {
@@ -1300,6 +1355,14 @@ test("the box score prints the game that was actually played", () => {
   const box = latestBoxScore(state, "program-1");
   assert.ok(box, "a played game must produce a box score");
   assert.equal(boxScore(state, box.gameId).gameId, box.gameId, "and it must be reachable by game id");
+  const expectedColumns = {
+    PASSING: ["Completions / attempts", "Yards", "Yards / attempt", "Touchdowns", "Interceptions", "Sacks allowed"],
+    RUSHING: ["Carries", "Yards", "Yards / carry", "Touchdowns"],
+    RECEIVING: ["Receptions", "Yards", "Yards / reception", "Touchdowns", "Targets"],
+    DEFENSE: ["Tackles", "Tackles for loss", "Sacks", "Interceptions", "Pass breakups"],
+    KICKING: ["Made / attempted", "Made %", "Points"],
+    PUNTING: ["Punts", "Punt yards", "Yards / punt"]
+  };
 
   for (const team of [box.home, box.away]) {
     const lines = state.playerGameStats.filter(
@@ -1314,6 +1377,11 @@ test("the box score prints the game that was actually played", () => {
       const last = entry.rows[entry.rows.length - 1];
       assert.equal(last.total, true, `${entry.id} must end with a team line`);
       assert.ok(entry.rows.length > 1, `${entry.id} must have somebody in it`);
+      assert.deepEqual(
+        entry.columns,
+        expectedColumns[entry.id],
+        `${entry.id} must state what every displayed number measures`
+      );
       assert.ok(
         entry.rows.every((row) => row.values.length === entry.columns.length),
         `${entry.id} rows must fill every column`
@@ -1340,6 +1408,24 @@ test("the box score prints the game that was actually played", () => {
   }
 
   assert.ok(box.teamStats.length >= 5, "the comparison panel needs something to compare");
+  assert.ok(
+    box.teamStats.some((stat) => stat.label === "Passing yards")
+      && box.teamStats.some((stat) => stat.label === "Rushing yards"),
+    "team statistics must name the yardage unit"
+  );
   const totalYards = box.teamStats.find((stat) => stat.label === "Total yards");
   assert.ok(Number(totalYards.home) > 0 && Number(totalYards.away) > 0);
+
+  const afterScheduleRollover = structuredClone(state);
+  afterScheduleRollover.schedule = afterScheduleRollover.schedule.filter((game) => game.id !== box.gameId);
+  assert.equal(
+    boxScore(afterScheduleRollover, box.gameId)?.gameId,
+    box.gameId,
+    "a completed game's box score must survive after its fixture leaves the active schedule"
+  );
+  assert.equal(
+    latestBoxScore(afterScheduleRollover, "program-1")?.gameId,
+    box.gameId,
+    "the postgame screen must still find the latest completed game after schedule rollover"
+  );
 });

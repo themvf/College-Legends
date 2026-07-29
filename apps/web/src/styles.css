@@ -182,19 +182,9 @@ dd { margin:0; font-weight:700; text-align:right; }
 .recap-cascade strong { text-align:right; }
 .recap-cascade .marquee-note { grid-column:1/-1; color:#e0b057; }
 .recap-feature { border-color:#436d8e; }
-.weekly-box-score { border-top:1px solid #315270; margin-top:1rem; padding-top:1rem; }
-.weekly-box-score h3 { color:#e0b057; font-size:.72rem; letter-spacing:.09em; margin:.85rem 0 .55rem; text-transform:uppercase; }
-.team-stat-grid { display:grid; grid-template-columns:minmax(5rem,1fr) repeat(6,minmax(3.5rem,.55fr)); overflow-x:auto; }
-.team-stat-grid>span { border-top:1px solid #294864; padding:.55rem .4rem; text-align:right; font-size:.76rem; }
-.team-stat-grid>span:nth-child(7n+1) { text-align:left; font-weight:800; }
-.team-stat-grid>span:nth-child(-n+7) { color:#91a8b9; font-size:.65rem; font-weight:800; letter-spacing:.05em; text-transform:uppercase; }
-.player-box-score { border:1px solid #315270; border-radius:.65rem; background:#0d2d49; margin-top:.55rem; overflow:hidden; }
-.player-box-score summary { cursor:pointer; color:#eaf2f8; font-size:.8rem; font-weight:800; padding:.75rem; }
-.player-box-score>div { border-top:1px solid #315270; padding:0 .75rem; }
-.player-box-score p { display:grid; grid-template-columns:minmax(11rem,.7fr) minmax(17rem,1.3fr); gap:1rem; border-top:1px solid #294864; margin:0; padding:.55rem 0; font-size:.72rem; }
-.player-box-score p:first-child { border-top:0; }
-.player-box-score p span b { color:#e0b057; display:inline-block; width:2rem; }
-.player-box-score p strong { text-align:right; }
+.box-score-button { margin-top:1rem; }
+.inline-link { display:block; margin:.25rem 0 0 auto; padding:0; border:0; background:transparent; color:#e0b057;
+  font-size:.7rem; font-weight:800; text-decoration:underline; }
 .decision-legend { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.65rem; padding:0 1.25rem 1.25rem; }
 .decision-legend article,.payoff-strip,.choice-compare { border:1px solid #315270; border-radius:.65rem; background:#0d2d49; padding:.75rem; }
 .decision-legend strong,.decision-legend span,.decision-legend small { display:block; }
@@ -256,8 +246,6 @@ dd { margin:0; font-weight:700; text-align:right; }
   .season-honors-grid { grid-template-columns:1fr; }
   .recap-cascade { grid-template-columns:1fr; }
   .recap-cascade .marquee-note { grid-column:auto; }
-  .player-box-score p { grid-template-columns:1fr; gap:.3rem; }
-  .player-box-score p strong { text-align:left; color:#b7c6d4; }
   .scouting-actions { grid-template-columns:1fr; padding-inline:1rem; }
   .recruiting-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .position-search { min-height:auto; }

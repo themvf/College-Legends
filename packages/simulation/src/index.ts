@@ -19,6 +19,7 @@ import {
   staffCapacity,
   staffContribution,
   staffSkills,
+  programStrengthCoachBenefits,
   STAFF_FOCUSES,
   upcomingDossiers,
   weeklyScoutingOutput,
@@ -91,6 +92,8 @@ export {
   staffCapacity,
   staffContribution,
   staffSkills,
+  programStrengthCoachBenefits,
+  strengthCoachBenefits,
   STAFF_FOCUS_LABELS,
   STAFF_FOCUSES,
   STAFF_TRAITS,
@@ -354,10 +357,15 @@ export function projectedDevelopmentPayoff(
   const coachingModifier = 1 + staffContribution(state, program.id, "DEVELOP") / 500;
   const scale = clamp((0.72 + player.workEthic * 0.45) * fatigueModifier * trainingModifier * coachingModifier, 0.5, 1.8);
   const payoff = developmentPayoff(focus, player.position);
+  const strengthCoach = programStrengthCoachBenefits(state, program.id);
   return {
     ...payoff,
     ratingChanges: Object.fromEntries(
-      (Object.entries(payoff.ratingChanges) as [PlayerRating, number][]).map(([rating, change]) => [rating, Number((change * scale * intensity).toFixed(2))])
+      (Object.entries(payoff.ratingChanges) as [PlayerRating, number][]).map(([rating, change]) => [
+        rating,
+        Number((change * scale * intensity
+          * (rating === "strength" ? 1 + strengthCoach.strengthGrowthPercent / 100 : 1)).toFixed(2))
+      ])
     ),
     fatigueChange: Number((payoff.fatigueChange * intensity).toFixed(1))
   };
@@ -1254,6 +1262,15 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That coach does not work for this program." });
         continue;
       }
+      if (staff.role === "STRENGTH_COACH") {
+        events.push({
+          type: "COMMAND_REJECTED",
+          programId: command.programId,
+          command,
+          reason: `${staff.name} works automatically on strength and player health; the strength coach has no weekly hours to allocate.`
+        });
+        continue;
+      }
       const capacity = staffCapacity(staff.rating, staff.trait);
       const allocation = emptyAllocation();
       for (const focus of STAFF_FOCUSES) {
@@ -2120,13 +2137,14 @@ export function gamePrepContribution(member: Pick<StaffMember, "rating" | "role"
 
 function recoverPlayers(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
   for (const program of Object.values(state.programs)) {
-    const recoveryStaff = Object.values(state.staff).filter((staff) => staff.programId === program.id && focusShare(staff, "RECOVER") > 0);
-    const fatigueRecovery = staffContribution(state, program.id, "RECOVER") / 30;
+    const strengthCoach = programStrengthCoachBenefits(state, program.id);
+    const allocatedRecovery = staffContribution(state, program.id, "RECOVER") / 30;
+    const fatigueRecovery = allocatedRecovery + strengthCoach.fatigueRecoveryPoints;
     for (const player of Object.values(state.players).filter((candidate) => candidate.programId === program.id && candidate.eligibility.rosterStatus === "SCHOLARSHIP")) {
       player.fatigue = clamp(Number((player.fatigue - fatigueRecovery).toFixed(1)), 0, 100);
       if (player.injuryWeeksRemaining <= 0) continue;
-      const extraRecovery = recoveryStaff.some((staff) =>
-        rng.at(`${player.id}:${staff.id}:extra-recovery`) < staff.rating * focusShare(staff, "RECOVER") / 200) ? 1 : 0;
+      const extraRecovery = rng.at(`${player.id}:strength-coach:extra-recovery`)
+        < strengthCoach.extraRecoveryChancePercent / 100 ? 1 : 0;
       player.injuryWeeksRemaining = Math.max(0, player.injuryWeeksRemaining - 1 - extraRecovery);
       if (player.injuryWeeksRemaining === 0) events.push({ type: "PLAYER_RECOVERED", season: state.season, week: state.week, playerId: player.id });
     }
@@ -2143,7 +2161,9 @@ function processInjuries(state: GameState, rng: AddressableRng, events: GameEven
     const preventionModifier = clamp(1 - (player.ratings.injuryPrevention - 50) / 160, 0.55, 1.15);
     const fatigueModifier = 1 + player.fatigue / 80;
     const strengthTrainingModifier = player.developmentFocus === "STRENGTH" ? 1.2 : 1;
-    const risk = clamp(0.0035 * preventionModifier * fatigueModifier * strengthTrainingModifier, 0.001, 0.02);
+    const strengthCoach = programStrengthCoachBenefits(state, player.programId);
+    const coachPreventionModifier = 1 - strengthCoach.injuryRiskReductionPercent / 100;
+    const risk = clamp(0.0035 * preventionModifier * fatigueModifier * strengthTrainingModifier * coachPreventionModifier, 0.001, 0.02);
     if (rng.at(`${player.id}:injury`) >= risk) continue;
     const weeks = 1 + Math.floor(rng.between(`${player.id}:injury-length`, 0, 3));
     player.injuryWeeksRemaining = weeks;

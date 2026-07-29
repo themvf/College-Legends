@@ -669,6 +669,22 @@ assertions: a test checks the passing table's team line equals the yardage the
 drive loop produced, that receiving reconciles with passing, and that touchdowns
 and field goals still add up to the number on the scoreboard.
 
+**The postgame flow is now the first screen after a played game.** Completing
+`Advance week` opens `This Week → Last Saturday` automatically with the full
+box score first and the game-plan report below it. The dashboard reopens the
+latest box score, and every played fixture on the schedule has its own
+`View box score` action. `boxScore()` can rebuild a completed game from its
+structured `GAME_COMPLETED` event after that fixture leaves the active schedule,
+so the Week 14 rollover cannot erase the postgame screen.
+
+There is one authoritative box-score component. The older recap-only player
+lines were removed because they duplicated the same statistics with different
+totals and unexplained abbreviations. Every table column now states its unit or
+count in full: yards, yards per attempt/carry/reception, points, percentages,
+touchdowns, interceptions, sacks, tackles, targets, or attempts. The postgame
+business recap likewise labels fans, press points, attendance, seat capacity,
+money, and the 0–99 player game-rating scale.
+
 ## The weekly decision loop
 
 Advancing a week is meant to be a ritual rather than a button. Five decisions
@@ -822,6 +838,14 @@ system already does this; the spread needs widening and the unit renaming.
 recovery and injury weeks, no sliders. That cuts the weekly screen from four
 allocation decisions to three, and gives money something to buy that attention
 cannot.
+
+**Built in the strength-coach slice.** The strength coach now has no allocation
+sliders and contributes nothing to preparation, scouting, recruiting, or
+general player development. Salary automatically buys four named outcomes:
+percentage faster strength-rating gains, fatigue points recovered per player per
+week, percentage lower injury risk per player-game, and a percentage chance to
+remove one additional injury week. The engine rejects allocation commands for
+the post and ignores stale allocations from older saves.
 
 **Only a coordinator's prep hours install his own side.** The head coach's are
 general team quality and cover at a discount. That is what keeps "who runs my
