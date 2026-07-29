@@ -50,6 +50,7 @@ import {
   staffCandidatesFor,
   OFFENSIVE_SCHEMES,
   DEFENSIVE_SCHEMES,
+  personnelSummary,
   rosterSchemeFit,
   programRoster,
   coachSchemeFit,
@@ -490,6 +491,7 @@ function SetUpProgram({ busy, game, onPrepare, onDone }: {
             scheme: (side === "OFFENSE" ? { offense: fit.scheme } : { defense: fit.scheme }) as Partial<SchemeIdentity>
           })}>
           <strong>{fit.label} · {fit.verdict}</strong>
+          <span className="effect">{personnelSummary(side, fit.scheme)}</span>
           <span className="effect fit-line">{fit.summary}</span>
           <span className="effect">{fit.blurb}</span>
           <div className="execution-bar" aria-label={`${fit.label} roster fit`}>

@@ -280,32 +280,37 @@ test("game-plan calls beat their counter and lose to it", () => {
   // because it measures the mechanism directly and separates far more cleanly
   // from noise at a sample size a test can afford.
   const production = (runPassBalance, defensivePriority) => {
-    let state = beginSeason(createFictionalLeague("game-plan-matchups", 24));
-    const programs = Object.keys(state.programs);
-    const isOffense = (programId) => programs.indexOf(programId) % 2 === 0;
-    state.gamePlans = Object.fromEntries(programs.map((programId) => [
-      programId,
-      isOffense(programId)
-        ? { ...state.gamePlans[programId], runPassBalance }
-        : { ...state.gamePlans[programId], defensivePriority }
-    ]));
     let rushingYards = 0;
     let passingYards = 0;
     let games = 0;
-    for (let week = 0; week < 12; week += 1) {
-      const result = advanceWeek(state);
-      state = result.state;
-      for (const event of result.events) {
-        if (event.type !== "GAME_PLAN_REPORT") continue;
-        if (!isOffense(event.programId) || isOffense(event.opponentProgramId)) continue;
-        const rush = event.matchups.find((entry) => entry.unit === "rushOffense");
-        const pass = event.matchups.find((entry) => entry.unit === "passOffense");
-        rushingYards += rush.yards;
-        passingYards += pass.yards;
-        games += 1;
+    // Personnel groupings make the matchup population vary more between
+    // generated leagues. Pool independent leagues instead of trusting one
+    // unusually run- or pass-shaped schedule.
+    for (let league = 0; league < 3; league += 1) {
+      let state = beginSeason(createFictionalLeague(`game-plan-matchups-${league}`, 24));
+      const programs = Object.keys(state.programs);
+      const isOffense = (programId) => programs.indexOf(programId) % 2 === 0;
+      state.gamePlans = Object.fromEntries(programs.map((programId) => [
+        programId,
+        isOffense(programId)
+          ? { ...state.gamePlans[programId], runPassBalance }
+          : { ...state.gamePlans[programId], defensivePriority }
+      ]));
+      for (let week = 0; week < 12; week += 1) {
+        const result = advanceWeek(state);
+        state = result.state;
+        for (const event of result.events) {
+          if (event.type !== "GAME_PLAN_REPORT") continue;
+          if (!isOffense(event.programId) || isOffense(event.opponentProgramId)) continue;
+          const rush = event.matchups.find((entry) => entry.unit === "rushOffense");
+          const pass = event.matchups.find((entry) => entry.unit === "passOffense");
+          rushingYards += rush.yards;
+          passingYards += pass.yards;
+          games += 1;
+        }
       }
     }
-    assert.ok(games > 25, `expected a meaningful sample, saw ${games}`);
+    assert.ok(games > 75, `expected a meaningful pooled sample, saw ${games}`);
     return { rushingYards: rushingYards / games, passingYards: passingYards / games };
   };
 
@@ -1049,6 +1054,60 @@ test("a roster suits some schemes better than others, and it is never an exact n
   const sharp = rosterSchemeFit(roster, "OFFENSE", 0.95)[0];
   assert.ok(sharp.high - sharp.low < vague.high - vague.low, "confidence must narrow the band");
   assert.ok(sharp.high > sharp.low, "and never collapse it");
+});
+
+test("opening rosters have real depth-chart gaps and character", () => {
+  const state = createFictionalLeague("roster-shape", 72);
+  const programs = Object.values(state.programs);
+  const average = (values) => values.reduce((total, value) => total + value, 0) / Math.max(1, values.length);
+  const median = (values) => [...values].sort((left, right) => left - right)[Math.floor(values.length / 2)];
+  const rosterFor = (program) => programRoster(state, program.id);
+
+  for (const tier of ["LOW", "MID", "POWER"]) {
+    const gaps = programs
+      .filter((program) => program.tier === tier)
+      .map((program) => rosterFor(program)
+        .filter((player) => player.position === "WR")
+        .sort((left, right) => right.overall - left.overall))
+      .map((room) => room[0].overall - room[3].overall);
+    assert.ok(
+      median(gaps) >= 4,
+      `${tier}: WR1 and WR4 must be meaningfully different (median gap ${median(gaps)})`
+    );
+  }
+
+  const characterProfile = (character) => programs
+    .filter((program) => program.character === character)
+    .map((program) => {
+      const roster = rosterFor(program);
+      const rosterAverage = average(roster.map((player) => player.overall));
+      const topQuarter = average([...roster]
+        .sort((left, right) => right.overall - left.overall)
+        .slice(0, 22)
+        .map((player) => player.overall));
+      const skill = average(roster
+        .filter((player) => ["QB", "WR", "DB"].includes(player.position))
+        .map((player) => player.overall));
+      const trench = average(roster
+        .filter((player) => ["OL", "DL"].includes(player.position))
+        .map((player) => player.overall));
+      return { starPremium: topQuarter - rosterAverage, skillBias: skill - trench };
+    });
+  const frontRunner = characterProfile("FRONTRUNNER");
+  const developer = characterProfile("DEVELOPER");
+  const talentMagnet = characterProfile("TALENT_MAGNET");
+  const diehard = characterProfile("DIEHARD");
+
+  assert.ok(
+    average(frontRunner.map((profile) => profile.starPremium))
+      > average(developer.map((profile) => profile.starPremium)) + 0.5,
+    "front-runner rosters should be more top-heavy than developer rosters"
+  );
+  assert.ok(
+    average(talentMagnet.map((profile) => profile.skillBias))
+      > average(diehard.map((profile) => profile.skillBias)) + 1.5,
+    "talent magnets should lean toward premium skill rooms while diehards lean toward the trenches"
+  );
 });
 
 test("a coordinator installing someone else's scheme costs execution, not options", () => {

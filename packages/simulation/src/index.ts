@@ -2,7 +2,7 @@ import type { AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, Game
 import { FICTIONAL_PROGRAMS, fictionalPersonName, PROGRAM_CHARACTERS } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
 import { weeklyBriefing as buildBriefing, type BriefingItem } from "./briefing.js";
-import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES, bestSchemeFor, programRoster, coachSchemeFit } from "./scheme.js";
+import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES, bestSchemeFor, programRoster, coachSchemeFit, schemePersonnel } from "./scheme.js";
 import { DEFAULT_GAME_PLAN, OFFENSIVE_IDENTITY_LABELS, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
 import { opponentScoutingReport, preparationWeeklyPoints, projectedGamePlan, scheduledOpponent, scoutingConfidence, filmGamesAvailable } from "./scouting.js";
 import {
@@ -62,8 +62,12 @@ export {
   DEFENSIVE_SCHEMES,
   OFFENSIVE_SCHEME_BLURBS,
   OFFENSIVE_SCHEMES,
+  OFFENSIVE_PERSONNEL,
+  DEFENSIVE_PERSONNEL,
+  personnelSummary,
   programRoster,
   rosterSchemeFit,
+  schemePersonnel,
   schemeAffinity,
   schemeFitLabel,
   staffSide
@@ -130,9 +134,42 @@ const STAFF_ROLES: readonly StaffRole[] = ["HEAD_COACH", "OFFENSIVE_COORDINATOR"
 const REGULAR_SEASON_WEEKS = [1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14] as const;
 const DIVISION_GAME_COUNT = 8;
 const STADIUM_CAPACITY_BY_LEVEL: Readonly<Record<number, number>> = { 1: 25_000, 2: 36_000, 3: 50_000, 4: 68_000, 5: 88_000 };
-const STARTER_COUNTS: Readonly<Record<Position, number>> = { QB: 1, RB: 2, WR: 3, TE: 1, OL: 5, DL: 4, LB: 3, DB: 4, K: 1, P: 1 };
 const OFFENSIVE_POSITIONS = new Set<Position>(["QB", "RB", "WR", "TE", "OL"]);
 const DEFENSIVE_POSITIONS = new Set<Position>(["DL", "LB", "DB"]);
+
+const ROOM_DEPTH_SLOPE: Readonly<Record<Position, number>> = {
+  QB: 2.1,
+  RB: 1.35,
+  WR: 1.55,
+  TE: 1.45,
+  OL: 0.9,
+  DL: 1.05,
+  LB: 1.2,
+  DB: 1.25,
+  K: 1.4,
+  P: 1.4
+};
+
+const CHARACTER_DEPTH_SCALE: Readonly<Record<Program["character"], number>> = {
+  BLUEBLOOD: 0.9,
+  DIEHARD: 1,
+  FRONTRUNNER: 1.25,
+  TALENT_MAGNET: 1.15,
+  DEVELOPER: 0.9
+};
+
+/**
+ * Small football fingerprints layered on top of the much larger business
+ * characters. They are centred before use, so character changes where a roster
+ * is strong without silently making one character a higher difficulty tier.
+ */
+const CHARACTER_ROOM_BIAS: Readonly<Record<Program["character"], Readonly<Partial<Record<Position, number>>>>> = {
+  BLUEBLOOD: { QB: 0.5, OL: 0.5, DL: 0.5, K: -1, P: -1 },
+  DIEHARD: { OL: 1.5, DL: 1.5, LB: 1, WR: -1, DB: -0.5 },
+  FRONTRUNNER: { QB: 1.5, WR: 1.5, DB: 1, OL: -1, DL: -1 },
+  TALENT_MAGNET: { QB: 2, WR: 2, DB: 1.5, OL: -1.5, DL: -1 },
+  DEVELOPER: { RB: 0.75, TE: 0.75, OL: 0.75, LB: 0.75, QB: -0.75, WR: -0.5, DB: -0.5 }
+};
 export const SEASON_AWARD_LABELS: Readonly<Record<SeasonAwardType, string>> = {
   PLAYER_OF_THE_YEAR: "Legends Player of the Year",
   OFFENSIVE_PLAYER_OF_THE_YEAR: "Offensive Player of the Year",
@@ -406,6 +443,58 @@ function tailedDraw(rng: AddressableRng, key: string, typical: number, tail: num
   return typical + rng.between(`${key}:tail`, 0, tail);
 }
 
+interface InitialRosterShape {
+  roomBias: Readonly<Record<Position, number>>;
+  depthScale: number;
+}
+
+/**
+ * Gives each roster strong and weak rooms without moving its tier average.
+ * Position draws are centred by scholarship count, so a lucky quarterback room
+ * has to be paid for somewhere else on the same 85-player roster.
+ */
+function initialRosterShape(
+  rng: AddressableRng,
+  programId: string,
+  character: Program["character"]
+): InitialRosterShape {
+  const positions = Object.keys(ROSTER_COMPOSITION) as Position[];
+  const authored = CHARACTER_ROOM_BIAS[character];
+  const raw = Object.fromEntries(positions.map((position) => [
+    position,
+    (authored[position] ?? 0) + rng.normal(`${programId}:room:${position}`, 2.5) * 1.7
+  ])) as Record<Position, number>;
+  const rosterSize = Math.max(1, STARTING_ROSTER_SIZE);
+  const weightedAverage = positions.reduce(
+    (total, position) => total + raw[position] * ROSTER_COMPOSITION[position],
+    0
+  ) / rosterSize;
+  return {
+    roomBias: Object.fromEntries(positions.map((position) => [
+      position,
+      Number((raw[position] - weightedAverage).toFixed(2))
+    ])) as Record<Position, number>,
+    depthScale: CHARACTER_DEPTH_SCALE[character]
+  };
+}
+
+function initialPlayerOverall(
+  baseline: number,
+  position: Position,
+  roomOrdinal: number,
+  shape: InitialRosterShape,
+  rng: AddressableRng,
+  playerId: string
+): number {
+  const roomSize = ROSTER_COMPOSITION[position];
+  // Centring the rank term preserves the room's average while creating an
+  // actual depth chart: WR1 and WR4 no longer arrive two points apart.
+  const centredRank = (roomSize - 1) / 2 - roomOrdinal;
+  const depth = centredRank * ROOM_DEPTH_SLOPE[position] * shape.depthScale;
+  const individualNoise = rng.normal(`${playerId}:overall`, 2.5) * 1.65;
+  return clamp(Math.round(baseline + shape.roomBias[position] + depth + individualNoise), 40, 99);
+}
+
 /**
  * How hard one week of coaching attention lands. One player gets more than he
  * would in a group; a whole room gets less each but more in total.
@@ -626,11 +715,16 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
         schemePreference: assignSchemeIdentity(rng, `${staffId}:scheme`)
       };
     }
+    const rosterShape = initialRosterShape(rng, id, definition.character);
+    const roomOrdinals = Object.fromEntries(
+      (Object.keys(ROSTER_COMPOSITION) as Position[]).map((position) => [position, 0])
+    ) as Record<Position, number>;
     for (let rosterIndex = 0; rosterIndex < rosterPositions.length; rosterIndex += 1) {
       const playerId = `${id}-player-${rosterIndex + 1}`;
       const personOrdinal = index * (STARTING_ROSTER_SIZE + STAFF_ROLES.length) + STAFF_ROLES.length + rosterIndex;
-      const overall = Math.round(rng.between(`${playerId}:overall`, baseline - 5, baseline + 5));
       const position = rosterPositions[rosterIndex]!;
+      const roomOrdinal = roomOrdinals[position]++;
+      const overall = initialPlayerOverall(baseline, position, roomOrdinal, rosterShape, rng, playerId);
       state.players[playerId] = {
         id: playerId,
         name: nameFor(personOrdinal),
@@ -641,7 +735,15 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
         // rosters carry more headroom — and a tail, so a rebuild can inherit a
         // genuine star nobody knew was there.
         potential: clamp(
-          Math.round(overall + upsideFloor + tailedDraw(rng, `${playerId}:potential`, 9, 16)),
+          Math.round(
+            overall
+            + upsideFloor
+            + tailedDraw(rng, `${playerId}:potential`, 9, 16)
+            // Developer programs inherit raw depth that has more room to grow.
+            + (definition.character === "DEVELOPER"
+              ? Math.max(0, roomOrdinal - ROSTER_COMPOSITION[position] / 2) * 0.35
+              : 0)
+          ),
           overall,
           99
         ),
@@ -2343,9 +2445,12 @@ export function activeDepthChart(state: Readonly<GameState>, programId: string):
 
 function activeLineup(state: Readonly<GameState>, programId: string): Player[] {
   const chart = activeDepthChart(state, programId);
+  const identity = state.programs[programId]?.schemeIdentity;
+  const offense = identity ? schemePersonnel("OFFENSE", identity.offense) : {};
+  const defense = identity ? schemePersonnel("DEFENSE", identity.defense) : {};
   return (Object.keys(chart) as Position[]).flatMap((position) =>
     chart[position]
-      .slice(0, STARTER_COUNTS[position])
+      .slice(0, offense[position] ?? defense[position] ?? (position === "K" || position === "P" ? 1 : 0))
       .map((playerId) => state.players[playerId])
       .filter((player): player is Player => Boolean(player))
   );

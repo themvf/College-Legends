@@ -81,8 +81,6 @@ const TEMPO: Readonly<Record<OffensiveTempo, { drives: number; fatigue: number }
   CONTROL_CLOCK: { drives: 11, fatigue: -0.8 }
 };
 
-const STARTER_COUNTS: Readonly<Record<Position, number>> = { QB: 1, RB: 2, WR: 3, TE: 1, OL: 5, DL: 4, LB: 3, DB: 4, K: 1, P: 1 };
-
 /** Execution at this level is par; above it is a bonus, below it a penalty. */
 export const EXECUTION_BASELINE = 0.55;
 export const EXECUTION_COMPETENCE_WEIGHT = 9;

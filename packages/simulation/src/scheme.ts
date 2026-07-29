@@ -48,6 +48,52 @@ export const DEFENSIVE_SCHEME_BLURBS: Readonly<Record<DefensiveIdentity, string>
 };
 
 /**
+ * The players a scheme actually puts into the Saturday rotation. The offense
+ * deliberately totals twelve because the engine tracks a second back or
+ * receiver as a rotating contributor; the defense fields the usual eleven.
+ *
+ * This is the first, most legible part of scheme fit: an Air Raid asks for WR4
+ * and a nickel defense asks for DB5 before any explicit fit formula is applied.
+ */
+export const OFFENSIVE_PERSONNEL: Readonly<Record<OffensiveIdentity, Readonly<Partial<Record<Position, number>>>>> = {
+  POWER_RUN: { QB: 1, RB: 2, WR: 2, TE: 2, OL: 5 },
+  TRIPLE_OPTION: { QB: 1, RB: 3, WR: 2, TE: 1, OL: 5 },
+  PRO_BALANCED: { QB: 1, RB: 2, WR: 3, TE: 1, OL: 5 },
+  SPREAD_TEMPO: { QB: 1, RB: 1, WR: 4, TE: 1, OL: 5 },
+  AIR_RAID: { QB: 1, RB: 1, WR: 4, TE: 1, OL: 5 }
+};
+
+export const DEFENSIVE_PERSONNEL: Readonly<Record<DefensiveIdentity, Readonly<Partial<Record<Position, number>>>>> = {
+  BEND_DONT_BREAK: { DL: 3, LB: 3, DB: 5 },
+  FOUR_THREE_BASE: { DL: 4, LB: 3, DB: 4 },
+  ZONE_BLITZ: { DL: 3, LB: 4, DB: 4 },
+  NICKEL_PRESSURE: { DL: 4, LB: 2, DB: 5 }
+};
+
+export function schemePersonnel(
+  side: "OFFENSE" | "DEFENSE",
+  scheme: OffensiveIdentity | DefensiveIdentity
+): Readonly<Partial<Record<Position, number>>> {
+  return side === "OFFENSE"
+    ? OFFENSIVE_PERSONNEL[scheme as OffensiveIdentity]
+    : DEFENSIVE_PERSONNEL[scheme as DefensiveIdentity];
+}
+
+export function personnelSummary(
+  side: "OFFENSE" | "DEFENSE",
+  scheme: OffensiveIdentity | DefensiveIdentity
+): string {
+  const grouping = schemePersonnel(side, scheme);
+  const order: readonly Position[] = side === "OFFENSE"
+    ? ["QB", "RB", "WR", "TE", "OL"]
+    : ["DL", "LB", "DB"];
+  return order
+    .filter((position) => (grouping[position] ?? 0) > 0)
+    .map((position) => `${grouping[position]} ${position}`)
+    .join(" · ");
+}
+
+/**
  * Where each scheme sits on a run–pass axis. Used to score how close two schemes
  * are, which is cheaper and more consistent than authoring a 25-cell fit table —
  * and it means a coach hired for the wrong scheme is wrong by a *degree*.
@@ -199,11 +245,9 @@ export function rosterSchemeFit(
   const raw = schemes.map((scheme) => side === "OFFENSE"
     ? scoreDemands(roster, OFFENSIVE_DEMANDS[scheme as OffensiveIdentity])
     : scoreDemands(roster, DEFENSIVE_DEMANDS[scheme as DefensiveIdentity]));
-  // Spread the scores across the scale before showing them. A generated roster
-  // is internally uniform, so raw scores land within six points of each other
-  // and every scheme reads "about 60%" — which tells the player nothing. The
-  // question this screen answers is comparative ("which of these suits my
-  // guys"), so the answer is scaled against the other options, not an absolute.
+  // This comparative scale predates the shaped-roster generator. It remains the
+  // takeover-screen estimate until slice 2 replaces it with weighted role
+  // deficits and derived traits; slice 1 deliberately changes personnel only.
   const average = raw.reduce((total, value) => total + value, 0) / Math.max(1, raw.length);
   return schemes.map((scheme, index) => {
     const centre = clamp(64 + (raw[index]! - average) * 3.2, 24, 94);

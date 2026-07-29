@@ -762,7 +762,8 @@ something it has never repped, which is why `ALIGNMENT_COST` exists. The system'
 reward was designed out from under it. No amount of rewriting the card fixes
 that.
 
-**Rosters have no shape, so nothing can measure fit.** Measured at league
+**Rosters had no shape, so nothing could measure fit — FIXED in slice 1.**
+Measured before the fix at league
 creation, 24 programs:
 
 | tier | roster avg | QB1 | WR1 / WR2 / WR3 / WR4 | worst starting OL |
@@ -774,10 +775,17 @@ creation, 24 programs:
 **A two-point spread from WR1 to WR4 at every tier.** Any personnel-requirement
 system built on top of this is measuring noise. This is the same defect papered
 over in `rosterSchemeFit` by spreading scores comparatively on screen; that was a
-display hack over a generation problem.
+display hack over a generation problem. The centred room generator now produces
+a 5.5–5.9 point average WR1-to-WR4 gap while preserving tier roster averages at
+68.0 / 75.0 / 83.0. Front-runner rosters are intentionally top-heavy, talent
+magnets lean toward premium skill rooms, diehards lean toward the trenches, and
+developers inherit more depth and headroom.
 
-**The lineup cannot express the schemes.** `STARTER_COUNTS` is fixed at 3 WR and
-4 DB. You cannot field an Air Raid or a nickel package today.
+**The lineup could not express the schemes — FIXED in slice 1.**
+`schemePersonnel()` now controls the active rotation: an Air Raid uses four
+receivers, Power Run uses two tight ends, Nickel Pressure uses five defensive
+backs, and 4–3 Base uses three linebackers. The setup screen posts each grouping
+before the player chooses.
 
 ### The architecture
 
@@ -960,9 +968,10 @@ already calls for, not as another consumer of full-state scans.
 
 ### Sequencing — four slices, each playable
 
-1. **Generation and personnel groupings.** No fit math at all. Rosters get shape,
-   the Air Raid fields four receivers, WR4 suddenly matters. Re-baseline the
-   distribution tests.
+1. ~~**Generation and personnel groupings.**~~ **Done.** No fit math was added.
+   Rosters have centred room strength and real depth curves; each scheme now
+   controls the Saturday personnel grouping. The distribution suite was
+   re-baselined by pooling the matchup counter test across independent leagues.
 2. **Derived traits, the fit score, prospect fit ranges.** Read-only — it
    diagnoses, it does not change results. Ships the whole recruiting and
    depth-chart payoff on its own.
@@ -1014,10 +1023,10 @@ Two assertions that must hold or the whole thing has failed:
 7. ~~The scouting department, staff hour allocation, and one weekly screen~~ —
    done; see "The scouting department". `facilities.SCOUTING` has an upgrade
    cost but no recurring one, which is the same gap as every other facility.
-8. **The attention economy and system fit** — see the section above. Four
-   slices: generation and personnel groupings, then the fit score read-only,
-   then outcome modifiers and the 16-hour week, then injuries and rivals.
-   Slices 1 and 2 land most of the engagement without touching game resolution.
+8. **The attention economy and system fit** — see the section above. Slice 1,
+   generation and personnel groupings, is done. Next is slice 2: derived traits,
+   the read-only fit score, and prospect fit ranges. Outcome modifiers and the
+   16-hour week remain slice 3; injuries, rivals, and caching remain slice 4.
 9. Add an offseason phase — unblocks marquee scheduling every year, signing day,
    the portal as an input, coach hiring, and expectations/firing.
 10. Performance and save size before any iOS work. A week advance measures 6.9

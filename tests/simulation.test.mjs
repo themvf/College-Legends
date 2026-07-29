@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
+import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -34,6 +34,37 @@ test("every program starts with a complete position-balanced 85-player roster", 
       assert.equal(roster.filter((player) => player.position === position).length, expected);
     }
   }
+});
+
+test("the chosen scheme decides which players enter the Saturday rotation", () => {
+  const programId = "program-1";
+  let state = createFictionalLeague("scheme-personnel", 24);
+  state = prepareWeek(state, [{
+    type: "SET_SCHEME",
+    programId,
+    scheme: { offense: "AIR_RAID", defense: "NICKEL_PRESSURE" }
+  }]).state;
+  state = beginSeason(state);
+
+  let gameEvent;
+  for (let week = 0; week < 3 && !gameEvent; week += 1) {
+    const result = advanceWeek(state);
+    state = result.state;
+    gameEvent = result.events.find((event) =>
+      event.type === "GAME_COMPLETED"
+      && (event.homeProgramId === programId || event.awayProgramId === programId));
+  }
+  assert.ok(gameEvent, "the program needs a game to expose its active personnel");
+  const lines = state.playerGameStats.filter((line) =>
+    line.gameId === gameEvent.gameId && line.programId === programId);
+  const count = (position) => lines.filter((line) => line.position === position).length;
+
+  assert.equal(count("WR"), 4, "Air Raid must put WR4 into the game");
+  assert.equal(count("RB"), 1);
+  assert.equal(count("TE"), 1);
+  assert.equal(count("DB"), 5, "Nickel must put DB5 into the game");
+  assert.equal(count("LB"), 2);
+  assert.equal(count("DL"), 4);
 });
 
 test("players, coaches, and prospects receive stable unique fictional names", () => {
