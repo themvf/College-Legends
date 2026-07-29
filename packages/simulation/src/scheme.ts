@@ -33,18 +33,18 @@ export const DEFENSIVE_IDENTITY_LABELS: Readonly<Record<DefensiveIdentity, strin
 };
 
 export const OFFENSIVE_SCHEME_BLURBS: Readonly<Record<OffensiveIdentity, string>> = {
-  POWER_RUN: "Line up and move people. Wants a heavy offensive line and a featured back.",
-  TRIPLE_OPTION: "Punishing and strange. Wants a mobile quarterback and disciplined blocking, and nothing else.",
-  PRO_BALANCED: "No weakness and no edge. Asks least of the roster you have.",
-  SPREAD_TEMPO: "Space and speed. Wants receivers who can run and a quarterback who decides fast.",
-  AIR_RAID: "Throw it. Wants an arm, four receivers, and a line that can hold up."
+  POWER_RUN: "Line up and knock people off the ball. You need a big offensive line and a back who wants 25 carries.",
+  TRIPLE_OPTION: "Nobody wants a week to prepare for it. You need a quarterback who can run and linemen who never miss an assignment.",
+  PRO_BALANCED: "Pro-style. No glaring weakness, no real edge either — it asks the least of whoever you've got.",
+  SPREAD_TEMPO: "Spread them out and play fast. You need receivers who can run and a quarterback who gets the ball out.",
+  AIR_RAID: "Air it out. You need an arm, four receivers who can go get it, and a line that holds up in protection."
 };
 
 export const DEFENSIVE_SCHEME_BLURBS: Readonly<Record<DefensiveIdentity, string>> = {
-  BEND_DONT_BREAK: "Concede the field, defend the end zone. Wants safeties and tacklers.",
-  FOUR_THREE_BASE: "Sound and unspectacular. Wants a front four that holds up alone.",
-  ZONE_BLITZ: "Pressure from disguise. Wants linebackers who can cover and rush.",
-  NICKEL_PRESSURE: "Come after the quarterback. Wants corners who can survive alone."
+  BEND_DONT_BREAK: "Give up the field, not the end zone. You need safeties who tackle and nobody who gets beat deep.",
+  FOUR_THREE_BASE: "Base 4-3. Nothing fancy — you need a front four that wins without help.",
+  ZONE_BLITZ: "Bring pressure out of coverage. You need linebackers who can rush and drop.",
+  NICKEL_PRESSURE: "Get after the quarterback. You need corners who can hold up on an island."
 };
 
 /**
@@ -178,6 +178,8 @@ export interface SchemeFit {
   high: number;
   expected: number;
   summary: string;
+  /** Plain-language read on the band, for players who do not want a number. */
+  verdict: string;
 }
 
 /**
@@ -194,10 +196,17 @@ export function rosterSchemeFit(
 ): SchemeFit[] {
   const schemes = side === "OFFENSE" ? OFFENSIVE_SCHEMES : DEFENSIVE_SCHEMES;
   const width = clamp(22 - confidence * 16, 5, 22);
-  return schemes.map((scheme) => {
-    const centre = side === "OFFENSE"
-      ? scoreDemands(roster, OFFENSIVE_DEMANDS[scheme as OffensiveIdentity])
-      : scoreDemands(roster, DEFENSIVE_DEMANDS[scheme as DefensiveIdentity]);
+  const raw = schemes.map((scheme) => side === "OFFENSE"
+    ? scoreDemands(roster, OFFENSIVE_DEMANDS[scheme as OffensiveIdentity])
+    : scoreDemands(roster, DEFENSIVE_DEMANDS[scheme as DefensiveIdentity]));
+  // Spread the scores across the scale before showing them. A generated roster
+  // is internally uniform, so raw scores land within six points of each other
+  // and every scheme reads "about 60%" — which tells the player nothing. The
+  // question this screen answers is comparative ("which of these suits my
+  // guys"), so the answer is scaled against the other options, not an absolute.
+  const average = raw.reduce((total, value) => total + value, 0) / Math.max(1, raw.length);
+  return schemes.map((scheme, index) => {
+    const centre = clamp(64 + (raw[index]! - average) * 3.2, 24, 94);
     const low = Math.round(clamp(centre - width / 2, 5, 99));
     const high = Math.round(clamp(centre + width / 2, 7, 99));
     return {
@@ -211,7 +220,8 @@ export function rosterSchemeFit(
       low,
       high,
       expected: Math.round(centre),
-      summary: `${low}–${high}% fit`
+      summary: `${low}–${high}% fit`,
+      verdict: centre >= 78 ? "Built for it" : centre >= 62 ? "Good fit" : centre >= 45 ? "Workable" : "Wrong personnel"
     };
   }).sort((left, right) => right.expected - left.expected);
 }
@@ -248,8 +258,26 @@ export function coachSchemeFit(
 }
 
 export function schemeFitLabel(fit: number): string {
-  if (fit >= 0.99) return "His scheme exactly";
-  if (fit >= 0.9) return "Close to his scheme";
-  if (fit >= 0.78) return "Workable, not his";
-  return "Not what he coaches";
+  if (fit >= 0.99) return "Runs exactly what you run";
+  if (fit >= 0.9) return "Close enough to what he knows";
+  if (fit >= 0.78) return "He can run it, but it isn't his";
+  return "This isn't what he coaches";
+}
+
+/**
+ * A scheme the roster can actually run.
+ *
+ * Deliberately not *the* best fit. Assigning every program its optimum collapsed
+ * the league onto two or three schemes — measured at 83% of programs sharing a
+ * pass-rush call — which leaves an opponent report with nothing to say and makes
+ * scouting worthless. Picking from the top two keeps a program credible while
+ * leaving the league varied, and leaves the player a reason to change it.
+ */
+export function bestSchemeFor(roster: readonly Player[], pick: (side: "OFFENSE" | "DEFENSE") => number = () => 0): SchemeIdentity {
+  const offense = rosterSchemeFit(roster, "OFFENSE");
+  const defense = rosterSchemeFit(roster, "DEFENSE");
+  return {
+    offense: offense[Math.min(offense.length - 1, pick("OFFENSE"))]!.scheme as OffensiveIdentity,
+    defense: defense[Math.min(defense.length - 1, pick("DEFENSE"))]!.scheme as DefensiveIdentity
+  };
 }

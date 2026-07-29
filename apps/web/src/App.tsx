@@ -40,6 +40,7 @@ import {
   MAXIMUM_REPS_PER_SIDE,
   planExecution,
   staffModifiers,
+  staffCard,
   staffCandidatesFor,
   OFFENSIVE_SCHEMES,
   DEFENSIVE_SCHEMES,
@@ -88,11 +89,11 @@ type Screen = "DASHBOARD" | "THIS_WEEK" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CH
  */
 type WeekTab = "DECISIONS" | "SCOUTING" | "INSTALL" | "PLAYBOOK" | "REPORT";
 const weekTabs: { id: WeekTab; label: string; detail: string }[] = [
-  { id: "DECISIONS", label: "Decisions", detail: "Price, advertising, development, and the two strategy calls" },
-  { id: "SCOUTING", label: "Scouting", detail: "The department, and which opponents are worth a file" },
-  { id: "INSTALL", label: "Install", detail: "Who installs the plan and how hard the team practises" },
-  { id: "PLAYBOOK", label: "Playbook", detail: "The seven individual calls and this week's matchups" },
-  { id: "REPORT", label: "Last week", detail: "What the calls were actually worth" }
+  { id: "DECISIONS", label: "This week", detail: "Tickets, marketing, who you coach up, and how you're playing it" },
+  { id: "SCOUTING", label: "Scouting", detail: "Your department, and which opponents are worth a film study" },
+  { id: "INSTALL", label: "Practice", detail: "Who's installing the plan and how hard you're going" },
+  { id: "PLAYBOOK", label: "Game plan", detail: "Every call you can make and how the matchups look" },
+  { id: "REPORT", label: "Last Saturday", detail: "What those calls actually got you" }
 ];
 
 const careerOrder: CareerPath[] = ["DYNASTY_BUILDER", "PROGRAM_RISER", "CHAMPIONSHIP_MANDATE"];
@@ -271,15 +272,15 @@ function ChooseJob({ busy, careerPath, previews, onTake, onReroll, onBack }: {
       <p className="eyebrow">{profile.label} · {profile.tier} tier</p>
       <h1>Which job do you take?</h1>
       <p>
-        Every program here is the same tier. None of them is better than the others —
-        they are good at different things, and what you inherit is different at each one.
+        These are all the same level of program. None is better than the others — they're good at
+        different things, and what's sitting in the locker room is different at every one of them.
       </p>
       <div className="job-actions">
         <button className="replace-button" onClick={onBack} disabled={busy}>Back</button>
-        <button className="replace-button" onClick={onReroll} disabled={busy}>Look at another league</button>
+        <button className="replace-button" onClick={onReroll} disabled={busy}>Show me different openings</button>
       </div>
     </header>
-    {previews.length === 0 && <p className="muted">Generating a league…</p>}
+    {previews.length === 0 && <p className="muted">Working the phones…</p>}
     <section className="career-grid">{previews.map((preview) =>
       <article className={`career-card job-card ${preview.character.toLowerCase()}`} key={preview.programId}>
         <p className="tier">{preview.characterLabel}</p>
@@ -288,10 +289,10 @@ function ChooseJob({ busy, careerPath, previews, onTake, onReroll, onBack }: {
         <p>{preview.blurb}</p>
         <p className="job-strategy">{preview.strategy}</p>
         <dl>
-          <div><dt>Roster now</dt><dd>{preview.rosterOverall}</dd></div>
-          <div><dt>Roster ceiling</dt><dd>{preview.rosterCeiling}</dd></div>
-          <div><dt>Future stars</dt><dd>{preview.futureStars}</dd></div>
-          <div><dt>Best ceiling</dt><dd>{preview.bestCeiling}</dd></div>
+          <div><dt>Roster today</dt><dd>{preview.rosterOverall}</dd></div>
+          <div><dt>If they all hit</dt><dd>{preview.rosterCeiling}</dd></div>
+          <div><dt>Potential stars</dt><dd>{preview.futureStars}</dd></div>
+          <div><dt>Best of them</dt><dd>{preview.bestCeiling}</dd></div>
         </dl>
         <div className="facility-strip">{facilityOrder.map((type) =>
           <span className="facility-pip" key={type}>
@@ -300,7 +301,7 @@ function ChooseJob({ busy, careerPath, previews, onTake, onReroll, onBack }: {
           </span>)}
         </div>
         <ul className="plan-notes">{preview.notes.map((note) => <li key={note}>{note}</li>)}</ul>
-        <button disabled={busy} onClick={() => onTake(preview.programId)}>Take this job</button>
+        <button disabled={busy} onClick={() => onTake(preview.programId)}>Sign the contract</button>
       </article>)}
     </section>
   </main>;
@@ -337,8 +338,8 @@ function SetUpProgram({ busy, game, onPrepare, onDone }: {
       <p className="eyebrow">{side === "OFFENSE" ? "Offensive scheme" : "Defensive scheme"}</p>
       <h2>{fits.find((fit) => fit.scheme === chosen)?.label ?? "—"}</h2>
       <p className="muted">
-        This roster is built for <strong>{best.label}</strong> ({best.summary}). Picking something else is a
-        rebuild, not a mistake — it will cost you until the roster catches up.
+        These guys are built to run <strong>{best.label}</strong> ({best.summary}). Going another direction
+        isn't a mistake — it's a rebuild, and it'll cost you until you recruit the right kids.
       </p>
       <div className="plan-options">{fits.map((fit) =>
         <button className={chosen === fit.scheme ? "plan-option active" : "plan-option"} key={fit.scheme}
@@ -347,7 +348,8 @@ function SetUpProgram({ busy, game, onPrepare, onDone }: {
             type: "SET_SCHEME", programId,
             scheme: (side === "OFFENSE" ? { offense: fit.scheme } : { defense: fit.scheme }) as Partial<SchemeIdentity>
           })}>
-          <strong>{fit.label} · {fit.summary}</strong>
+          <strong>{fit.label} · {fit.verdict}</strong>
+          <span className="effect fit-line">{fit.summary}</span>
           <span className="effect">{fit.blurb}</span>
           <div className="execution-bar" aria-label={`${fit.label} roster fit`}>
             <span className="execution-band" style={{ left: `${fit.low}%`, width: `${Math.max(2, fit.high - fit.low)}%` }} />
@@ -362,8 +364,8 @@ function SetUpProgram({ busy, game, onPrepare, onDone }: {
       <p className="eyebrow">{program.name} · {program.city}, {program.stateCode}</p>
       <h1>What are you going to run?</h1>
       <p>
-        Scheme is where this program starts, not where it has to end. Your roster suits some of these
-        far better than others, and the coach who installs it has to know it.
+        This is where the program starts, not where it has to finish. Your guys fit some of these a lot
+        better than others — and whoever installs it had better know it.
       </p>
     </header>
 
@@ -392,9 +394,9 @@ function SetUpProgram({ busy, game, onPrepare, onDone }: {
           </button>
         </div>
         {role !== "STRENGTH_COACH" && <p className={fit < 0.9 ? "attention" : "muted"}>
-          Coaches {label(side === "defense" ? member.schemePreference.defense : member.schemePreference.offense)} — {schemeFitLabel(fit).toLowerCase()}.
+          {side === "defense" ? DEFENSIVE_IDENTITY_LABELS[member.schemePreference.defense] : OFFENSIVE_IDENTITY_LABELS[member.schemePreference.offense]} guy — {schemeFitLabel(fit).toLowerCase()}.
         </p>}
-        <div className="snapshot-list">{staffModifiers(member).map((modifier) =>
+        <div className="snapshot-list">{staffCard(game.state, programId, member.id).map((modifier) =>
           <p key={modifier.label}><span>{modifier.label}</span><strong>{modifier.value}</strong></p>)}
         </div>
         {candidates.length > 0 && <div className="plan-options">{candidates.map((candidate) => {
@@ -405,12 +407,12 @@ function SetUpProgram({ busy, game, onPrepare, onDone }: {
             onClick={() => { onPrepare({ type: "REPLACE_STAFF", programId, staffId: member.id, candidateId: candidate.id }); setOpenPost(undefined); }}>
             <strong>{candidate.name} · {candidate.rating} rated</strong>
             <span className="effect">
-              {money(candidate.salary)} a year · {money(candidate.signingCost)} to sign
-              {runs ? ` · runs ${label(side === "defense" ? candidate.schemePreference.defense : candidate.schemePreference.offense)}` : ""}
+              {money(candidate.salary)} a year · {money(candidate.signingCost)} to buy him out
+              {runs ? ` · ${side === "defense" ? DEFENSIVE_IDENTITY_LABELS[candidate.schemePreference.defense] : OFFENSIVE_IDENTITY_LABELS[candidate.schemePreference.offense]} guy` : ""}
             </span>
             <span className="tradeoff">
               {candidate.unavailableReason
-                ?? (!affordable ? "Cannot afford the signing cost"
+                ?? (!affordable ? "You can't cover the buyout"
                   : `${candidate.rating > member.rating ? "+" : ""}${candidate.rating - member.rating} on ${member.name} · ${candidate.schemeFitNote.toLowerCase()}`)}
             </span>
           </button>;
@@ -419,7 +421,7 @@ function SetUpProgram({ busy, game, onPrepare, onDone }: {
     })}</section>
 
     <div className="job-actions">
-      <button disabled={busy} onClick={onDone}>This is my program — continue</button>
+      <button disabled={busy} onClick={onDone}>This is my football team. Let’s go to work.</button>
     </div>
   </main>;
 }
@@ -877,8 +879,8 @@ function Staff({ game, pending, onQueue }: { game: GameView; pending: GameComman
       <p className="eyebrow">Coaching staff · {money(staff.reduce((sum, member) => sum + member.salary, 0))} a year</p>
       <h2>Hours: {totalHours} · Available: {totalHours - spentHours}</h2>
       <p className="muted">
-        A coach's week is finite. Preparing the team, scouting opponents, and recruiting all draw on the same
-        hours — a coordinator sent scouting installs less of Saturday's plan, and that is the whole trade.
+        There are only so many hours in a week. Game prep, scouting, and recruiting all pull from the same
+        pot — send your coordinator out on the road and less of Saturday's plan gets installed. That's the trade.
       </p>
     </article>
 
@@ -915,10 +917,10 @@ function Staff({ game, pending, onQueue }: { game: GameView; pending: GameComman
             {openMarket === member.id ? "Close" : "Replace"}
           </button>
         </div>
-        <div className="snapshot-list">{staffModifiers(member).map((modifier) =>
+        <div className="snapshot-list">{staffCard(game.state, programId, member.id).map((modifier) =>
           <p key={modifier.label}><span>{modifier.label}</span><strong>{modifier.value}</strong></p>)}
         </div>
-        <p className="eyebrow">His week · {spent} of {capacity} hours committed</p>
+        <p className="eyebrow">His week · {spent} of {capacity} hours spoken for</p>
         {STAFF_FOCUSES.map((focus) => <div className="allocation-row" key={focus}>
           <p className="plan-label">{STAFF_FOCUS_LABELS[focus]}<span className="hours">{allocation[focus]}h</span></p>
           <input type="range" min={0} max={capacity} value={allocation[focus]}
@@ -926,7 +928,7 @@ function Staff({ game, pending, onQueue }: { game: GameView; pending: GameComman
             onChange={(event) => setFocus(focus, Number(event.target.value))} />
           <p className="muted">{staffFocusPayoff(member, focus)}</p>
         </div>)}
-        {queuedReplacement && <p className="attention">Replacement queued; it resolves when the week is advanced.</p>}
+        {queuedReplacement && <p className="attention">Hire is queued — it goes through when you advance the week.</p>}
         {candidates.length > 0 && <div className="plan-options">{candidates.map((candidate) => {
           const affordable = program.budget >= candidate.signingCost;
           return <button className="plan-option" key={candidate.id} disabled={!affordable}

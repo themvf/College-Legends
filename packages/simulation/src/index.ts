@@ -1,7 +1,7 @@
 import type { AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffFocus, StaffMember, StaffRole, OpponentDossier } from "@college-legends/model";
 import { FICTIONAL_PROGRAMS, fictionalPersonName, PROGRAM_CHARACTERS } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
-import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES } from "./scheme.js";
+import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES, bestSchemeFor, programRoster, coachSchemeFit } from "./scheme.js";
 import { DEFAULT_GAME_PLAN, OFFENSIVE_IDENTITY_LABELS, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
 import { opponentScoutingReport, preparationWeeklyPoints, projectedGamePlan, scheduledOpponent, scoutingConfidence, filmGamesAvailable } from "./scouting.js";
 import {
@@ -37,7 +37,7 @@ export {
   ticketDemandMultiplier
 } from "./business.js";
 export type { GateProjection, StrategyPreset } from "./business.js";
-export { MAXIMUM_REPS_PER_SIDE, planExecution, planInstaller, repsFatigue, staffModifiers, staffSalary } from "./installation.js";
+export { MAXIMUM_REPS_PER_SIDE, planExecution, planInstaller, repsFatigue, staffCard, staffModifiers, staffSalary } from "./installation.js";
 export {
   filmGamesAvailable,
   preparationWeeklyPoints,
@@ -49,6 +49,7 @@ export {
   SCOUTING_TIERS
 } from "./scouting.js";
 export {
+  bestSchemeFor,
   coachSchemeFit,
   DEFENSIVE_SCHEME_BLURBS,
   DEFENSIVE_SCHEMES,
@@ -317,19 +318,19 @@ export function projectedDevelopmentPayoff(
 export function staffFocusPayoff(member: Pick<StaffMember, "rating" | "role">, focus: StaffFocus): string {
   const perHour = (multiplier: number): number =>
     member.rating * roleFit(member.role, focus) * multiplier / staffCapacity(member.rating);
-  if (focus === "PREPARE") return `+${perHour(0.01).toFixed(2)} to every unit per hour`;
-  if (focus === "SCOUT") return `+${perHour(1 / 12).toFixed(1)} scouting points a week per hour`;
-  if (focus === "RECRUIT") return `+${perHour(0.05).toFixed(1)} pursuit score and +${perHour(0.05).toFixed(1)} Recruiting Points per hour`;
-  if (focus === "DEVELOP") return `+${perHour(0.2).toFixed(1)}% weekly player growth per hour`;
-  return `-${perHour(1 / 30).toFixed(2)} roster fatigue a week per hour`;
+  if (focus === "PREPARE") return `Every hour here is +${perHour(0.01).toFixed(2)} to every unit on Saturday`;
+  if (focus === "SCOUT") return `Every hour here is +${perHour(1 / 12).toFixed(1)} scouting points a week`;
+  if (focus === "RECRUIT") return `Every hour here is +${perHour(0.05).toFixed(1)} on the recruiting trail`;
+  if (focus === "DEVELOP") return `Every hour here is +${perHour(0.2).toFixed(1)}% player growth a week`;
+  return `Every hour here knocks ${perHour(1 / 30).toFixed(2)} off the roster's fatigue`;
 }
 
 export function facilityPayoff(facility: FacilityType, level: number): string {
-  if (facility === "TRAINING") return `+${Math.max(0, level - 1) * 4}% weekly player growth`;
-  if (facility === "STADIUM") return `+${Math.max(0, level - 1) * 8}% home-game revenue`;
-  if (facility === "ACADEMICS") return `-${Math.max(0, level - 1) * 1.5}% offseason transfer risk`;
+  if (facility === "TRAINING") return `Guys develop ${Math.max(0, level - 1) * 4}% faster in here`;
+  if (facility === "STADIUM") return `${Math.max(0, level - 1) * 8}% more money on every home date`;
+  if (facility === "ACADEMICS") return `${Math.max(0, level - 1) * 1.5}% fewer players hit the portal in the offseason`;
   if (facility === "SCOUTING") return `${scoutingDepartmentSummary(level)}`;
-  return `+${Math.max(0, level - 1) * 2} pursuit score and +${level * 4} Recruiting Points each week`;
+  return `+${Math.max(0, level - 1) * 2} on every recruiting battle and +${level * 4} Recruiting Points a week`;
 }
 
 export function stadiumCapacity(level: number): number {
@@ -417,11 +418,11 @@ export interface ProgramPreview {
   notes: string[];
 }
 
-const FACILITY_LABELS: Readonly<Record<FacilityType, string>> = {
+export const FACILITY_LABELS: Readonly<Record<FacilityType, string>> = {
   TRAINING: "Weight room",
   STADIUM: "Stadium",
-  ACADEMICS: "Academics",
-  RECRUITING: "Recruiting office",
+  ACADEMICS: "Academic support",
+  RECRUITING: "Recruiting operation",
   SCOUTING: "Scouting department"
 };
 
@@ -443,22 +444,22 @@ export function programPreviews(state: Readonly<GameState>, tier: Program["tier"
       const profile = PROGRAM_CHARACTERS[program.character];
       const notes: string[] = [];
 
-      if (program.fanElasticity <= 0.5) notes.push("Fans turn up whatever the record says.");
-      else if (program.fanElasticity >= 1.4) notes.push("Fans leave when you lose and flood back when you win.");
-      if (program.recruitAppeal >= 6) notes.push(`Recruits take the call — +${program.recruitAppeal} in every contested commitment.`);
-      else if (program.recruitAppeal <= -3) notes.push(`Nobody wants to sign here — ${program.recruitAppeal} in every contested commitment.`);
+      if (program.fanElasticity <= 0.5) notes.push("This crowd shows up no matter what the record says.");
+      else if (program.fanElasticity >= 1.4) notes.push("Lose and the stadium empties. Win and it's a madhouse.");
+      if (program.recruitAppeal >= 6) notes.push(`Recruits take your call — worth +${program.recruitAppeal} on every kid you go after.`);
+      else if (program.recruitAppeal <= -3) notes.push(`It's a hard sell here — ${program.recruitAppeal} on every kid you go after.`);
 
       const best = (Object.keys(FACILITY_LABELS) as FacilityType[])
         .sort((left, right) => program.facilities[right] - program.facilities[left]);
       const strongest = best[0]!;
       const weakest = best[best.length - 1]!;
       if (program.facilities[strongest] - program.facilities[weakest] >= 2) {
-        notes.push(`${FACILITY_LABELS[strongest]} is the best thing here; ${FACILITY_LABELS[weakest].toLowerCase()} is the worst.`);
+        notes.push(`The ${FACILITY_LABELS[strongest].toLowerCase()} is the best thing about this place. The ${FACILITY_LABELS[weakest].toLowerCase()} is an embarrassment.`);
       }
 
       const futureStars = roster.filter((player) => player.potential >= 88).length;
-      if (futureStars >= 6) notes.push(`${futureStars} players on this roster could become stars. Somebody has to find them.`);
-      else if (futureStars <= 2) notes.push("Very little on this roster is going to become a star on its own.");
+      if (futureStars >= 6) notes.push(`There are ${futureStars} kids on this roster who could be all-conference. Somebody has to find them first.`);
+      else if (futureStars <= 2) notes.push("Not much on this roster is going to turn into a star. You'll have to go get some.");
 
       return {
         programId: program.id,
@@ -553,6 +554,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       localPress: tier === "POWER" ? 82 : tier === "MID" ? 55 : 32,
       nationalPress: tier === "POWER" ? 80 : tier === "MID" ? 38 : 12,
       nationalRank: index + 1,
+      // Replaced after the roster is generated with whatever it is built for.
       schemeIdentity: assignSchemeIdentity(rng, id),
       character: definition.character,
       fanElasticity: character.fanElasticity,
@@ -632,7 +634,32 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
         eligibility: { cohortYear: 2027 - (rosterIndex % 4), seasonsEnrolled: rosterIndex % 4, seasonsParticipated: rosterIndex % 4, seasonsRemaining: 4 - (rosterIndex % 4), redshirtStatus: "AVAILABLE", gamesPlayedThisSeason: 0, rosterStatus: "SCHOLARSHIP" }
       };
     }
+    // A program runs something its personnel can actually run — one of the two
+    // best fits, not always the best. Always-optimal collapsed the league onto a
+    // handful of schemes and left opponent scouting nothing to report.
+    const roster = programRoster(state, id);
+    state.programs[id]!.schemeIdentity = bestSchemeFor(roster, (side) =>
+      rng.at(`${id}:scheme-pick:${side}`) < 0.55 ? 0 : 1);
+    // The staff a program already employs usually coaches what the program runs.
+    // A minority do not, which is where the first real hiring decision comes from.
+    for (const member of Object.values(state.staff)) {
+      if (member.programId !== id) continue;
+      if (rng.at(`${member.id}:inherits-scheme`) < 0.6) {
+        member.schemePreference = { ...state.programs[id]!.schemeIdentity };
+      }
+    }
     state.depthCharts[id] = buildDefaultDepthChart(state, id);
+    // The department produces a preseason allocation, so opening a file on the
+    // week-six opponent is something a coach can do the day he is hired.
+    const preseasonScouting = weeklyScoutingOutput(state, id);
+    state.preparation[id] = {
+      points: preparationWeeklyPoints(state, id),
+      weeklyPoints: preparationWeeklyPoints(state, id),
+      scoutingPoints: preseasonScouting,
+      weeklyScoutingPoints: preseasonScouting,
+      offensiveReps: 0,
+      defensiveReps: 0
+    };
   }
   updateNationalRankings(state);
   const actualProgramCount = selectedPrograms.length;

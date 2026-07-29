@@ -14,11 +14,11 @@ const clamp = (value: number, minimum: number, maximum: number): number => Math.
 export const STAFF_FOCUSES: readonly StaffFocus[] = ["PREPARE", "SCOUT", "RECRUIT", "DEVELOP", "RECOVER"];
 
 export const STAFF_FOCUS_LABELS: Readonly<Record<StaffFocus, string>> = {
-  PREPARE: "Prepare the team",
-  SCOUT: "Scout opponents",
-  RECRUIT: "Recruit",
-  DEVELOP: "Develop players",
-  RECOVER: "Recovery"
+  PREPARE: "Game prep",
+  SCOUT: "Scouting opponents",
+  RECRUIT: "On the road recruiting",
+  DEVELOP: "Coaching guys up",
+  RECOVER: "Training room"
 };
 
 /**
@@ -126,15 +126,15 @@ export function fundingMultiplier(level: number): number {
 
 export const SCOUTING_FUNDING_LABELS: Readonly<Record<number, string>> = {
   1: "Shoestring",
-  2: "Funded",
-  3: "Professional",
-  4: "Well resourced",
+  2: "Getting by",
+  3: "Real operation",
+  4: "Well funded",
   5: "Best in the country"
 };
 
 export function scoutingDepartmentSummary(level: number): string {
   const tier = SCOUTING_FUNDING_LABELS[clamp(Math.round(level), 1, 5)] ?? "Funded";
-  return `${tier} — about ${departmentBaseOutput(level)} scouting points a week before coaches, and ×${fundingMultiplier(level).toFixed(2)} on the hours they give it`;
+  return `${tier} — about ${departmentBaseOutput(level)} points a week on its own, and it multiplies whatever hours your coaches put in by ${fundingMultiplier(level).toFixed(2)}x`;
 }
 
 /**
@@ -181,10 +181,10 @@ export function opponentValue(
   const press = Math.round(4 + standing * 20);
   const value = Math.round(clamp(Math.pow(standing, 1.5) * 88 + upset * 12 + 4, 2, 100));
   const note = value >= MARQUEE_VALUE
-    ? `#${opponent.nationalRank} — a win here is worth about ${followers.toLocaleString()} followers and ${press} national press.`
+    ? `#${opponent.nationalRank}. Beat them and you pick up around ${followers.toLocaleString()} fans and ${press} points of national buzz. This is the one.`
     : value >= WORTH_SCOUTING
-      ? `#${opponent.nationalRank} — worth about ${followers.toLocaleString()} followers and ${press} national press.`
-      : `#${opponent.nationalRank} — about ${followers.toLocaleString()} followers. Little to gain, and the points are needed elsewhere.`;
+      ? `#${opponent.nationalRank}. A win here is worth about ${followers.toLocaleString()} fans and ${press} points of national buzz.`
+      : `#${opponent.nationalRank}. Maybe ${followers.toLocaleString()} fans. Nobody's going to remember this one — save your points.`;
   return { value, note };
 }
 

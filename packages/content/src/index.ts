@@ -34,8 +34,8 @@ export interface ProgramCharacterProfile {
 export const PROGRAM_CHARACTERS: Readonly<Record<ProgramCharacter, ProgramCharacterProfile>> = {
   BLUEBLOOD: {
     label: "Blueblood",
-    blurb: "Money, history, and expectation. Everything works, and nothing is forgiven.",
-    strategy: "You inherit every advantage. The job is to not be the one who broke it.",
+    blurb: "Trophy case, big money, and a fan base that expects a playoff run every single year.",
+    strategy: "You're handed every advantage in the sport. Nine wins gets you fired here.",
     fanElasticity: 0.6,
     recruitAppeal: 6,
     donorCulture: 1.45,
@@ -44,8 +44,8 @@ export const PROGRAM_CHARACTERS: Readonly<Record<ProgramCharacter, ProgramCharac
   },
   DIEHARD: {
     label: "Diehard",
-    blurb: "They fill the stadium at 2–10 and they will fill it again next year.",
-    strategy: "A revenue floor that survives a long rebuild. Low ceiling, and it will not collapse under you.",
+    blurb: "They pack the place at 2–10 and they'll be back next fall. It's a way of life here.",
+    strategy: "The money holds up through a rebuild. You'll never be rich, but the floor won't drop out from under you.",
     fanElasticity: 0.35,
     recruitAppeal: 0,
     donorCulture: 1.3,
@@ -54,8 +54,8 @@ export const PROGRAM_CHARACTERS: Readonly<Record<ProgramCharacter, ProgramCharac
   },
   FRONTRUNNER: {
     label: "Front-runner",
-    blurb: "Empty seats in October, sold out the moment you are ranked.",
-    strategy: "A revenue ceiling that pays enormously for a hot start — and punishes a slow one.",
+    blurb: "Half-empty in October. Sold out and camped in the parking lot the week you crack the Top 25.",
+    strategy: "Start hot and the money is enormous. Start 1–3 and the checks stop with it.",
     fanElasticity: 1.6,
     recruitAppeal: 4,
     donorCulture: 0.85,
@@ -64,8 +64,8 @@ export const PROGRAM_CHARACTERS: Readonly<Record<ProgramCharacter, ProgramCharac
   },
   TALENT_MAGNET: {
     label: "Talent magnet",
-    blurb: "Recruits take the call. Then they see the weight room.",
-    strategy: "Acquire rather than develop. Your roster turns over and it never gets better on its own.",
+    blurb: "Kids take your call. Then they walk past the weight room and you can see it on their face.",
+    strategy: "Win on signing day, because nobody gets better after they get here. Reload every year.",
     fanElasticity: 1.0,
     recruitAppeal: 9,
     donorCulture: 1.0,
@@ -74,8 +74,8 @@ export const PROGRAM_CHARACTERS: Readonly<Record<ProgramCharacter, ProgramCharac
   },
   DEVELOPER: {
     label: "Developer",
-    blurb: "Nobody signs here. Everybody leaves better than they arrived.",
-    strategy: "Win on growth and retention. You will never out-recruit anyone, so do not try.",
+    blurb: "Nobody's signing here off a highlight tape. But three-stars leave this place as draft picks.",
+    strategy: "Coach them up and keep them. You will never out-recruit anybody, so quit trying.",
     fanElasticity: 0.8,
     recruitAppeal: -5,
     donorCulture: 1.05,

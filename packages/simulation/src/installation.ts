@@ -64,8 +64,8 @@ export function planInstaller(
       note: fit < 0.9
         ? `Coordinator installing a scheme that is not his (${schemeFitLabel(fit).toLowerCase()})`
         : coordinatorShare >= 0.99
-          ? "Coordinator installing"
-          : `Coordinator installing on ${Math.round(coordinatorShare * 100)}% of his week`
+          ? "Coordinator running it"
+          : `Coordinator on it ${Math.round(coordinatorShare * 100)}% of his week`
     };
   }
   const headCoach = staff.find((member) => member.role === "HEAD_COACH");
@@ -109,12 +109,12 @@ export function planExecution(
   const expected = Number(((low + high) / 2).toFixed(3));
 
   const limits: string[] = [];
-  if (!installer.staff) limits.push("Nobody is preparing the team, so the plan installs itself badly.");
-  else if (installer.note === "Head coach covering") limits.push(`${installer.name} is covering for a coordinator who is working elsewhere.`);
-  else if (installer.note.startsWith("Coordinator installing on")) limits.push(`${installer.name} is only part-time on preparation; the rest of his week is scouting or recruiting.`);
-  else if (installer.note.startsWith("Coordinator installing a scheme")) limits.push(`${installer.name} does not coach this scheme, so less of it survives to Saturday.`);
-  if (reps === 0) limits.push("No reps have been spent, so the plan is only walked through.");
-  if (reps >= MAXIMUM_REPS_PER_SIDE) limits.push("The players have this fully installed; more reps would only tire them.");
+  if (!installer.staff) limits.push("Nobody on staff is running practice. Your guys are figuring it out themselves.");
+  else if (installer.note === "Head coach covering") limits.push(`${installer.name} is covering for a coordinator who's off doing something else.`);
+  else if (installer.note.startsWith("Coordinator installing on")) limits.push(`${installer.name} is only part-time on game prep — the rest of his week is scouting or on the road recruiting.`);
+  else if (installer.note.startsWith("Coordinator installing a scheme")) limits.push(`${installer.name} doesn't coach this scheme, so less of it holds up on Saturday.`);
+  if (reps === 0) limits.push("You haven't put a single rep on this. They'll be walking through it.");
+  if (reps >= MAXIMUM_REPS_PER_SIDE) limits.push("They've got this down cold. More reps just wear them out.");
 
   return {
     side,
@@ -125,7 +125,7 @@ export function planExecution(
     low,
     high,
     expected,
-    summary: `${Math.round(low * 100)}–${Math.round(high * 100)}% of the plan lands`,
+    summary: `${Math.round(low * 100)}–${Math.round(high * 100)}% of it holds up`,
     limits
   };
 }
@@ -140,32 +140,63 @@ export function repsFatigue(reps: number): number {
 }
 
 /**
- * What a staff member changes, stated plainly. A hire should never be a guess:
- * the card posts the numbers, the same way a salaried specialist does.
+ * What a staff member actually changes, at the hours he actually works and in
+ * the scheme he is actually being asked to run.
+ *
+ * The first version computed everything from raw rating, so a card claiming
+ * "installs at 51%" sat above a plan the engine ran at 47% — the coach was
+ * splitting his week and coaching somebody else's scheme, and the card knew
+ * neither. A posted number that disagrees with the engine is worse than no
+ * number, and "payoffs are visible" is a load-bearing invariant.
  */
-export function staffModifiers(member: Pick<StaffMember, "rating" | "role">): StaffModifier[] {
+export function staffModifiers(
+  member: Pick<StaffMember, "rating" | "role">,
+  context?: { schemeFit?: number; prepareShare?: number; facilityBonus?: number }
+): StaffModifier[] {
   const rating = member.rating;
+  const fit = context?.schemeFit ?? 1;
+  const share = context?.prepareShare ?? 1;
+  const facilityBonus = context?.facilityBonus ?? 0;
+  const prep = (roleWeight: number): string => `+${(rating * roleWeight * share / 100).toFixed(1)} to every unit`;
+
   if (member.role === "OFFENSIVE_COORDINATOR" || member.role === "DEFENSIVE_COORDINATOR") {
-    const side = member.role === "OFFENSIVE_COORDINATOR" ? "offensive" : "defensive";
-    const centre = Math.round((0.3 + rating / 100 * 0.28) * 100);
-    const spread = Math.round(clamp(0.32 - rating / 100 * 0.16, 0.08, 0.32) * 100);
-    return [
-      { label: `Installs the ${side} plan at`, value: `${centre}% before reps` },
-      { label: "Week-to-week swing", value: `±${Math.round(spread / 2)}%` },
-      { label: "Game preparation", value: `+${(rating * 1.4 / 100).toFixed(1)} to every unit` }
+    const side = member.role === "OFFENSIVE_COORDINATOR" ? "offense" : "defense";
+    const effective = Math.max(42, rating * (0.72 + clamp(share, 0, 1) * 0.28) * fit);
+    // Includes the weight-room term planExecution applies, so the posted
+    // number is the number the engine will actually run.
+    const centre = Math.round((0.3 + effective / 100 * 0.28 + facilityBonus) * 100);
+    const spread = Math.round(clamp(0.32 - effective / 100 * 0.16, 0.08, 0.32) * 100);
+    const modifiers: StaffModifier[] = [
+      { label: `Gets your ${side} installed to`, value: `${centre}% before practice reps` },
+      { label: "Week to week, that swings", value: `±${Math.round(spread / 2)}%` },
+      { label: "Game prep", value: prep(1.4) }
     ];
+    if (fit < 0.99) modifiers.push({ label: "Running a scheme that isn't his costs", value: `${Math.round((1 - fit) * 100)}% of what he'd do` });
+    return modifiers;
   }
   if (member.role === "HEAD_COACH") {
     return [
-      { label: "Game preparation", value: `+${(rating * 1.2 / 100).toFixed(1)} to every unit` },
-      { label: "Covers a missing coordinator at", value: `${Math.round(rating * 0.82)} effective` }
+      { label: "Game prep", value: prep(1.15) },
+      { label: "Fills in for a missing coordinator at", value: `${Math.round(rating * 0.82)} effective` }
     ];
   }
   return [
-    { label: "Game preparation", value: `+${(rating * 0.6 / 100).toFixed(1)} to every unit` },
+    { label: "Game prep", value: prep(0.55) },
     { label: "Weekly player growth", value: `+${Math.round(rating / 5)}%` },
-    { label: "Roster fatigue recovery", value: `-${(rating / 30).toFixed(1)} a week` }
+    { label: "Knocks off fatigue", value: `-${(rating / 30).toFixed(1)} a week` }
   ];
+}
+
+/** The card for a coach who is actually on staff, with his real hours and scheme. */
+export function staffCard(state: Readonly<GameState>, programId: string, staffId: string): StaffModifier[] {
+  const member = state.staff[staffId];
+  const program = state.programs[programId];
+  if (!member || !program) return [];
+  return staffModifiers(member, {
+    schemeFit: coachSchemeFit(member, program.schemeIdentity),
+    prepareShare: focusShare(member, "PREPARE"),
+    facilityBonus: Math.max(0, program.facilities.TRAINING - 1) * 0.012
+  });
 }
 
 /**
@@ -223,12 +254,17 @@ export function staffCandidates(
       rating,
       salary,
       signingCost: Math.round(salary * 0.35),
-      modifiers: staffModifiers({ rating, role: outgoing.role }),
+      // Priced against the post he would fill, so the card compares like for like.
+      modifiers: staffModifiers({ rating, role: outgoing.role }, {
+        schemeFit: fit,
+        prepareShare: focusShare(outgoing, "PREPARE"),
+        facilityBonus: Math.max(0, program.facilities.TRAINING - 1) * 0.012
+      }),
       schemePreference,
       schemeFit: fit,
       schemeFitNote: schemeFitLabel(fit),
       unavailableReason: reach
-        ? `Will not take this job — ${program.name} does not have the standing yet.`
+        ? `Won\u2019t return your calls — ${program.name} isn\u2019t a big enough job yet.`
         : null
     };
   }).sort((left, right) => Number(Boolean(left.unavailableReason)) - Number(Boolean(right.unavailableReason)) || right.rating - left.rating);

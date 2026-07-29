@@ -275,8 +275,31 @@ Characters are interleaved in the list — grouped, the top of the screen was th
 cards with the same headline, which is the exact impression the screen exists to
 correct.
 
-Still open from the spec: economy drains, NIL, portal/offseason, scheme and
-familiarity, concepts, pipelines. See `docs/PROGRAM_IDENTITY_AND_ECONOMY.md`.
+**Scheme fit is scored comparatively, not absolutely.** A generated roster is
+internally uniform, so raw fit scores landed within six points of each other and
+every scheme read "about 60%" — the screen could not say what the roster was
+built for. Scores are now spread against the other options on the same screen:
+median spread is 22 points, and each band carries a plain verdict (Built for it /
+Good fit / Workable / Wrong personnel).
+
+**Programs run one of their two best fits, never always the best.** Assigning
+every program its optimum collapsed the league onto a handful of schemes — 83% of
+programs shared a pass-rush call — which left opponent reports with nothing to
+say and dropped the measured value of scouting to a 50.8% win rate. Picking from
+the top two keeps a program credible, keeps the league varied, and leaves the
+player a visible reason to change it. Incumbent staff coach the program's scheme
+60% of the time; the rest is where the first hiring decision comes from.
+
+**Staff cards report what the engine will actually do.** `staffModifiers` derived
+everything from raw rating, so a card reading "installs at 51%" sat above a plan
+the engine ran at 47% — the coach was splitting his week and coaching someone
+else's scheme and the card knew neither. `staffCard(state, programId, staffId)`
+passes scheme fit, the PREPARE hour share, and the weight-room term, so the
+posted number is the number. A card that disagrees with the engine breaks
+"payoffs are visible", which is an invariant rather than a nicety.
+
+Still open from the spec: economy drains, NIL, portal/offseason, familiarity,
+concepts, pipelines. See `docs/PROGRAM_IDENTITY_AND_ECONOMY.md`.
 
 ## Direction: the game is a decision engine
 
