@@ -730,6 +730,274 @@ breaking down (`AT_RISK`). The point is a trade rather than a ranking — build
 the future, feed the brand that pays the gate, or protect an asset that cannot
 be replaced.
 
+## Where the game goes next — the attention economy and system fit
+
+This is the plan, not a wish list. It comes out of a long design pass, and every
+claim below was measured against the engine rather than reasoned about. It
+supersedes the open items in "Installing the game plan" and "The scouting
+department", both of which it partly demolishes.
+
+The whole thing exists to answer one player question that the game currently
+cannot: **what am I spending this week, and what does it buy me?**
+
+### The measured case that three systems are broken
+
+**Practice is free.** The prep pool is 25 a week; maxing both sides costs 24.
+A full season at 12/12 reps against a full season at 0/0:
+
+| | avg roster fatigue after 12 weeks | costs |
+|---|---|---|
+| never practise | 0.5 | −0.02 overall |
+| max both sides, every week | 17.5 | −0.88 overall |
+
+Maxing costs 0.88 overall across a whole season and buys +26 points of install,
+worth about +5.7 margin a game. There is no decision on that screen. Worse, the
+0.88 is invisible — fatigue is never shown, so the game charges a tax nobody can
+see.
+
+**Scouting's payoff asks the player to abandon their identity.** The reward is
+information, and information only pays if you change your call to counter them.
+But a team is not a menu — an Air Raid roster asked to grind it out is running
+something it has never repped, which is why `ALIGNMENT_COST` exists. The system's
+reward was designed out from under it. No amount of rewriting the card fixes
+that.
+
+**Rosters have no shape, so nothing can measure fit.** Measured at league
+creation, 24 programs:
+
+| tier | roster avg | QB1 | WR1 / WR2 / WR3 / WR4 | worst starting OL |
+|---|---|---|---|---|
+| LOW | 68.1 | 71 | 72 / 72 / 71 / 70 | 71 |
+| MID | 75.0 | 79 | 79 / 78 / 77 / 76 | 78 |
+| POWER | 83.1 | 86 | 87 / 86 / 85 / 84 | 85 |
+
+**A two-point spread from WR1 to WR4 at every tier.** Any personnel-requirement
+system built on top of this is measuring noise. This is the same defect papered
+over in `rosterSchemeFit` by spreading scores comparatively on screen; that was a
+display hack over a generation problem.
+
+**The lineup cannot express the schemes.** `STARTER_COUNTS` is fixed at 3 WR and
+4 DB. You cannot field an Air Raid or a nickel package today.
+
+### The architecture
+
+**One faucet: staff hours.** `StaffAllocation` already does this — coaches split
+their week across jobs. The mistake was building a *second* layer on top:
+hours generate prep points and scouting points, which are spent again. Two
+currencies for one decision. Delete the second layer and the architecture is the
+game.
+
+```
+staff hours ──┬─→ practice        → this Saturday
+              ├─→ scouting        → a chosen future Saturday
+              ├─→ development     → permanently, slowly
+              ├─→ recruiting      → next year
+              └─→ training room   → protects the other four
+```
+
+Three pay now, two pay later. That is the tension, and it is the one every good
+management game runs on. **Departments are multipliers, not new currencies** —
+money buys efficiency, attention is spent. Keeping those two economies separate
+is what makes either legible.
+
+**Coaches are hours, stated concretely.** Not "68 at game plan" but "delivers 70
+prep-hours a week". Hours are self-explanatory and additive: *my staff delivers
+190 prep-hours, a full offensive install costs 120*. That is arithmetic a player
+can do in their head.
+
+The one rule that makes it a puzzle rather than a sort: **good coaches must be
+spiky, not uniformly better.** A $1.4M closer and a $1.4M teacher are different
+programs. Cheap coaches are flat and low, which is why they are cheap. The trait
+system already does this; the spread needs widening and the unit renaming.
+
+**Strength coach leaves the puzzle.** He is money in, health out — fatigue
+recovery and injury weeks, no sliders. That cuts the weekly screen from four
+allocation decisions to three, and gives money something to buy that attention
+cannot.
+
+**Only a coordinator's prep hours install his own side.** The head coach's are
+general team quality and cover at a discount. That is what keeps "who runs my
+offense" a different question from "who works the trail".
+
+### Systems: personnel and install, paying in football outcomes
+
+A system must not add "+4 pass offense". It must change things a player can name
+on a box score: completion rate, yards per play, sack rate, interception rate,
+fumble rate.
+
+**Personnel fit is the shape of your roster, not its quality.** Each scheme
+states what it asks for, attribute by attribute, and fit is how far above or
+below you are. Falling short hurts linearly; exceeding gives diminishing returns
+— you cannot be more Air Raid than Air Raid. Measured against the roster's own
+average, so a 60-overall team whose best players are its QB and receivers is a
+high-fit Air Raid team, and a 90-overall team with a great line and a mediocre QB
+is not.
+
+That normalisation is load-bearing. Without it, fit is a second overall rating
+and good teams fit everything.
+
+**Traits are derived, not stored.** Adding ~25 ratings per player is
+unjustifiable against a save file that is already an iOS blocker at 17 MB of
+state and 94 MB of stats. "Route running" *is* technique. "Pass blocking" *is*
+technique weighted with strength. "Decision making" *is* awareness. Compute the
+named traits from the five existing ratings plus a **profile bias drawn
+deterministically from the seed and player id** — that bias is what makes two
+78-rated quarterbacks different, and it costs one `rng.at()` call and zero bytes.
+
+The accepted loss: accuracy and decision-making cannot vary fully independently,
+and extreme archetypes are rarer. Acceptable. Add a stored `speed` only if
+testing shows same-overall players still feel interchangeable.
+
+**Install is durable, not a weekly buff.** One number per side, 0–100, filled by
+practice hours, and it does **not** decay from neglect — otherwise maintenance
+becomes another solved chore. It falls only when the football language changes:
+switch systems and keep about half. **A coordinator leaving does not erase the
+playbook**; the players, the head coach, and the terminology stay.
+
+### The balance anchors
+
+Points per game is the anchor. The per-outcome percentages are knobs used to
+reach it.
+
+| fit state | expected scoring effect |
+|---|---|
+| functional fit vs average | +0.3 to +0.7 |
+| strong fit | +0.7 to +1.2 |
+| excellent fit | +1.0 to +1.5 |
+| theoretical perfect fit and install | about +1.8 |
+| poor fit | −2 to −4 |
+
+The asymmetry is deliberate. A good system makes a team efficient; a bad one
+makes it dysfunctional. **Avoiding a serious mistake is worth more than finding
+the perfect offense.**
+
+Guard rails, both of which protect work that is already calibrated:
+
+- **Tactics beat scheme.** A full emphasis counter is worth ~2.7 points, measured
+  over 400 games a cell. A strong system advantage must stay **≤ 50%** of that,
+  and a perfect one ≤ 70%. A well-fitted Air Raid should still be counterable.
+- **No system-versus-system matrix.** Systems are unilateral; tactics are
+  bilateral. Air Raid against nickel will feel different from Air Raid against
+  bend-don't-break, but that difference must *emerge* from shared outcome
+  channels rather than a second hidden table. A direct matrix would duplicate the
+  emphasis matrix and make it impossible to say which layer caused a result.
+- **Modify primitive outcomes only.** Completion, yards, conversions and
+  touchdowns are causally connected. Move completion and yards per play; do not
+  then also hand out a touchdown bonus. Double-counting is how these systems
+  become superpowers.
+- **Floor the downside.** Penalties compound with talent, and the premise of the
+  game is that you start at a bad program. Cap total downside from all sources.
+
+### The MVP cut
+
+This is a mobile game by a small team. The design above is about three times an
+MVP. What ships:
+
+| ships | why |
+|---|---|
+| Scheme-driven personnel groupings — `STARTER_COUNTS` per scheme | One table, and it does half the work (below) |
+| Roster generation with real room spread and character skew | Nothing measures anything without it |
+| Derived traits from the five existing ratings + seed profile bias | Zero new stored fields |
+| **One** `install: 0–100` per side, durable | Not three stages |
+| 16 practice hours a week, 8-hour cap per side | The squeeze, and it is two constants |
+| Fit as weighted role deficits, `deficit^1.25 × importance` | With exactly **one** hard cap: the quarterback |
+| Fit and install move completion %, yards per play, sack, INT, fumble | Primitives only |
+| Injury rate 0.06 → ~0.25 per team-game | Known defect; depth is meaningless without it |
+| Fit cached outside the save, invalidated on roster/depth/system change | Mandatory at 72 programs |
+| Prospect fit as a three-state range: letter grade → numeric range → exact | The evaluation types already exist |
+| Empty coaching chairs at takeover | Below |
+
+| cut or deferred | why |
+|---|---|
+| Three install stages (base / situations / counters) | Six numbers, a progression UI, and stage-specific outcome ownership. One number does 80% of it. |
+| Continuity / returning snaps as a third axis | Needs per-player snap tracking and mostly repeats what fit already says |
+| Defensive front-caller and coverage-caller roles | An entire parallel mechanism. MVP: room-weighted like offense, one hard cap on the lead LB or DB. |
+| Multi-column install retention tables | Dies with the stages. Switch systems, keep half. |
+| A role-reassignment layer (outside / slot / flex) | The depth chart already orders players; an injured one drops out and the next steps in |
+| Six-input rival system-choice model | Two inputs — roster fit and coordinator preference — offseason only. That already hits the 15–20% mismatch target. |
+| Any new stored player attribute | Ship on the five that exist |
+
+**The idea that cuts the most work: let the scheme decide who is on the field.**
+
+| | WR | TE | RB | | DB | LB | DL |
+|---|---|---|---|---|---|---|---|
+| Air Raid | **4** | 1 | 1 | Nickel Pressure | **5** | 2 | 4 |
+| Power Run | 2 | **2** | 2 | 4–3 Base | 4 | **3** | 4 |
+
+If the Air Raid fields four receivers, WR4's rating already enters `passOffense`
+through the existing unit math — **depth starts mattering without a fit formula
+at all.** The explicit fit score then only has to carry the attribute-shape part.
+It is also the most legible thing on the screen, because a personnel grouping is
+how football actually talks about scheme.
+
+### Empty chairs at takeover
+
+The player hires all four posts. No incumbent, no buyout — you are filling
+vacancies, so the constraint is **annual payroll against your opening budget**,
+which is a far better first decision than "is this man better than the one
+already here". Leaving a chair empty must be legal and its cost stated; the
+engine already models "Nobody" installing at 38. The prestige ceiling stays —
+that is what turns prestige into a goal.
+
+Acquisition is cost + prestige + an **X factor**: a coach with a reason to come
+— alma mater, home state, something to prove — who is better than your pull
+should allow and cheaper than his market. It is the anti-frustration valve for a
+low-tier program and it is where the game's stories come from. It must be
+**earned, not rolled**: tie the chance to in-state recruiting, a winning season,
+or donor culture, or it reads as a slot machine.
+
+### Two things that will break, and should
+
+**The distribution suite will go red.** Changing starter counts and roster depth
+moves every calibrated per-game rate — 238 passing yards, 64.8% completion, 165
+rushing. Those failures are correct and need re-baselining. Budget a day of
+measurement, not a bug hunt.
+
+**This rides on the performance work.** A tuning matrix at 72 programs is not
+runnable at 6.4 seconds a week. Tune at 24 programs, ship, re-verify at 72 once
+indexing lands. The fit cache should be built *with* the indexing work item 9
+already calls for, not as another consumer of full-state scans.
+
+### Sequencing — four slices, each playable
+
+1. **Generation and personnel groupings.** No fit math at all. Rosters get shape,
+   the Air Raid fields four receivers, WR4 suddenly matters. Re-baseline the
+   distribution tests.
+2. **Derived traits, the fit score, prospect fit ranges.** Read-only — it
+   diagnoses, it does not change results. Ships the whole recruiting and
+   depth-chart payoff on its own.
+3. **Fit and install into outcome modifiers, plus the 16-hour attention
+   economy.** The only slice that needs the tuning matrix.
+4. **Injuries up, rivals participate, caching.**
+
+Slices 1 and 2 deliver most of the engagement without touching game resolution,
+which is the right shape for a small team: find out whether the fit screen is fun
+before gambling on the balance work.
+
+### The tuning matrix
+
+Balance values are hypotheses, and these especially. Run as a committed
+distribution test, not a one-off:
+
+```
+personnel fit   45, 55, 65, 75, 85, 95
+install         25, 50, 75, 100
+weekly alignment 40, 70, 100
+opponent        weak, equal, strong
+```
+
+Measure completion rate, yards per play, third-down conversion, red-zone TD rate,
+explosive plays, sacks, interceptions, fumbles, points, win rate. Accept the band
+where a strong fit clearly outperforms a misfit in passing metrics, turnover
+swings are meaningful but not chaotic, and **scheme influences close matchups
+without overcoming a real talent gap.**
+
+Two assertions that must hold or the whole thing has failed:
+
+- Two equally rated quarterbacks with different profile biases produce visibly
+  different Air Raid fit and different production.
+- A strong system advantage never exceeds half a full tactical counter.
+
 ## Suggested order of work
 
 1. ~~RNG finalizer plus a distribution test~~ — done.
@@ -746,8 +1014,13 @@ be replaced.
 7. ~~The scouting department, staff hour allocation, and one weekly screen~~ —
    done; see "The scouting department". `facilities.SCOUTING` has an upgrade
    cost but no recurring one, which is the same gap as every other facility.
-8. Add an offseason phase — unblocks marquee scheduling every year, signing day,
+8. **The attention economy and system fit** — see the section above. Four
+   slices: generation and personnel groupings, then the fit score read-only,
+   then outcome modifiers and the 16-hour week, then injuries and rivals.
+   Slices 1 and 2 land most of the engagement without touching game resolution.
+9. Add an offseason phase — unblocks marquee scheduling every year, signing day,
    the portal as an input, coach hiring, and expectations/firing.
-9. Performance and save size before any iOS work. A week advance measures 6.9
-   seconds in the browser at the full 72-program league; the cost is the
-   recruiting market and the AI planner, not game resolution.
+10. Performance and save size before any iOS work. A week advance measures 6.9
+    seconds in the browser at the full 72-program league; the cost is the
+    recruiting market and the AI planner, not game resolution. Slice 3 above
+    cannot be tuned at full league size until this lands.
