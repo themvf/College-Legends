@@ -32,7 +32,8 @@ import {
   schemeAffinity,
   OFFENSIVE_SCHEMES,
   weeklyBriefing,
-  seasonExpectation
+  seasonExpectation,
+  planAlignment
 } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
@@ -1140,4 +1141,39 @@ test("the dashboard tells the player what is being wasted, and where to fix it",
   const bad = seasonExpectation(doomed, programId);
   assert.equal(bad.onTrack, false);
   assert.match(bad.standing, /next year/i);
+});
+
+test("your scheme anchors the weekly call without killing the matchup game", () => {
+  const state = beginSeason(createFictionalLeague("scheme-anchor", 24));
+  const programId = "program-1";
+  const identity = state.programs[programId].schemeIdentity;
+  const passing = identity.offense === "AIR_RAID" || identity.offense === "SPREAD_TEMPO";
+
+  const withCall = (balance) => ({
+    ...state,
+    gamePlans: { ...state.gamePlans, [programId]: { ...state.gamePlans[programId], runPassBalance: balance } }
+  });
+  const onScheme = planExecution(withCall(passing ? "PASS_HEAVY" : "RUN_HEAVY"), programId, "OFFENSE", 6);
+  const offScheme = planExecution(withCall(passing ? "RUN_HEAVY" : "PASS_HEAVY"), programId, "OFFENSE", 6);
+
+  assert.ok(
+    offScheme.expected < onScheme.expected,
+    "a call the program does not run must cost execution"
+  );
+  assert.ok(
+    offScheme.limits.some((limit) => /isn't what your program runs/.test(limit)),
+    "and the screen must say why"
+  );
+
+  // The cost has to stay smaller than what a well-timed counter is worth, or
+  // exploiting a scouted weakness would never pay and the matchup matrix —
+  // calibrated over 400 games a cell — would be dead weight.
+  const cost = onScheme.expected - offScheme.expected;
+  assert.ok(cost > 0.01, `going off-scheme must be felt (${(cost * 100).toFixed(1)} points)`);
+  assert.ok(cost < 0.08, `but never so much that deviating is unthinkable (${(cost * 100).toFixed(1)} points)`);
+
+  // Alignment is a multiplier on execution, never a gate on the menu.
+  for (const balance of ["RUN_HEAVY", "BALANCED", "PASS_HEAVY"]) {
+    assert.ok(planAlignment({ runPassBalance: balance }, identity, "OFFENSE") >= 0.85);
+  }
 });

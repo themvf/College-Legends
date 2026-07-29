@@ -10,7 +10,7 @@ import type {
 } from "@college-legends/model";
 import { AddressableRng } from "./rng.js";
 import { focusShare } from "./department.js";
-import { coachSchemeFit, schemeFitLabel, OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES } from "./scheme.js";
+import { coachSchemeFit, schemeFitLabel, planAlignment, OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES } from "./scheme.js";
 
 const clamp = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value));
 
@@ -99,7 +99,12 @@ export function planExecution(
   const installer = planInstaller(state, programId, side);
 
   const facility = program ? Math.max(0, program.facilities.TRAINING - 1) * 0.012 : 0;
-  const base = 0.3 + installer.rating / 100 * 0.28;
+  // Calling something the program does not run costs execution. A team is not a
+  // menu — an Air Raid roster asked to grind it out is running a plan it has
+  // never repped.
+  const plan = state.gamePlans?.[programId];
+  const alignment = program && plan ? planAlignment(plan, program.schemeIdentity, side) : 1;
+  const base = (0.3 + installer.rating / 100 * 0.28) * alignment;
   const repsBonus = Math.sqrt(clamp(reps, 0, MAXIMUM_REPS_PER_SIDE) / MAXIMUM_REPS_PER_SIDE) * 0.26;
   const centre = base + repsBonus + facility;
   const width = clamp(0.32 - installer.rating / 100 * 0.16, 0.08, 0.32);
@@ -113,6 +118,9 @@ export function planExecution(
   else if (installer.note === "Head coach covering") limits.push(`${installer.name} is covering for a coordinator who's off doing something else.`);
   else if (installer.note.startsWith("Coordinator installing on")) limits.push(`${installer.name} is only part-time on game prep — the rest of his week is scouting or on the road recruiting.`);
   else if (installer.note.startsWith("Coordinator installing a scheme")) limits.push(`${installer.name} doesn't coach this scheme, so less of it holds up on Saturday.`);
+  if (alignment < 0.96) {
+    limits.push(`This isn't what your program runs, so ${Math.round((1 - alignment) * 100)}% less of it holds up. Worth it only if the matchup is lopsided.`);
+  }
   if (reps === 0) limits.push("You haven't put a single rep on this. They'll be walking through it.");
   if (reps >= MAXIMUM_REPS_PER_SIDE) limits.push("They've got this down cold. More reps just wear them out.");
 
@@ -157,7 +165,7 @@ export function staffModifiers(
   const fit = context?.schemeFit ?? 1;
   const share = context?.prepareShare ?? 1;
   const facilityBonus = context?.facilityBonus ?? 0;
-  const prep = (roleWeight: number): string => `+${(rating * roleWeight * share / 100).toFixed(1)} to every unit`;
+  const prep = (roleWeight: number): string => `+${(rating * roleWeight * share / 100).toFixed(1)} to all four phases`;
 
   if (member.role === "OFFENSIVE_COORDINATOR" || member.role === "DEFENSIVE_COORDINATOR") {
     const side = member.role === "OFFENSIVE_COORDINATOR" ? "offense" : "defense";

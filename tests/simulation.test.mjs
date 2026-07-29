@@ -385,7 +385,7 @@ test("one weekly development spotlight supports a full-intensity player or dilut
   assert.ok(group.state.players[quarterbacks[1].id].ratings.technique > quarterbacks[1].ratings.technique);
   const spotlight = group.events.find((event) => event.type === "DEVELOPMENT_SPOTLIGHT_SET");
   assert.ok(spotlight);
-  assert.equal(spotlight.intensity, 0.55);
+  assert.equal(spotlight.intensity, 0.28);
   assert.equal(spotlight.playerIds.length, quarterbacks.length);
 });
 

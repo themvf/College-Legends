@@ -386,3 +386,22 @@ dd { margin:0; font-weight:700; text-align:right; }
 .tier-ladder { list-style: none; margin: 0.4rem 0 0; padding: 0; display: grid; gap: 0.4rem; }
 .tier-ladder li { display: flex; gap: 0.7rem; align-items: baseline; font-size: 0.86rem; opacity: 0.9; }
 .tier-cost { flex: 0 0 3.6rem; font-variant-numeric: tabular-nums; opacity: 0.6; font-size: 0.78rem; }
+
+/* A control that cannot do anything this week should say so, not sit there live. */
+.locked-panel { opacity: 0.6; }
+.locked-panel input[type="range"] { pointer-events: none; }
+.locked-note { color: #e8b552; font-size: 0.82rem; margin: 0.25rem 0 0; }
+
+/* Development: three suggestions, a whole room, or anybody you like. */
+.dev-modes { display: flex; gap: 0.4rem; flex-wrap: wrap; margin: 0.6rem 0 0.8rem; }
+.dev-mode { padding: 0.35rem 0.7rem; border-radius: 999px; font-size: 0.8rem; cursor: pointer;
+  border: 1px solid var(--line, #2a2f3a); background: transparent; color: inherit; }
+.dev-mode.active { border-color: #6ea8fe; background: rgba(110, 168, 254, 0.14); }
+.dev-search { width: 100%; padding: 0.5rem 0.7rem; border-radius: 8px; margin-bottom: 0.5rem;
+  border: 1px solid var(--line, #2a2f3a); background: rgba(255,255,255,0.03); color: inherit; }
+.dev-list { display: grid; gap: 0.3rem; max-height: 22rem; overflow-y: auto; }
+.dev-row { display: grid; grid-template-columns: 1fr auto auto; gap: 0.8rem; align-items: baseline; text-align: left;
+  padding: 0.45rem 0.7rem; border-radius: 8px; cursor: pointer; font-size: 0.86rem;
+  border: 1px solid var(--line, #2a2f3a); background: rgba(255,255,255,0.02); color: inherit; }
+.dev-row.active { border-color: #6ea8fe; background: rgba(110, 168, 254, 0.12); }
+.dev-headroom { opacity: 0.6; font-size: 0.78rem; }

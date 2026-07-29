@@ -257,6 +257,57 @@ export function coachSchemeFit(
   return Number((1 - (1 - (offense + defense) / 2) * 0.5).toFixed(3));
 }
 
+/**
+ * What calling off-scheme costs.
+ *
+ * Deliberately smaller than the emphasis matchup swing. The matchup matrix is
+ * calibrated over 400 games a cell and a full counter is worth about 2.7 points
+ * — so if going off-scheme cost more than that, exploiting a scouted weakness
+ * would never pay and the matchup game would be dead. Deviating should be right
+ * when the matchup is lopsided and wrong when it is not.
+ */
+const ALIGNMENT_COST = 0.11;
+const ALIGNMENT_FLOOR = 0.9;
+
+/** Where a week's call sits on the same run–pass axis the schemes use. */
+const BALANCE_AXIS: Readonly<Record<string, number>> = { RUN_HEAVY: 0.05, BALANCED: 0.5, PASS_HEAVY: 0.95 };
+const PRIORITY_AXIS: Readonly<Record<string, number>> = { STOP_THE_RUN: 0.1, BALANCED: 0.5, STOP_THE_PASS: 0.9 };
+
+/**
+ * How close this week's call is to what the program actually runs.
+ *
+ * A team is not a menu. An Air Raid program calling ground-and-pound is asking
+ * players to execute something they have never practised, so it costs execution
+ * — never availability, because the emphasis matchup matrix only holds while
+ * every call stays selectable. Deviating is meant to be a real option when the
+ * matchup is worth it, not a free one.
+ */
+export function planAlignment(
+  call: { runPassBalance?: string; defensivePriority?: string },
+  identity: SchemeIdentity,
+  side: "OFFENSE" | "DEFENSE"
+): number {
+  if (side === "OFFENSE") {
+    const called = BALANCE_AXIS[call.runPassBalance ?? "BALANCED"] ?? 0.5;
+    const natural = OFFENSIVE_AXIS[identity.offense];
+    return Number(clamp(1 - Math.abs(called - natural) * ALIGNMENT_COST, ALIGNMENT_FLOOR, 1).toFixed(3));
+  }
+  const called = PRIORITY_AXIS[call.defensivePriority ?? "BALANCED"] ?? 0.5;
+  // A defense's identity axis is aggression, not run/pass, so the natural
+  // priority is the middle unless the scheme is built to take something away.
+  const natural = identity.defense === "BEND_DONT_BREAK" ? 0.5
+    : identity.defense === "FOUR_THREE_BASE" ? 0.28
+      : identity.defense === "ZONE_BLITZ" ? 0.6 : 0.78;
+  return Number(clamp(1 - Math.abs(called - natural) * ALIGNMENT_COST, ALIGNMENT_FLOOR, 1).toFixed(3));
+}
+
+/** What going off-scheme costs, in plain words. */
+export function alignmentNote(alignment: number, schemeLabel: string): string {
+  if (alignment >= 0.99) return "This is what you run";
+  if (alignment >= 0.96) return `Close to your ${schemeLabel}`;
+  return `Off-scheme — your guys don't rep this, so ${Math.round((1 - alignment) * 100)}% less of it holds up`;
+}
+
 export function schemeFitLabel(fit: number): string {
   if (fit >= 0.99) return "Runs exactly what you run";
   if (fit >= 0.9) return "Close enough to what he knows";

@@ -1394,6 +1394,14 @@ function WeekDecisions({ game, pending, onQueue }: {
   const spotlight = pending.find((command): command is Extract<GameCommand, { type: "SET_DEVELOPMENT_SPOTLIGHT" }> => command.type === "SET_DEVELOPMENT_SPOTLIGHT")
     ?? (game.state.developmentSpotlights?.[programId] ? undefined : undefined);
   const spotlightPlayerId = spotlight?.target.type === "PLAYER" ? spotlight.target.playerId : null;
+  const spotlightPosition = spotlight?.target.type === "POSITION" ? spotlight.target.position : null;
+  const roster = Object.values(game.state.players).filter((player) =>
+    player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP");
+  const spotlightLabel = spotlightPlayerId
+    ? `${game.state.players[spotlightPlayerId]?.name ?? "Somebody"} gets the week`
+    : spotlightPosition ? `The whole ${spotlightPosition} room gets the week` : "Nobody yet";
+  const [devMode, setDevMode] = useState<"SUGGESTED" | "ROOM" | "ANYBODY">("SUGGESTED");
+  const [devSearch, setDevSearch] = useState("");
 
   const Header = ({ id, title }: { id: string; title: string }): ReactElement => {
     const info = alert(id);
@@ -1402,46 +1410,89 @@ function WeekDecisions({ game, pending, onQueue }: {
   };
 
   return <div className="week-tab-body">
-    <article className="panel">
+    <article className={atHome ? "panel" : "panel locked-panel"}>
       <Header id="TICKET_PRICE" title="1 · Ticket price" />
+      {!atHome && <p className="locked-note">You're on the road this week. Gate business happens at home.</p>}
       <h2>{money(price)} a seat</h2>
-      <input type="range" min={MINIMUM_TICKET_PRICE} max={MAXIMUM_TICKET_PRICE} value={price}
+      <input type="range" min={MINIMUM_TICKET_PRICE} max={MAXIMUM_TICKET_PRICE} value={price} disabled={!atHome}
         onChange={(event) => onQueue({ type: "SET_TICKET_PRICE", programId, price: Number(event.target.value) })} />
       <div className="snapshot-list">
-        <p><span>Comparable programmes charge</span><strong>{money(gate.fairPrice)}</strong></p>
-        <p><span>Projected attendance</span><strong>{atHome ? `${gate.attendance.toLocaleString()} / ${capacity.toLocaleString()}${gate.soldOut ? " · sold out" : ""}` : "away week"}</strong></p>
-        <p><span>Gate</span><strong>{atHome ? money(gate.ticketRevenue) : "away week"}</strong></p>
+        <p><span>Programs like yours charge</span><strong>{money(gate.fairPrice)}</strong></p>
+        <p><span>Expected crowd</span><strong>{atHome ? `${gate.attendance.toLocaleString()} / ${capacity.toLocaleString()}${gate.soldOut ? " · sold out" : ""}` : "—"}</strong></p>
+        <p><span>Gate</span><strong>{atHome ? money(gate.ticketRevenue) : "—"}</strong></p>
       </div>
     </article>
 
-    <article className="panel">
-      <Header id="ADVERTISING" title="2 · Advertising" />
-      <h2>{spend > 0 ? `${money(spend)} this week` : "No spend"}</h2>
-      <input type="range" min={0} max={MAXIMUM_WEEKLY_ADVERTISING} step={5_000} value={spend}
+    <article className={atHome ? "panel" : "panel locked-panel"}>
+      <Header id="ADVERTISING" title="2 · Marketing" />
+      {!atHome && <p className="locked-note">Nothing to promote — you're playing somewhere else this week.</p>}
+      <h2>{!atHome ? "Not this week" : spend > 0 ? `${money(spend)} this week` : "No spend"}</h2>
+      <input type="range" min={0} max={MAXIMUM_WEEKLY_ADVERTISING} step={5_000} value={spend} disabled={!atHome}
         onChange={(event) => onQueue({ type: "SET_ADVERTISING", programId, spend: Number(event.target.value) })} />
       <div className="snapshot-list">
-        <p><span>New followers a week</span><strong>{gate.advertisingFans.toLocaleString()}</strong></p>
-        <p><span>Extra through the gate</span><strong>{atHome ? `${Math.max(0, gate.attendance - projectGate(program, opponent, capacity, false, price, 0).attendance).toLocaleString()}` : "—"}</strong></p>
-        <p><span>Net this week</span><strong>{atHome ? money(gate.net) : money(-spend)}</strong></p>
+        <p><span>New fans this week</span><strong>{atHome ? gate.advertisingFans.toLocaleString() : "—"}</strong></p>
+        <p><span>Extra bodies in seats</span><strong>{atHome ? `${Math.max(0, gate.attendance - projectGate(program, opponent, capacity, false, price, 0).attendance).toLocaleString()}` : "—"}</strong></p>
+        <p><span>Net this week</span><strong>{atHome ? money(gate.net) : "$0"}</strong></p>
       </div>
     </article>
 
     <article className="panel">
-      <Header id="DEVELOPMENT" title="3 · Development focus" />
-      <h2>Who gets the week</h2>
-      <div className="plan-options">{candidates.map((candidate) =>
+      <Header id="DEVELOPMENT" title="3 · Who gets the extra work" />
+      <h2>{spotlightLabel}</h2>
+      <p className="muted">
+        One player gets your staff's full attention, or a whole position room splits it. Concentrated work
+        builds a star; a room lifts everybody a little. You can't do both.
+      </p>
+      <div className="dev-modes">
+        {(["SUGGESTED", "ROOM", "ANYBODY"] as const).map((mode) =>
+          <button className={devMode === mode ? "dev-mode active" : "dev-mode"} key={mode} onClick={() => setDevMode(mode)}>
+            {mode === "SUGGESTED" ? "Three worth it" : mode === "ROOM" ? "A whole room" : "Anybody on the roster"}
+          </button>)}
+      </div>
+
+      {devMode === "SUGGESTED" && <div className="plan-options">{candidates.map((candidate) =>
         <button className={spotlightPlayerId === candidate.playerId ? "plan-option active" : "plan-option"}
           key={candidate.playerId}
           onClick={() => onQueue({
             type: "SET_DEVELOPMENT_SPOTLIGHT", programId,
             target: { type: "PLAYER", playerId: candidate.playerId },
-            focus: candidate.reason === "AT_RISK" ? "CONDITIONING" : candidate.reason === "STAR" ? "TECHNIQUE" : "TECHNIQUE"
+            focus: candidate.reason === "AT_RISK" ? "CONDITIONING" : "TECHNIQUE"
           })}>
           <strong>{candidate.name} · {candidate.position} · {candidate.overall}</strong>
           <span className="effect">{candidate.headline}</span>
           <span className="tradeoff">{candidate.detail}</span>
         </button>)}
-      </div>
+      </div>}
+
+      {devMode === "ROOM" && <div className="plan-options">{positionOrder.map((position) => {
+        const room = roster.filter((player) => player.position === position);
+        if (room.length === 0) return null;
+        const best = Math.max(...room.map((player) => player.overall));
+        const headroom = room.reduce((total, player) => total + (player.potential - player.overall), 0) / room.length;
+        return <button className={spotlightPosition === position ? "plan-option active" : "plan-option"} key={position}
+          onClick={() => onQueue({ type: "SET_DEVELOPMENT_SPOTLIGHT", programId, target: { type: "POSITION", position }, focus: "TECHNIQUE" })}>
+          <strong>{position} room · {room.length} players</strong>
+          <span className="effect">Best is {Math.round(best)}, average {headroom.toFixed(1)} points of headroom left</span>
+          <span className="tradeoff">Each gets a fraction of the work — nobody in here becomes a star this week</span>
+        </button>;
+      })}</div>}
+
+      {devMode === "ANYBODY" && <div className="dev-browser">
+        <input className="dev-search" type="search" placeholder="Search your roster…" value={devSearch}
+          onChange={(event) => setDevSearch(event.target.value)} />
+        <div className="dev-list">{roster
+          .filter((player) => player.name.toLowerCase().includes(devSearch.toLowerCase()) || player.position.toLowerCase() === devSearch.toLowerCase())
+          .sort((left, right) => (right.potential - right.overall) - (left.potential - left.overall))
+          .slice(0, 40)
+          .map((player) =>
+            <button className={spotlightPlayerId === player.id ? "dev-row active" : "dev-row"} key={player.id}
+              onClick={() => onQueue({ type: "SET_DEVELOPMENT_SPOTLIGHT", programId, target: { type: "PLAYER", playerId: player.id }, focus: "TECHNIQUE" })}>
+              <strong>{player.name}</strong>
+              <span>{player.position} · {Math.round(player.overall)} now</span>
+              <span className="dev-headroom">{Math.round(player.potential - player.overall)} left in him</span>
+            </button>)}
+        </div>
+      </div>}
     </article>
 
     <article className="panel">

@@ -332,6 +332,42 @@ Sixteen system event types are filtered out, weekly recaps have their own panel,
 and a result only appears if it involves a future opponent or a top-15 team
 losing to somebody outside the top 40.
 
+## Your scheme anchors the week
+
+A team is not a menu. `planAlignment(call, identity, side)` scales execution by
+how far the week's call sits from what the program actually runs, so an Air Raid
+roster asked to grind it out is running something it has never repped.
+
+The magnitude is deliberately small — **a full deviation costs about 3 points of
+execution** — and that is the whole design. The emphasis matchup matrix is
+calibrated over 400 games a cell and a full counter is worth roughly 2.7 points
+of scoring, so a bigger penalty would make exploiting a scouted weakness never
+pay and kill the matchup game. A first attempt at `ALIGNMENT_COST = 0.3` did
+exactly that and broke the counter test.
+
+The larger disincentive was always there and is not a penalty: an Air Raid
+roster has a strong `passOffense` and a weak `rushOffense`, so running the ball
+is bad because your run game is bad. Alignment is only the extra "they haven't
+practised it" cost on top.
+
+## Gate business happens at home
+
+Ticket price and marketing are inert on the road, so both controls lock with a
+reason and the spend is neither charged nor delivered. A live control that
+cannot do anything is worse than no control.
+
+## Development is a real choice now
+
+`SPOTLIGHT_INTENSITY` is `{ PLAYER: 1.6, POSITION: 0.28 }`. It used to be 1.0
+against 0.55, which meant twelve players at 0.55 was 6.6x the output of one at
+1.0 — the individual option was never worth taking, and the position spotlight
+was not even exposed in the UI. Concentrated work now builds a star, which is
+what the gate and the recruiting trail run on; a room lifts everybody a little.
+
+The screen offers three ways in: the three curated suggestions (most improvable,
+biggest brand, closest to breaking down), any position room, or a searchable
+list of the whole roster sorted by remaining headroom.
+
 ## Direction: the game is a decision engine
 
 The reference is a business simulation where nearly every screen is a decision

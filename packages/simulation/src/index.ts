@@ -50,8 +50,10 @@ export {
   SCOUTING_TIERS
 } from "./scouting.js";
 export {
+  alignmentNote,
   bestSchemeFor,
   coachSchemeFit,
+  planAlignment,
   DEFENSIVE_SCHEME_BLURBS,
   DEFENSIVE_SCHEMES,
   OFFENSIVE_SCHEME_BLURBS,
@@ -321,7 +323,7 @@ export function projectedDevelopmentPayoff(
 export function staffFocusPayoff(member: Pick<StaffMember, "rating" | "role">, focus: StaffFocus): string {
   const perHour = (multiplier: number): number =>
     member.rating * roleFit(member.role, focus) * multiplier / staffCapacity(member.rating);
-  if (focus === "PREPARE") return `Every hour here is +${perHour(0.01).toFixed(2)} to every unit on Saturday`;
+  if (focus === "PREPARE") return `Every hour sharpens all four phases — run game, pass game, run defense, pass defense — by ${perHour(0.01).toFixed(2)} on Saturday`;
   if (focus === "SCOUT") return `Every hour here is +${perHour(1 / 12).toFixed(1)} scouting points a week`;
   if (focus === "RECRUIT") return `Every hour here is +${perHour(0.05).toFixed(1)} on the recruiting trail`;
   if (focus === "DEVELOP") return `Every hour here is +${perHour(0.2).toFixed(1)}% player growth a week`;
@@ -392,6 +394,12 @@ function tailedDraw(rng: AddressableRng, key: string, typical: number, tail: num
   if (rng.at(`${key}:tail-roll`) >= tailChance) return body;
   return typical + rng.between(`${key}:tail`, 0, tail);
 }
+
+/**
+ * How hard one week of coaching attention lands. One player gets more than he
+ * would in a group; a whole room gets less each but more in total.
+ */
+export const SPOTLIGHT_INTENSITY = { PLAYER: 1.6, POSITION: 0.28 } as const;
 
 export function marqueeGuarantee(rank: number): number {
   return Math.round(500_000 + (25 - clamp(rank, 1, 25)) * (1_000_000 / 24));
@@ -1176,7 +1184,11 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Choose a current scholarship player or position group." });
         continue;
       }
-      const intensity = command.target.type === "PLAYER" ? 1 : 0.55;
+      // A group used to be strictly better — twelve players at 0.55 is 6.6x the
+      // output of one at 1.0, so the individual option was never worth taking.
+      // Concentrated work is now worth more per player, which is what builds a
+      // star, and a star is what the gate and the recruiting trail run on.
+      const intensity = command.target.type === "PLAYER" ? SPOTLIGHT_INTENSITY.PLAYER : SPOTLIGHT_INTENSITY.POSITION;
       state.developmentSpotlights[program.id] = { focus: command.focus, target: clone(command.target) };
       for (const player of targetPlayers) player.developmentFocus = command.focus;
       events.push({
@@ -1737,7 +1749,7 @@ function playerDevelopmentIntensity(state: Readonly<GameState>, player: Readonly
   const spotlight = state.developmentSpotlights?.[player.programId];
   if (!spotlight) return 1;
   if (spotlight.target.type === "PLAYER") return 1;
-  return spotlight.target.position === player.position ? 0.55 : 1;
+  return spotlight.target.position === player.position ? SPOTLIGHT_INTENSITY.POSITION : 1;
 }
 
 /**
@@ -2372,7 +2384,9 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
     // bye or on the road, but there is no ticket revenue without a home game.
     const playedAtHome = Boolean(homeGame && game?.played);
     const gate = projectGate(program, opponent, capacity, marqueeGame);
-    const advertisingFans = gate.advertisingFans;
+    // Marketing sells tickets to a home game. On the road there is no gate to
+    // fill, so the spend does not happen and is not charged.
+    const advertisingFans = playedAtHome ? gate.advertisingFans : 0;
     const goodwill = pricingGoodwill(program.ticketPrice, fairTicketPrice(program, opponent, marqueeGame), program.fanElasticity ?? 1);
     // Over-pricing costs followers, not merely a satisfaction score — otherwise
     // gouging is free and the price decision has only an upside.
@@ -2395,7 +2409,7 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
     const concessionRevenue = playedAtHome ? gate.concessionRevenue : 0;
     const revenue = program.weeklyRevenue + ticketRevenue + concessionRevenue;
     const staffPayroll = Object.values(state.staff).filter((staff) => staff.programId === program.id).reduce((sum, staff) => sum + staff.salary / 52, 0);
-    const expenses = Math.round(program.weeklyExpenses + staffPayroll + program.advertisingSpend);
+    const expenses = Math.round(program.weeklyExpenses + staffPayroll + (playedAtHome ? program.advertisingSpend : 0));
     const net = Math.round(revenue - expenses);
     program.budget += net;
     events.push({ type: "WEEKLY_FINANCES", season: state.season, week: state.week, programId: program.id, revenue: Math.round(revenue), expenses, net });
