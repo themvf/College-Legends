@@ -990,6 +990,54 @@ runnable at 6.4 seconds a week. Tune at 24 programs, ship, re-verify at 72 once
 indexing lands. The fit cache should be built *with* the indexing work item 9
 already calls for, not as another consumer of full-state scans.
 
+### The gate had an unbounded gouging regime
+
+`ticketDemandMultiplier` clamped demand at a floor of `0.15`. Once a program
+reached that floor attendance stopped falling, revenue became a flat crowd times
+a rising price, and the $200 cap was strictly optimal. Measured over 72
+programs, **gouging beat fair pricing at 3 of them, by 26% at one.**
+
+The old test sampled one program per tier and happened to miss all three, which
+is the more useful lesson: a design invariant that holds "for a LOW, a MID and a
+POWER program" is not tested. It asserts every program now.
+
+Fixed by replacing the linear-to-a-floor curve with exponential decay above fair
+price, plus an elasticity floor — a diehard base at 0.35 put its revenue peak
+past the cap by a different route. Measured after:
+
+| | before | after |
+|---|---|---|
+| programs where gouging wins | 3 of 72 | **0 of 72** |
+| weekly optimum, as a multiple of fair | unbounded | **0.86x–1.24x** |
+
+So a front-runner should price under fair and a diehard can price over it, and
+nobody should ever max it out. Per-game rates were unaffected: 69.9 plays, 65.4%
+completion, 247 passing, 168 rushing, 27.5 points.
+
+### Still open: scheme identity is only half visible in the box score
+
+Measured over a full season with rooms shaped and personnel groupings live, pass
+rate by scheme identity:
+
+| scheme | pass rate | `RUN_PASS_BALANCE` asks for |
+|---|---|---|
+| POWER_RUN | 41% | 38% |
+| TRIPLE_OPTION | 44% | 38% |
+| SPREAD_TEMPO | 47% | 62% |
+| AIR_RAID | 49% | 62% |
+
+The spread is real but compressed into 41–49% against a designed 38–62%, so a
+Power Run program is harder to tell from an Air Raid one than it should be. The
+cause is **situational logic inside the drive loop** — third-and-long throws
+regardless of identity — which pulls every program back toward an even split.
+Realistic in isolation, but it mutes the one signal a player actually reads.
+
+Worth noting what it is *not*: `intendedGamePlan` abandons `RUN_HEAVY` or
+`PASS_HEAVY` whenever a unit is more than 6 points behind, which looks like the
+culprit and measures as a no-op — raising the threshold to −14 changed the table
+above by nothing at all. Fix this in slice 3 alongside the outcome modifiers,
+where play selection is already being touched.
+
 ### Sequencing — four slices, each playable
 
 1. ~~**Generation and personnel groupings.**~~ **Done.** No fit math was added.

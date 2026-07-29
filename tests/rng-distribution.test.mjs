@@ -491,6 +491,37 @@ test("the top scouting tier reports likelihoods, never certainty", () => {
 
 test("ticket pricing has a real optimum that gouging cannot beat", () => {
   const state = beginSeason(createFictionalLeague("ticket-pricing", 24));
+
+  // Every program, not one sampled per tier. Sampling is exactly how a
+  // structural leak survived this test: `ticketDemandMultiplier` used to bottom
+  // out at a floor of 0.15, after which attendance stopped falling and revenue
+  // was a flat crowd times a rising price, so the maximum price was strictly
+  // optimal for any fan base loyal enough to reach the floor. It held at the
+  // three sampled programs and failed at three others, by 26% at one.
+  for (const program of Object.values(state.programs)) {
+    const other = Object.values(state.programs).find((candidate) => candidate.id !== program.id);
+    const seats = stadiumCapacity(program.facilities.STADIUM);
+    const fairFor = fairTicketPrice(program, other, false);
+    const revenueAt = (price) => projectGate(program, other, seats, false, price, 0).ticketRevenue;
+    assert.ok(
+      revenueAt(fairFor) > revenueAt(MAXIMUM_TICKET_PRICE),
+      `${program.tier} ${program.id}: gouging at $${MAXIMUM_TICKET_PRICE} beat fair pricing`
+    );
+    // And the weekly optimum has to sit near fair, so "fair" is a usable
+    // heuristic and fan character decides which way you lean off it.
+    let best = fairFor;
+    let bestRevenue = 0;
+    for (let price = MINIMUM_TICKET_PRICE; price <= MAXIMUM_TICKET_PRICE; price += 1) {
+      const revenue = revenueAt(price);
+      if (revenue > bestRevenue) { bestRevenue = revenue; best = price; }
+    }
+    const ratio = best / fairFor;
+    assert.ok(
+      ratio >= 0.7 && ratio <= 1.45,
+      `${program.tier} ${program.id}: optimum was ${ratio.toFixed(2)}x fair, which is not a believable band`
+    );
+  }
+
   for (const tier of ["LOW", "MID", "POWER"]) {
     const program = Object.values(state.programs).find((candidate) => candidate.tier === tier);
     const opponent = Object.values(state.programs).find((candidate) => candidate.id !== program.id);

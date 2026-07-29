@@ -27,11 +27,30 @@ export function fairTicketPrice(
  * leaves money on the table; charging over it empties them. The curve is
  * deliberately gentle near the fair price so small adjustments are a nudge
  * rather than a cliff.
+ *
+ * Above the fair price it decays exponentially rather than linearly to a floor.
+ * The floor was the bug: once a program's multiplier bottomed out, attendance
+ * stopped falling, revenue became `constant x price`, and the maximum ticket
+ * price was strictly optimal for any program loyal enough to reach it. Measured
+ * across a 24-program league, gouging beat fair pricing at 3 programs and by 26%
+ * at one. Exponential decay keeps revenue single-peaked at every elasticity, so
+ * there is always a real optimum to find.
  */
+const PRICE_DECAY = 1.35;
+/**
+ * Even the most loyal audience has a limit. Without this floor a diehard base
+ * (elasticity 0.35) put its revenue peak past the $200 cap, so the cap was
+ * optimal again by a different route. With it, measured over 72 programs, the
+ * weekly optimum sits between 0.86x and 1.24x of fair: a front-runner should
+ * price under, a diehard can price over, and nobody should ever max it out.
+ */
+const ELASTICITY_FLOOR = 0.6;
+
 export function ticketDemandMultiplier(price: number, fairPrice: number, elasticity = 1): number {
   const overage = (price - fairPrice) / Math.max(1, fairPrice);
   // A diehard base barely notices the price; a front-running one leaves.
-  return clamp(1 - overage * 0.85 * elasticity, 0.15, 1.4);
+  if (overage <= 0) return clamp(1 - overage * 0.85 * elasticity, 0, 1.4);
+  return Math.exp(-PRICE_DECAY * Math.max(ELASTICITY_FLOOR, elasticity) * overage);
 }
 
 /**
@@ -80,8 +99,9 @@ export function projectGate(
   const opponentDraw = opponent ? opponent.fanBase * 0.045 + (opponent.nationalRank <= 25 ? 5_000 : 0) + (marqueeGame ? 7_500 : 0) : 0;
   const baseDemand = program.fanBase * 0.62 + opponentDraw + reach.attendance;
   const demand = baseDemand * ticketDemandMultiplier(price, fairPrice, program.fanElasticity ?? 1);
-  // Only a small hardcore turns up regardless of price. A generous floor would
-  // let a program gouge its way past the demand curve and back into profit.
+  // Only a small hardcore turns up regardless of price. Kept tight because a
+  // generous floor is a flat attendance times a rising price, which is a second
+  // route back to gouging being optimal.
   const attendance = Math.round(clamp(demand, capacity * 0.06, capacity));
   const stadiumModifier = 1 + Math.max(0, program.facilities.STADIUM - 1) * 0.08;
   const ticketRevenue = Math.round(attendance * price);
