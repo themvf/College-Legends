@@ -5,16 +5,18 @@ import { attributeByRole, attributesFor, computeOverall, ratingByRole, type Attr
 import { weeklyBriefing as buildBriefing, type BriefingItem } from "./briefing.js";
 import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES, bestSchemeFor, programRoster, coachSchemeFit, schemePersonnel } from "./scheme.js";
 import { DEFENSIVE_SPOTS, MINIMUM_SNAP_SHARE, OFFENSIVE_SPOTS, personnelLabel, schemeSpots, snapShares, spotsForRoom } from "./rotation.js";
-import { DEFAULT_GAME_PLAN, OFFENSIVE_IDENTITY_LABELS, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
+import { DEFAULT_GAME_PLAN, IDENTITY_BASE_DEFENSE, IDENTITY_BASE_PLAN, OFFENSIVE_IDENTITY_LABELS, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
 import { MAXIMUM_PRACTICE_HOURS, opponentScoutingReport, preparationWeeklyPoints, projectedGamePlan, scheduledOpponent, scoutingConfidence, filmGamesAvailable } from "./scouting.js";
 import {
   allocatedTotal,
   defaultAllocation,
   dossierTiers,
   emptyAllocation,
+  distributeWeekHours,
   focusShare,
   focusWeight,
   pickStaffTrait,
+  weekAllocation,
   scoutingReadiness,
   rebalanceAllocation,
   roleFit,
@@ -90,6 +92,9 @@ export {
   MARQUEE_VALUE,
   opponentValue,
   roleFit,
+  allocatableStaff,
+  distributeWeekHours,
+  weekAllocation,
   scoutingDepartmentSummary,
   scoutingReadiness,
   readinessNote,
@@ -871,6 +876,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
     const roster = programRoster(state, id);
     state.programs[id]!.schemeIdentity = bestSchemeFor(roster, (side) =>
       rng.at(`${id}:scheme-pick:${side}`) < 0.55 ? 0 : 1);
+    state.gamePlans[id] = schemeGamePlan(state.programs[id]!.schemeIdentity);
     // The staff a program already employs usually coaches what the program runs.
     // A minority do not, which is where the first real hiring decision comes from.
     for (const member of Object.values(state.staff)) {
@@ -909,6 +915,19 @@ const DEFENSIVE_IDENTITIES = DEFENSIVE_SCHEMES;
  * scouting report has to sell — a league where everyone plays the same way has
  * nothing worth scouting.
  */
+/**
+ * The plan a scheme runs. Every emphasis axis is a property of the scheme rather
+ * than a weekly choice, so an Air Raid is permanently pass-heavy at tempo and is
+ * never offered a power-running week.
+ */
+export function schemeGamePlan(identity: Readonly<SchemeIdentity>): GamePlan {
+  return {
+    ...DEFAULT_GAME_PLAN,
+    ...IDENTITY_BASE_PLAN[identity.offense],
+    ...IDENTITY_BASE_DEFENSE[identity.defense]
+  };
+}
+
 function assignSchemeIdentity(rng: AddressableRng, programId: string): SchemeIdentity {
   return {
     offense: OFFENSIVE_IDENTITIES[Math.floor(rng.between(`${programId}:offensive-identity`, 0, OFFENSIVE_IDENTITIES.length - 0.0001))]!,
@@ -1247,7 +1266,7 @@ export function prepareWeek(input: Readonly<GameState>, commands: readonly GameC
   const preparationCommands = commands.filter((command) =>
     command.type === "ALLOCATE_SCOUTING" || command.type === "SET_SCHEME"
     || command.type === "REPLACE_STAFF" || command.type === "SET_PRACTICE_REPS"
-    || command.type === "SET_STAFF_ALLOCATION");
+    || command.type === "SET_STAFF_ALLOCATION" || command.type === "SET_WEEK_HOURS");
   if (preparationCommands.length > 0) {
     resolveCommands(state, preparationCommands, new AddressableRng(state.identity.rootSeed).fork("preparation", String(state.season), String(state.week)), events);
   }
@@ -1359,7 +1378,31 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         continue;
       }
       program.schemeIdentity = { ...program.schemeIdentity, ...command.scheme };
+      // The scheme *is* the game plan now, so setting one writes the other. A
+      // program never plays something it does not run.
+      state.gamePlans[program.id] = schemeGamePlan(program.schemeIdentity);
       events.push({ type: "SCHEME_SET", season: state.season, week: state.week, programId: program.id, scheme: { ...program.schemeIdentity } });
+      continue;
+    }
+    if (command.type === "SET_WEEK_HOURS") {
+      if (!STAFF_FOCUSES.includes(command.focus) || !Number.isFinite(command.hours) || command.hours < 0) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Hours must be a number of hours on a real job." });
+        continue;
+      }
+      const plans = distributeWeekHours(state, program.id, command.focus, command.hours);
+      for (const [staffId, allocation] of Object.entries(plans)) {
+        const member = state.staff[staffId];
+        if (member) member.allocation = allocation;
+      }
+      const settled = weekAllocation(state, program.id);
+      events.push({
+        type: "STAFF_ALLOCATION_SET",
+        season: state.season,
+        week: state.week,
+        programId: program.id,
+        staffId: "STAFF",
+        allocation: settled.byFocus
+      });
       continue;
     }
     if (command.type === "SET_STAFF_ALLOCATION") {
@@ -1596,18 +1639,21 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       continue;
     }
     if (command.type === "SET_GAME_PLAN") {
-      const current = state.gamePlans[program.id] ?? { ...DEFAULT_GAME_PLAN };
-      const changed = (Object.keys(command.plan) as (keyof GamePlan)[])
-        .filter((key) => command.plan[key] !== undefined && command.plan[key] !== current[key])
-        .sort();
-      if (!changed.length) {
-        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The game plan already reads that way." });
-        continue;
-      }
-      const updated: GamePlan = { ...current };
-      for (const key of changed) Object.assign(updated, { [key]: command.plan[key] });
-      state.gamePlans[program.id] = updated;
-      events.push({ type: "GAME_PLAN_SET", season: state.season, week: state.week, programId: program.id, plan: clone(updated), changed });
+      // The weekly tactical call is gone. A program runs what it runs: an Air
+      // Raid was being offered "Ground and pound" every week, which is the one
+      // thing `planAlignment` exists to discourage. The axes are properties of
+      // the scheme now, so changing them means changing your scheme.
+      //
+      // The emphasis matchup matrix in game.ts is deliberately left intact and
+      // unused rather than deleted — it is calibrated over 400 games a cell and a
+      // full counter is worth about 2.7 points, so restoring it (on defense only,
+      // informed by a scouting file) has to stay a config change.
+      events.push({
+        type: "COMMAND_REJECTED",
+        programId: command.programId,
+        command,
+        reason: "Your game plan comes from your scheme. Change the scheme to change how you play."
+      });
       continue;
     }
     if (command.type === "SET_PLAYER_MEDIA_ACTION") {

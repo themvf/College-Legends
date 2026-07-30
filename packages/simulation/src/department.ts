@@ -456,3 +456,104 @@ export function readinessNote(dossierPoints: number): string {
   if (bonus <= 0) return "No file. Your guys go in cold.";
   return `+${bonus.toFixed(1)} to every unit — they have seen this on tape`;
 }
+
+/**
+ * The week as one pool, which is what the player should actually see.
+ *
+ * Hours already come from `StaffAllocation`, but they were edited per coach on a
+ * separate screen — roughly twenty sliders — and then spent again on three more
+ * screens as prep points and scouting points. So the four jobs never visibly
+ * competed, every downstream screen looked like a free pool, and the honest
+ * answer to "why not max practice every week" was: you would, because those hours
+ * could not buy anything else.
+ *
+ * This aggregates the staff into hours per job. The per-coach split still exists
+ * underneath — it is what makes a coach's trait and role matter — but the
+ * decision the player makes is one number per job against one total.
+ */
+export interface WeekAllocation {
+  totalHours: number;
+  spent: number;
+  available: number;
+  byFocus: Record<StaffFocus, number>;
+  /** Rating-points the staff actually delivers to each job, after role and trait. */
+  deliveredByFocus: Record<StaffFocus, number>;
+}
+
+/** Coaches who split a week. The strength coach is money in, health out. */
+export function allocatableStaff(state: Readonly<GameState>, programId: string): StaffMember[] {
+  return Object.values(state.staff)
+    .filter((member) => member.programId === programId && member.role !== "STRENGTH_COACH")
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export function weekAllocation(state: Readonly<GameState>, programId: string): WeekAllocation {
+  const staff = allocatableStaff(state, programId);
+  const byFocus = emptyAllocation();
+  const deliveredByFocus = emptyAllocation();
+  let totalHours = 0;
+  for (const member of staff) {
+    totalHours += staffCapacity(member.rating, member.trait);
+    for (const focus of STAFF_FOCUSES) {
+      const hours = Math.max(0, member.allocation?.[focus] ?? 0);
+      byFocus[focus] += hours;
+      deliveredByFocus[focus] += hours * focusWeight(member, focus) / Math.max(1, staffCapacity(member.rating, member.trait));
+    }
+  }
+  const spent = STAFF_FOCUSES.reduce((total, focus) => total + byFocus[focus], 0);
+  return {
+    totalHours,
+    spent,
+    available: Math.max(0, totalHours - spent),
+    byFocus,
+    deliveredByFocus: Object.fromEntries(
+      STAFF_FOCUSES.map((focus) => [focus, Number(deliveredByFocus[focus].toFixed(1))])
+    ) as Record<StaffFocus, number>
+  };
+}
+
+/**
+ * Puts a target number of hours on one job, taking whatever it needs from the
+ * others. Hours go to the coaches worth the most at that job first, so moving
+ * hours to scouting pulls them from the man best suited to scouting — which is
+ * how the aggregate control stays consistent with the per-coach model beneath it.
+ */
+export function distributeWeekHours(
+  state: Readonly<GameState>,
+  programId: string,
+  focus: StaffFocus,
+  targetHours: number
+): Record<string, StaffAllocation> {
+  const staff = allocatableStaff(state, programId);
+  const plans = new Map<string, StaffAllocation>(
+    staff.map((member) => [member.id, { ...emptyAllocation(), ...(member.allocation ?? {}) }])
+  );
+  const capacityOf = (member: StaffMember) => staffCapacity(member.rating, member.trait);
+  const ceiling = staff.reduce((total, member) => total + capacityOf(member), 0);
+  let wanted = Math.max(0, Math.min(Math.round(targetHours), ceiling));
+
+  // Clear the job, then refill it best-first.
+  for (const member of staff) plans.get(member.id)![focus] = 0;
+  const ranked = [...staff].sort((left, right) =>
+    focusWeight(right, focus) - focusWeight(left, focus) || left.id.localeCompare(right.id));
+  for (const member of ranked) {
+    if (wanted <= 0) break;
+    const plan = plans.get(member.id)!;
+    const capacity = capacityOf(member);
+    const take = Math.min(wanted, capacity);
+    plan[focus] = take;
+    wanted -= take;
+    // Whatever else he was doing has to give way, worst-value job first.
+    let over = allocatedTotal(plan) - capacity;
+    const donors = STAFF_FOCUSES
+      .filter((other) => other !== focus)
+      .sort((left, right) => focusWeight(member, left) - focusWeight(member, right));
+    for (const donor of donors) {
+      if (over <= 0) break;
+      const given = Math.min(over, plan[donor]);
+      plan[donor] -= given;
+      over -= given;
+    }
+  }
+  return Object.fromEntries(plans);
+}

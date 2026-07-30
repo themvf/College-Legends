@@ -590,6 +590,12 @@ export type GameCommand =
   | { type: "SET_ADVERTISING"; programId: ProgramId; spend: number }
   | { type: "SET_PRACTICE_REPS"; programId: ProgramId; side: "OFFENSE" | "DEFENSE"; reps: number }
   | { type: "SET_STAFF_ALLOCATION"; programId: ProgramId; staffId: string; allocation: Partial<StaffAllocation> }
+  /**
+   * Puts a number of hours on one job for the whole staff at once. This is the
+   * control the player actually uses: one pool, one number per job, so the four
+   * jobs visibly compete instead of each looking free on its own screen.
+   */
+  | { type: "SET_WEEK_HOURS"; programId: ProgramId; focus: StaffFocus; hours: number }
   /** The program's scheme. A takeover and offseason decision, not a weekly one. */
   | { type: "SET_SCHEME"; programId: ProgramId; scheme: Partial<SchemeIdentity> }
   | { type: "ALLOCATE_SCOUTING"; programId: ProgramId; opponentProgramId: ProgramId; points: number }
