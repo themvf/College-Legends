@@ -466,6 +466,8 @@ test("injuries are diagnosed, persist on players, and occur often enough for dep
   assert.ok(injuries.every((event) => event.injuryName && ["MINOR", "MODERATE", "MAJOR"].includes(event.severity)));
   assert.ok(injuries.some((event) => event.severity === "MODERATE"));
   assert.ok(injuries.some((event) => event.severity === "MAJOR"));
+  assert.ok(injuries.some((event) => event.injuryName === "Torn ACL"));
+  assert.ok(injuries.some((event) => event.injuryName === "Torn labrum"));
   assert.ok(injuries.every((event) => event.risk < event.riskWithoutCoach));
   assert.ok(acceleratedRecoveries.length > 0, "strength coaches should visibly shorten some recoveries");
 });
@@ -558,6 +560,38 @@ test("the season crowns six division champions, resolves a 12-team playoff, and 
   assert.ok(finalEvents.some((event) => event.type === "NATIONAL_CHAMPION_CROWNED"));
   assert.equal(finalEvents.filter((event) => event.type === "DIVISION_TITLE_WON").length, 6);
   assert.equal(finalEvents.filter((event) => event.type === "SEASON_AWARD_FINALIZED").length, 5);
+  const playoffStatLines = state.playerGameStats.filter((line) =>
+    line.season === season && line.gameId.startsWith(`playoff:${season}:`));
+  assert.deepEqual(
+    [...new Set(playoffStatLines.map((line) => line.week))].sort((left, right) => left - right),
+    [15, 16, 17, 18],
+    "postseason game logs must retain the round in which the player took snaps"
+  );
+  const playoffInjuries = finalEvents.filter((event) =>
+    event.type === "PLAYER_INJURED" && event.week >= 15 && event.week <= 18);
+  assert.ok(playoffInjuries.length > 0, "players who take playoff snaps must remain exposed to injury");
+  assert.ok(playoffInjuries.every((injury) => playoffStatLines.some((line) =>
+    line.playerId === injury.playerId && line.week === injury.week && line.snaps > 0
+  )), "every playoff injury must trace to actual snaps in that round");
+  const advancingInjury = playoffInjuries.find((injury) => {
+    if (injury.week >= 18) return false;
+    const line = playoffStatLines.find((candidate) =>
+      candidate.playerId === injury.playerId && candidate.week === injury.week);
+    const game = history.postseasonGames.find((candidate) => candidate.id === line?.gameId);
+    return Boolean(line && game && game.winnerProgramId === line.programId);
+  });
+  assert.ok(advancingInjury, "the fixture seed must include an injured player whose team advances");
+  assert.equal(
+    playoffStatLines.some((line) =>
+      line.playerId === advancingInjury.playerId && line.week === advancingInjury.week + 1),
+    false,
+    "a new playoff injury must remove the player from the following round"
+  );
+  assert.equal(
+    Object.values(state.players).some((player) => currentInjury(player)),
+    false,
+    "the current MVP intentionally clears every remaining injury at season rollover"
+  );
   const coachAward = history.awards.find((award) => award.type === "COACH_OF_THE_YEAR");
   assert.equal(state.staff[coachAward.winner.staffId].role, "HEAD_COACH");
 });

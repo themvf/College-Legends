@@ -2401,10 +2401,38 @@ function recoverPlayers(state: GameState): void {
   }
 }
 
-const INJURY_NAMES: Readonly<Record<InjurySeverity, readonly string[]>> = {
-  MINOR: ["Ankle sprain", "Shoulder bruise", "Hamstring strain", "Wrist sprain"],
-  MODERATE: ["High ankle sprain", "Knee sprain", "Shoulder sprain", "Calf strain"],
-  MAJOR: ["Broken collarbone", "Torn meniscus", "Severe hamstring tear", "Foot fracture"]
+interface InjuryDiagnosis {
+  name: string;
+  minimumWeeks: number;
+  maximumWeeks: number;
+}
+
+/**
+ * Diagnoses own their recovery ranges. A specific injury should never inherit
+ * an implausible timeline merely because it shares a broad severity label.
+ */
+const INJURY_DIAGNOSES: Readonly<Record<InjurySeverity, readonly InjuryDiagnosis[]>> = {
+  MINOR: [
+    { name: "Grade 1 ankle sprain", minimumWeeks: 1, maximumWeeks: 2 },
+    { name: "Shoulder contusion", minimumWeeks: 1, maximumWeeks: 2 },
+    { name: "Grade 1 hamstring strain", minimumWeeks: 1, maximumWeeks: 2 },
+    { name: "Sprained wrist", minimumWeeks: 1, maximumWeeks: 2 }
+  ],
+  MODERATE: [
+    { name: "High ankle sprain", minimumWeeks: 3, maximumWeeks: 5 },
+    { name: "MCL sprain", minimumWeeks: 3, maximumWeeks: 6 },
+    { name: "Separated shoulder", minimumWeeks: 3, maximumWeeks: 6 },
+    { name: "Grade 2 hamstring strain", minimumWeeks: 3, maximumWeeks: 5 },
+    { name: "Torn meniscus", minimumWeeks: 4, maximumWeeks: 7 }
+  ],
+  MAJOR: [
+    { name: "Torn ACL", minimumWeeks: 10, maximumWeeks: 14 },
+    { name: "Torn Achilles tendon", minimumWeeks: 12, maximumWeeks: 14 },
+    { name: "Torn labrum", minimumWeeks: 7, maximumWeeks: 11 },
+    { name: "Broken collarbone", minimumWeeks: 6, maximumWeeks: 10 },
+    { name: "Lisfranc foot injury", minimumWeeks: 8, maximumWeeks: 12 },
+    { name: "Torn pectoral tendon", minimumWeeks: 8, maximumWeeks: 12 }
+  ]
 };
 
 const POSITION_INJURY_MULTIPLIER: Readonly<Record<Position, number>> = {
@@ -2490,7 +2518,12 @@ export function playerInjuryRisk(
  * the diagnosis. This fixes the old counter, where a one-week injury cleared
  * before the player missed a game.
  */
-function recoverInjuries(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
+function recoverInjuries(
+  state: GameState,
+  rng: AddressableRng,
+  events: GameEvent[],
+  eventWeek = state.week
+): void {
   for (const player of Object.values(state.players)) {
     const injury = currentInjury(player);
     if (!injury || !player.programId || player.eligibility.rosterStatus !== "SCHOLARSHIP") continue;
@@ -2504,7 +2537,7 @@ function recoverInjuries(state: GameState, rng: AddressableRng, events: GameEven
       events.push({
         type: "INJURY_RECOVERY_ACCELERATED",
         season: state.season,
-        week: state.week,
+        week: eventWeek,
         playerId: player.id,
         injuryName: injury.name,
         weeksRemaining,
@@ -2516,7 +2549,7 @@ function recoverInjuries(state: GameState, rng: AddressableRng, events: GameEven
       events.push({
         type: "PLAYER_RECOVERED",
         season: state.season,
-        week: state.week,
+        week: eventWeek,
         playerId: player.id,
         injuryName: injury.name
       });
@@ -2526,9 +2559,16 @@ function recoverInjuries(state: GameState, rng: AddressableRng, events: GameEven
   }
 }
 
-function processInjuries(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
-  const snapsByPlayer = new Map(state.playerGameStats
-    .filter((line) => line.season === state.season && line.week === state.week && line.snaps > 0)
+function processInjuries(
+  state: GameState,
+  rng: AddressableRng,
+  events: GameEvent[],
+  statLines: readonly PlayerGameStatLine[] = state.playerGameStats
+    .filter((line) => line.season === state.season && line.week === state.week),
+  injuryWeek = state.week
+): void {
+  const snapsByPlayer = new Map(statLines
+    .filter((line) => line.snaps > 0)
     .map((line) => [line.playerId, line.snaps]));
   for (const [playerId, snaps] of snapsByPlayer) {
     const player = state.players[playerId];
@@ -2537,25 +2577,28 @@ function processInjuries(state: GameState, rng: AddressableRng, events: GameEven
     if (rng.at(`${player.id}:injury`) >= projection.riskPercent / 100) continue;
     const severityRoll = rng.at(`${player.id}:injury-severity`);
     const severity: InjurySeverity = severityRoll < 0.6 ? "MINOR" : severityRoll < 0.92 ? "MODERATE" : "MAJOR";
-    const names = INJURY_NAMES[severity];
-    const name = names[Math.floor(rng.at(`${player.id}:injury-name`) * names.length)]!;
-    const [minimum, maximum] = severity === "MINOR" ? [1, 2] : severity === "MODERATE" ? [3, 5] : [6, 9];
-    const weeks = minimum + Math.floor(rng.between(`${player.id}:injury-length`, 0, maximum - minimum + 1));
+    const diagnoses = INJURY_DIAGNOSES[severity];
+    const diagnosis = diagnoses[Math.floor(rng.at(`${player.id}:injury-name`) * diagnoses.length)]!;
+    const weeks = diagnosis.minimumWeeks + Math.floor(rng.between(
+      `${player.id}:injury-length`,
+      0,
+      diagnosis.maximumWeeks - diagnosis.minimumWeeks + 1
+    ));
     const injury: PlayerInjury = {
-      name,
+      name: diagnosis.name,
       severity,
       weeksRemaining: weeks,
       originalWeeks: weeks,
       occurredSeason: state.season,
-      occurredWeek: state.week
+      occurredWeek: injuryWeek
     };
     setPlayerInjury(player, injury);
     events.push({
       type: "PLAYER_INJURED",
       season: state.season,
-      week: state.week,
+      week: injuryWeek,
       playerId: player.id,
-      injuryName: name,
+      injuryName: diagnosis.name,
       severity,
       weeks,
       risk: projection.riskPercent,
@@ -2624,7 +2667,7 @@ function playGame(
   return resolveGame(
     teamSide(state, homeProgramId, awayProgramId),
     teamSide(state, awayProgramId, homeProgramId),
-    { season: state.season, week: state.week, gameId: game.id },
+    { season: state.season, week: game.week, gameId: game.id },
     homeField ? state.identity.balanceConfiguration.game.homeFieldAdvantage : 0,
     rng
   );
@@ -2658,7 +2701,7 @@ function commitGameResult(
     events.push({
       type: "GAME_PLAN_REPORT",
       season: state.season,
-      week: state.week,
+      week: game.week,
       gameId: game.id,
       programId,
       opponentProgramId,
@@ -3299,10 +3342,12 @@ function resolvePostseason(
   let gameIndex = 0;
   while (participants.length > 1) {
     const round = postseasonRound(participants.length);
+    const roundWeek = round === "FIRST_ROUND" ? 15 : round === "QUARTERFINAL" ? 16 : round === "SEMIFINAL" ? 17 : 18;
     const byeCount = participants.length > 8 ? Math.max(0, 16 - participants.length) : participants.length % 2;
     const advancing = participants.slice(0, byeCount);
     const playing = participants.slice(byeCount);
     const paired: Array<{ seed: number; programId: string }> = [];
+    const roundStatLines: PlayerGameStatLine[] = [];
     for (let index = 0; index < Math.floor(playing.length / 2); index += 1) {
       const home = playing[index]!;
       const away = playing[playing.length - 1 - index]!;
@@ -3311,7 +3356,7 @@ function resolvePostseason(
       const gameRng = rng.fork(gameId);
       const scheduledGame = {
         id: gameId,
-        week: round === "FIRST_ROUND" ? 15 : round === "QUARTERFINAL" ? 16 : round === "SEMIFINAL" ? 17 : 18,
+        week: roundWeek,
         homeProgramId: home.programId,
         awayProgramId: away.programId,
         matchupType: "PLAYOFF" as const,
@@ -3326,6 +3371,7 @@ function resolvePostseason(
       const awayScore = result.away.scoreline.points;
       scheduledGame.homeScore = homeScore;
       scheduledGame.awayScore = awayScore;
+      roundStatLines.push(...result.home.statLines, ...result.away.statLines);
       const winner = homeScore > awayScore ? home : away;
       const loser = homeScore > awayScore ? away : home;
       state.programs[winner.programId]!.wins += 1;
@@ -3357,6 +3403,12 @@ function resolvePostseason(
       if (round === "NATIONAL_CHAMPIONSHIP") runnerUpProgramId = loser.programId;
       paired.push(winner);
     }
+    // Postseason rounds are real weeks for player health. An injury already on
+    // the roster costs this round before recovery advances, and only players
+    // with actual snaps in these games are exposed to a new diagnosis.
+    const healthRng = rng.fork("health", String(roundWeek));
+    recoverInjuries(state, healthRng.fork("recovery"), events, roundWeek);
+    processInjuries(state, healthRng.fork("injuries"), events, roundStatLines, roundWeek);
     participants = [...advancing, ...paired].sort((left, right) => left.seed - right.seed);
   }
   return { games, championProgramId: participants[0]!.programId, runnerUpProgramId };

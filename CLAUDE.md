@@ -902,6 +902,12 @@ recover after Saturday, while new injuries are diagnosed afterward. Recovery
 events name the injury, and an extra week removed by the strength coach is its
 own visible event. The roster and depth chart show the diagnosis and games
 remaining, and the next healthy depth-chart player is promoted automatically.
+Every playoff round uses that same sequence: only players who record postseason
+snaps can be injured, and a diagnosis carries into the next round. Diagnoses own
+their recovery ranges, so a torn ACL, torn labrum, and broken collarbone do not
+share an interchangeable generic "major injury" timeline. For the current MVP,
+all remaining injuries clear at season rollover; offseason injury carryover is
+explicitly deferred.
 
 **Only a coordinator's prep hours install his own side.** The head coach's are
 general team quality and cover at a discount. That is what keeps "who runs my
