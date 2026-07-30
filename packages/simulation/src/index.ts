@@ -140,18 +140,71 @@ const STADIUM_CAPACITY_BY_LEVEL: Readonly<Record<number, number>> = { 1: 25_000,
 const OFFENSIVE_POSITIONS = new Set<Position>(["QB", "RB", "WR", "TE", "OL"]);
 const DEFENSIVE_POSITIONS = new Set<Position>(["DL", "LB", "DB"]);
 
+/**
+ * How steeply a room falls off, as a multiplier on the tier's decay. Around 1
+ * for most rooms; a backup quarterback is a bigger step down than a fourth
+ * receiver, and a kicker has no real depth at all.
+ *
+ * The offensive line is deliberately *not* the flattest room. It was, at 0.9 —
+ * the lowest value in the table — which meant the one place a weak link is
+ * supposed to be fatal had no weak link: the worst starting lineman measured 71
+ * at low tier and 87 at power, barely below the top of the room.
+ */
 const ROOM_DEPTH_SLOPE: Readonly<Record<Position, number>> = {
-  QB: 2.1,
-  RB: 1.35,
-  WR: 1.55,
-  TE: 1.45,
-  OL: 0.9,
-  DL: 1.05,
-  LB: 1.2,
-  DB: 1.25,
-  K: 1.4,
-  P: 1.4
+  QB: 1.35,
+  RB: 1,
+  WR: 1,
+  TE: 1,
+  OL: 1,
+  DL: 0.95,
+  LB: 1,
+  DB: 1,
+  K: 1.2,
+  P: 1.2
 };
+
+/**
+ * Rating points a room drops per depth-chart slot through the two-deep. Depth is
+ * a tier advantage: a power program's fourth receiver is a future starter, a
+ * low-tier program's is a walk-on.
+ */
+const TIER_DEPTH_DECAY: Readonly<Record<Program["tier"], number>> = {
+  POWER: 4,
+  MID: 5,
+  LOW: 6
+};
+
+/**
+ * The drop from the top of a room to a given slot. Steep through the two-deep,
+ * shallow through the developmental tail.
+ *
+ * The first version was linear across the whole room, and that is why slice 1
+ * under-delivered: a linear gradient across twelve receivers spends its entire
+ * budget on the tail, so WR1 to WR4 got only three slots of it. Measured, the
+ * gap came out at 5.2 / 4.8 / 3.6 by tier against a 16-22 / 13-17 / 10-14
+ * target — the rooms were still effectively flat, and most of what spread did
+ * exist was order statistics of the individual noise rather than authored depth.
+ */
+function roomSlotDrop(slot: number, decay: number): number {
+  if (slot <= 3) return decay * slot;
+  return decay * 3 + decay * 0.3 * (slot - 3);
+}
+
+/**
+ * Where a room's top sits so its *starters* average the tier baseline.
+ *
+ * Centring on the room's mean, as the first version did, necessarily inflates
+ * the lineup: starters are the top of the room, so holding the mean while
+ * steepening the gradient lifts everyone who actually plays. Measured, every
+ * starting lineup came out about five points hot (LOW 68.1 to 73.6, POWER 83.1
+ * to 87.9), which drags the calibrated per-game rates with it.
+ */
+function roomTopOffset(starters: number, decay: number): number {
+  const counted = Math.max(1, starters);
+  let total = 0;
+  for (let slot = 0; slot < counted; slot += 1) total += roomSlotDrop(slot, decay);
+  return total / counted;
+}
 
 const CHARACTER_DEPTH_SCALE: Readonly<Record<Program["character"], number>> = {
   BLUEBLOOD: 0.9,
@@ -488,19 +541,23 @@ function initialRosterShape(
 
 function initialPlayerOverall(
   baseline: number,
+  tier: Program["tier"],
   position: Position,
   roomOrdinal: number,
+  starters: number,
   shape: InitialRosterShape,
   rng: AddressableRng,
   playerId: string
 ): number {
-  const roomSize = ROSTER_COMPOSITION[position];
-  // Centring the rank term preserves the room's average while creating an
-  // actual depth chart: WR1 and WR4 no longer arrive two points apart.
-  const centredRank = (roomSize - 1) / 2 - roomOrdinal;
-  const depth = centredRank * ROOM_DEPTH_SLOPE[position] * shape.depthScale;
-  const individualNoise = rng.normal(`${playerId}:overall`, 2.5) * 1.65;
-  return clamp(Math.round(baseline + shape.roomBias[position] + depth + individualNoise), 40, 99);
+  const decay = TIER_DEPTH_DECAY[tier] * ROOM_DEPTH_SLOPE[position] * shape.depthScale;
+  const top = baseline + shape.roomBias[position] + roomTopOffset(starters, decay);
+  // Noise has to stay clearly under one slot of gradient, or the authored depth
+  // chart is scrambled and the room's shape becomes an accident of the draw. It
+  // was 1.65 against a 1.55-point slot, which is why the measured spread was
+  // mostly noise. Enough is kept that a room is not perfectly ordered, so an
+  // occasional surprise still exists behind a starter.
+  const individualNoise = rng.normal(`${playerId}:overall`, 2.2) * 1.05;
+  return clamp(Math.round(top - roomSlotDrop(roomOrdinal, decay) + individualNoise), 32, 99);
 }
 
 /**
@@ -732,7 +789,11 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       const personOrdinal = index * (STARTING_ROSTER_SIZE + STAFF_ROLES.length) + STAFF_ROLES.length + rosterIndex;
       const position = rosterPositions[rosterIndex]!;
       const roomOrdinal = roomOrdinals[position]++;
-      const overall = initialPlayerOverall(baseline, position, roomOrdinal, rosterShape, rng, playerId);
+      // Anchored to how many of this room the program's scheme actually starts,
+      // so an Air Raid builds its receiver room four deep and a Power Run
+      // program builds two receivers plus tight ends.
+      const starters = startersForRoom(state.programs[id]!.schemeIdentity, position);
+      const overall = initialPlayerOverall(baseline, tier, position, roomOrdinal, starters, rosterShape, rng, playerId);
       state.players[playerId] = {
         id: playerId,
         name: nameFor(personOrdinal),
@@ -2461,6 +2522,16 @@ export function activeDepthChart(state: Readonly<GameState>, programId: string):
       );
     })
   ])) as DepthChart;
+}
+
+/**
+ * How many of one room a program's scheme puts on the field. Shared by roster
+ * generation and the lineup so the two cannot disagree about what a room is for.
+ */
+function startersForRoom(identity: Readonly<SchemeIdentity> | undefined, position: Position): number {
+  const offense = identity ? schemePersonnel("OFFENSE", identity.offense) : {};
+  const defense = identity ? schemePersonnel("DEFENSE", identity.defense) : {};
+  return offense[position] ?? defense[position] ?? (position === "K" || position === "P" ? 1 : 1);
 }
 
 function activeLineup(state: Readonly<GameState>, programId: string): Player[] {

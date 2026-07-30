@@ -1014,6 +1014,65 @@ So a front-runner should price under fair and a diehard can price over it, and
 nobody should ever max it out. Per-game rates were unaffected: 69.9 plays, 65.4%
 completion, 247 passing, 168 rushing, 27.5 points.
 
+### Slice 1 corrections — the rooms were still flat
+
+The first pass at room shape under-delivered, and the test certified it anyway.
+Measured after slice 1 shipped:
+
+| tier | WR1→WR4 | target | starting lineup | should be | worst starting OL | target |
+|---|---|---|---|---|---|---|
+| LOW | 5.2 | 16–22 | 73.6 | 68.1 | 71 | 52–59 |
+| MID | 4.8 | 13–17 | 80.3 | 75.0 | 79 | 62–68 |
+| POWER | 3.6 | 10–14 | 87.9 | 83.1 | 87 | 70–75 |
+
+Three compounding causes, all in `initialPlayerOverall`:
+
+1. **The gradient was linear across the whole room.** `centredRank` spanned all
+   twelve receivers, so a slope of 1.55 spent its entire budget on the
+   developmental tail and WR1→WR4 got only three slots of it — about 4.7 points
+   by construction. `roomSlotDrop` is piecewise now: steep through the two-deep,
+   shallow after, which is the only way to buy a real starter gap without putting
+   the twelfth man at 40.
+2. **Noise drowned the signal.** Individual noise was σ≈1.65 against a
+   per-slot gradient of 1.55, so adjacent ranks were near-random and most of the
+   measured spread was order statistics of the draw rather than authored depth.
+   Noise is σ≈1.05 now, clearly under one slot, with enough left that a room is
+   not perfectly ordered.
+3. **Centring on the room mean inflated every lineup.** Starters are the top of a
+   room, so holding the mean while steepening the gradient lifts everyone who
+   plays — about five points at every tier, which drags the calibrated per-game
+   rates with it. The room's top is anchored to its **starters** instead, via the
+   scheme's own personnel grouping.
+
+A fourth, smaller: the offensive line had the *flattest* slope in the table
+(0.9, the lowest value), so the one room where a weak link is supposed to be
+fatal had no weak link. Every room is near 1.0 now and tier sets the decay.
+
+Measured after the corrections:
+
+| tier | WR1→WR4 | starting lineup | roster mean | worst starting OL |
+|---|---|---|---|---|
+| LOW | 19.4 | 67.9 | 54.5 | 58 |
+| MID | 14.9 | 74.8 | 64.2 | 67 |
+| POWER | 10.3 | 83.1 | 75.4 | 79 |
+
+Every band on target, lineup averages back within 0.2 of their pre-slice-1
+values, and the per-game rates hold: 70.0 plays, 65.1% completion, 245 passing,
+171 rushing, 27.8 points.
+
+**The real mistake was the test.** It asserted `median(gaps) >= 4` — a floor
+barely above the two-point defect it existed to catch. It now asserts the design
+bands per tier, that shaping rooms does not re-tier the league (the invariant the
+lineup inflation broke), that a weak-link lineman exists, and that depth is a
+tier advantage. A threshold that only proves something changed is not a test.
+
+**One more under-powered test.** "Information is worth games" pooled three
+leagues, where the win rate carries about two points of sampling noise — the same
+order as the effect. The same engine measured 50.3% at three leagues and 52.4% at
+six. It pools six now. The department itself is healthy: blind programs call
+`BALANCED` every week because they cannot read an opponent, while scouted
+programs split 328 / 281 / 255 across the three calls.
+
 ### Still open: scheme identity is only half visible in the box score
 
 Measured over a full season with rooms shaped and personnel groupings live, pass

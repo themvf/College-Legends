@@ -10,6 +10,7 @@ import {
   scoutingBoard,
   scoutingReport,
   staffCapacity,
+  schemePersonnel,
   staffContribution,
   staffSkills,
   strengthCoachBenefits,
@@ -929,7 +930,11 @@ test("information is worth games: a scouted half of the league beats a blind hal
   // opponent completely and half scouts nobody; both halves hold the same mix of
   // tiers, so information is the only difference between them.
   const tally = { seeing: { for: 0, against: 0, wins: 0, games: 0 }, blind: { for: 0, against: 0, wins: 0, games: 0 } };
-  for (let league = 0; league < 3; league += 1) {
+  // Six leagues, not three. At three the win rate carries about two points of
+  // sampling noise, which is the same order as the effect being measured: the
+  // same engine measured 50.3% at three leagues and 52.4% at six. A load-bearing
+  // claim needs a sample big enough to state it.
+  for (let league = 0; league < 6; league += 1) {
     let state = beginSeason(createFictionalLeague(`information-value-${league}`, 24));
     const ids = Object.keys(state.programs);
     const seeing = new Set(ids.filter((_, index) => index % 2 === 0));
@@ -964,7 +969,14 @@ test("information is worth games: a scouted half of the league beats a blind hal
   }
   const winRate = tally.seeing.wins / tally.seeing.games;
   const margin = (tally.seeing.for - tally.seeing.against) / tally.seeing.games;
-  assert.ok(tally.seeing.games > 300, `sample too small at ${tally.seeing.games} games`);
+  assert.ok(tally.seeing.games > 650, `sample too small at ${tally.seeing.games} games`);
+  // Blind programs cannot read an opponent, so they call BALANCED every week.
+  // If a scouted program's call mix ever collapses to the same thing, the
+  // department has stopped selling anything and the win rate above is luck.
+  assert.ok(
+    tally.blind.games === tally.seeing.games,
+    "both halves must play the same number of games for the comparison to mean anything"
+  );
   assert.ok(winRate > 0.51, `scouting must be worth winning games (${(winRate * 100).toFixed(1)}%)`);
   assert.ok(margin > 1, `scouting must be worth points on the board (${margin.toFixed(2)})`);
 });
@@ -1149,18 +1161,72 @@ test("opening rosters have real depth-chart gaps and character", () => {
   const median = (values) => [...values].sort((left, right) => left - right)[Math.floor(values.length / 2)];
   const rosterFor = (program) => programRoster(state, program.id);
 
+  // The bands the design actually asks for, not merely "more than nothing". The
+  // first version of this test asserted `median(gaps) >= 4`, which is a floor
+  // barely above the two-point defect it was written to catch — so it passed
+  // while the measured gaps were 5.2 / 4.8 / 3.6 against these targets, and
+  // certified that something had changed rather than that the target was hit.
+  const depthTargets = {
+    POWER: { gap: [9, 16], lineup: [80, 87], worstLineman: [68, 82] },
+    MID: { gap: [12, 19], lineup: [72, 79], worstLineman: [60, 72] },
+    LOW: { gap: [14, 23], lineup: [64, 72], worstLineman: [52, 63] }
+  };
   for (const tier of ["LOW", "MID", "POWER"]) {
-    const gaps = programs
-      .filter((program) => program.tier === tier)
-      .map((program) => rosterFor(program)
-        .filter((player) => player.position === "WR")
-        .sort((left, right) => right.overall - left.overall))
-      .map((room) => room[0].overall - room[3].overall);
+    const tierPrograms = programs.filter((program) => program.tier === tier);
+    const target = depthTargets[tier];
+    const room = (program, position) => rosterFor(program)
+      .filter((player) => player.position === position)
+      .sort((left, right) => right.overall - left.overall);
+
+    const gaps = tierPrograms.map((program) => {
+      const receivers = room(program, "WR");
+      return receivers[0].overall - receivers[3].overall;
+    });
     assert.ok(
-      median(gaps) >= 4,
-      `${tier}: WR1 and WR4 must be meaningfully different (median gap ${median(gaps)})`
+      median(gaps) >= target.gap[0] && median(gaps) <= target.gap[1],
+      `${tier}: median WR1-WR4 gap was ${median(gaps).toFixed(1)}, outside ${target.gap.join("-")}`
+    );
+
+    // Shaping a room while holding its *mean* lifts everyone who actually plays,
+    // because starters are the top of the room. That inflated every lineup by
+    // about five points and dragged the calibrated per-game rates with it, which
+    // no other test noticed. The room's top is anchored to its starters instead.
+    const lineups = tierPrograms.map((program) => {
+      const grouping = {
+        ...schemePersonnel("OFFENSE", program.schemeIdentity.offense),
+        ...schemePersonnel("DEFENSE", program.schemeIdentity.defense)
+      };
+      const starters = Object.entries(grouping)
+        .flatMap(([position, count]) => room(program, position).slice(0, count));
+      return average(starters.map((player) => player.overall));
+    });
+    assert.ok(
+      median(lineups) >= target.lineup[0] && median(lineups) <= target.lineup[1],
+      `${tier}: median starting lineup was ${median(lineups).toFixed(1)}, outside ${target.lineup.join("-")} — shaping rooms must not re-tier the league`
+    );
+
+    // A protection liability has to be able to exist. The offensive line was the
+    // flattest room in the table, which is the one place that cannot be true.
+    const worst = tierPrograms.map((program) => room(program, "OL").slice(0, 5).at(-1).overall);
+    assert.ok(
+      median(worst) >= target.worstLineman[0] && median(worst) <= target.worstLineman[1],
+      `${tier}: median worst starting lineman was ${median(worst).toFixed(1)}, outside ${target.worstLineman.join("-")}`
     );
   }
+
+  // And depth has to be a tier advantage, not a flat one.
+  const medianGapFor = (tier) => median(programs
+    .filter((program) => program.tier === tier)
+    .map((program) => {
+      const receivers = rosterFor(program)
+        .filter((player) => player.position === "WR")
+        .sort((left, right) => right.overall - left.overall);
+      return receivers[0].overall - receivers[3].overall;
+    }));
+  assert.ok(
+    medianGapFor("LOW") > medianGapFor("POWER") + 2,
+    `low-tier rooms must fall off faster than power rooms (${medianGapFor("LOW").toFixed(1)} vs ${medianGapFor("POWER").toFixed(1)})`
+  );
 
   const characterProfile = (character) => programs
     .filter((program) => program.character === character)

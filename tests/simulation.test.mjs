@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
+import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, schemePersonnel, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -111,8 +111,29 @@ test("low-tier programs begin with average players and no recruiting actions", (
   const lowProgram = Object.values(state.programs).find((program) => program.tier === "LOW");
   assert.ok(lowProgram);
   const roster = Object.values(state.players).filter((player) => player.programId === lowProgram.id);
-  const average = roster.reduce((sum, player) => sum + player.overall, 0) / roster.length;
-  assert.ok(average >= 67 && average <= 69);
+  // Rooms are shaped now, so the roster mean includes a long developmental tail
+  // and sits well under the tier baseline by design. What has to hold is that the
+  // guys who actually play are ordinary rather than terrible, and that the room
+  // behind them has a real shape.
+  const top = (position, count) => roster
+    .filter((player) => player.position === position)
+    .sort((left, right) => right.overall - left.overall)
+    .slice(0, count);
+  const grouping = {
+    ...schemePersonnel("OFFENSE", lowProgram.schemeIdentity.offense),
+    ...schemePersonnel("DEFENSE", lowProgram.schemeIdentity.defense)
+  };
+  const starters = Object.entries(grouping).flatMap(([position, count]) => top(position, count));
+  const lineup = starters.reduce((sum, player) => sum + player.overall, 0) / starters.length;
+  assert.ok(
+    lineup >= 64 && lineup <= 72,
+    `a low-tier starting lineup should be ordinary, saw ${lineup.toFixed(1)}`
+  );
+  const receivers = top("WR", 4).map((player) => player.overall);
+  assert.ok(
+    receivers[0] - receivers[3] >= 10,
+    `WR1 to WR4 must be a real gap, saw ${(receivers[0] - receivers[3]).toFixed(1)}`
+  );
   assert.deepEqual(planWeeklyCommands(state), []);
   assert.throws(() => advanceWeek(state), /begin the season/i);
 });
