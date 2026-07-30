@@ -61,8 +61,9 @@ These are load-bearing. Breaking one is a design change, not a refactor.
 `advanceWeek` resolves in a fixed order:
 
 ```
-commands → recruiting market → recovery → development → games
-  → player brands → injuries → recaps/finances → rankings → recruiting points
+commands → recruiting market → fatigue recovery → development → games
+  → player brands → injury recovery → new injuries
+  → recaps/finances → rankings → recruiting points
 ```
 
 Season rollover fires when week passes 14: awards → division titles →
@@ -222,8 +223,8 @@ prospects-by-status) instead of `Object.values().filter()`.
 - `developmentFocus` and `mediaAction` reset to defaults at the top of every
   `advanceWeek`, so there are no multi-week training plans and the projected
   payoff UI is only valid for one week.
-- Injuries land at roughly 0.06 per team-game — far too few to make depth
-  matter.
+- ~~Injuries land at roughly 0.06 per team-game — far too few to make depth
+  matter.~~ Fixed by the player-health slice described below.
 - Home win rate is 53.6% against ~57-60% real; `homeFieldAdvantage: 1.8` is
   light.
 - The AI never uses the individual spotlight, never redshirts, never sets a
@@ -890,6 +891,17 @@ percentage faster strength-rating gains, fatigue points recovered per player per
 week, percentage lower injury risk per player-game, and a percentage chance to
 remove one additional injury week. The engine rejects allocation commands for
 the post and ignores stale allocations from older saves.
+
+**Built in the player-health slice.** Every player now carries either no injury
+or a named diagnosis with minor, moderate, or major severity and a real recovery
+timeline. Only players who took game snaps are exposed. Position, snaps,
+durability, fatigue, and a strength-development spotlight determine the
+unprotected risk; the strength coach's posted reduction is then applied to that
+exact roll. A one-week injury now actually costs one game: existing injuries
+recover after Saturday, while new injuries are diagnosed afterward. Recovery
+events name the injury, and an extra week removed by the strength coach is its
+own visible event. The roster and depth chart show the diagnosis and games
+remaining, and the next healthy depth-chart player is promoted automatically.
 
 **Only a coordinator's prep hours install his own side.** The head coach's are
 general team quality and cover at a discount. That is what keeps "who runs my
@@ -1574,7 +1586,8 @@ Each step is playable and each depends on the one before it.
 8. **The attention economy and system fit** — see the section above. Slice 1,
    generation and personnel groupings, is done. Next is slice 2: derived traits,
    the read-only fit score, and prospect fit ranges. Outcome modifiers and the
-   16-hour week remain slice 3; injuries, rivals, and caching remain slice 4.
+   16-hour week remain slice 3; rivals and caching remain slice 4. Player
+   injuries and the strength-coach hedge are done.
 9. Add an offseason phase — unblocks marquee scheduling every year, signing day,
    the portal as an input, coach hiring, and expectations/firing.
 10. Performance and save size before any iOS work. A week advance measures 6.9

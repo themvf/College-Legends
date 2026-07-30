@@ -614,9 +614,11 @@ No special rule for "the Air Raid QB got hurt." `passOffense` derives from the Q
 and receiver groups, so being Air Raid simply means you were more dependent on it.
 Position-weighted fit (§5.5) sharpens this further.
 
-What is missing is that **the hedge does not exist**, because injuries never happen
-and redshirting has never been used. Raise injury rates until depth matters; a
-developed backup becomes insurance the player chose to buy.
+**Built:** the hedge now exists. A player can suffer a named minor, moderate, or
+major injury after taking game snaps. The strength coach lowers the exact injury
+roll and can remove an extra recovery week. Injured starters leave the active
+depth chart until healthy, so a developed backup is insurance the player chose
+to buy. Redshirting still needs broader AI and offseason use.
 
 **New emphasis axis: a simplified plan.** Narrows the execution band in both
 directions — lowers the ceiling to raise the floor. What a real staff does with a

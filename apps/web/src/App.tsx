@@ -64,7 +64,9 @@ import {
   personnelSummary,
   rosterSchemeFit,
   programRoster,
+  programStrengthCoachBenefits,
   coachSchemeFit,
+  currentInjury,
   schemeFitLabel,
   SCOUTING_TIER_DESCRIPTIONS,
   SCOUTING_TIER_LABELS,
@@ -655,7 +657,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, wee
     {screen === "DASHBOARD" && <ProgramDashboard game={game} roster={roster} onNavigate={onNavigate} />}
     {screen === "THIS_WEEK" && <WeekHub game={game} pending={pendingCommands} onQueue={onQueue} initialTab={weekTab} />}
     {screen === "WEEKLY_RECAPS" && <WeeklyRecaps game={game} />}
-    {screen === "ROSTER" && <Roster roster={roster} />}
+    {screen === "ROSTER" && <Roster game={game} roster={roster} />}
     {screen === "DEPTH_CHART" && <DepthChart game={game} roster={roster} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "PLAYER_STATS" && <PlayerStats game={game} roster={roster} />}
     {screen === "HONORS" && <Honors game={game} />}
@@ -771,12 +773,31 @@ function ProgramDashboard({ game, roster, onNavigate }: {
   </section>;
 }
 
-function Roster({ roster }: { roster: Player[] }): ReactElement {
+function injuryStatus(player: Player): string {
+  const injury = currentInjury(player);
+  return injury
+    ? `${injury.name} · out ${injury.weeksRemaining} week${injury.weeksRemaining === 1 ? "" : "s"}`
+    : "Healthy";
+}
+
+function Roster({ game, roster }: { game: GameView; roster: Player[] }): ReactElement {
   const average = roster.reduce((sum, player) => sum + player.overall, 0) / Math.max(roster.length, 1);
-  return <section className="panel table-panel"><SectionHeading eyebrow="Team management" title={`${roster.length} scholarship players`} detail={`Average rating ${average.toFixed(1)} · complete positional roster`} />
-    <div className="data-table roster-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>OVR</span><span>POT</span><span>Stardom</span><span>Fans</span><span>Year / status</span></div>
-      {roster.map((player) => <div className="data-row" key={player.id}><strong data-label="Player">{player.name}</strong><span data-label="Position">{player.position}</span><span data-label="Overall">{Math.round(player.overall)}</span><span data-label="Potential">{Math.round(player.potential)}</span><span data-label="Stardom">{player.stardom}/100</span><span data-label="Personal fans">{compactNumber(player.personalFans)}</span><span data-label="Year / status">{eligibilityClass(player)}<small>{player.eligibility.redshirtStatus === "REDSHIRTING" ? "Redshirting" : `${player.eligibility.seasonsRemaining} seasons left`}</small></span></div>)}
-    </div></section>;
+  const injured = roster.filter((player) => currentInjury(player));
+  const health = programStrengthCoachBenefits(game.state, game.playerProgramId);
+  return <section>
+    <article className="panel health-summary">
+      <SectionHeading eyebrow="Team health" title={`${roster.length - injured.length} healthy · ${injured.length} injured`} detail="An injured starter is removed automatically and the next healthy player on your depth chart takes his place." />
+      <div className="snapshot-list">
+        <p><span>Strength coach prevention</span><strong>{health.injuryRiskReductionPercent}% lower risk per player-game</strong></p>
+        <p><span>Strength coach recovery</span><strong>{health.extraRecoveryChancePercent}% chance to remove 1 extra week</strong></p>
+      </div>
+    </article>
+    <article className="panel table-panel"><SectionHeading eyebrow="Team management" title={`${roster.length} scholarship players`} detail={`Average rating ${average.toFixed(1)} · health status shown for every player`} />
+      <div className="data-table roster-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>OVR</span><span>POT</span><span>Health</span><span>Stardom</span><span>Fans</span><span>Year / status</span></div>
+        {roster.map((player) => <div className="data-row" key={player.id}><strong data-label="Player">{player.name}</strong><span data-label="Position">{player.position}</span><span data-label="Overall">{Math.round(player.overall)}</span><span data-label="Potential">{Math.round(player.potential)}</span><span className={currentInjury(player) ? "injured-status" : "healthy-status"} data-label="Health">{injuryStatus(player)}</span><span data-label="Stardom">{player.stardom}/100</span><span data-label="Personal fans">{compactNumber(player.personalFans)}</span><span data-label="Year / status">{eligibilityClass(player)}<small>{player.eligibility.redshirtStatus === "REDSHIRTING" ? "Redshirting" : `${player.eligibility.seasonsRemaining} seasons left`}</small></span></div>)}
+      </div>
+    </article>
+  </section>;
 }
 
 function DepthChart({ game, roster, pending, onQueue }: { game: GameView; roster: Player[]; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
@@ -812,12 +833,13 @@ function DepthChart({ game, roster, pending, onQueue }: { game: GameView; roster
       return <article className="panel position-card" key={position}><div className="position-title"><h2>{position}</h2><span>{starterCounts[position]} starter{starterCounts[position] === 1 ? "" : "s"}</span></div>
         {players.map((player, index) => {
           const redshirted = redshirtState(player);
-          const injured = player.injuryWeeksRemaining > 0;
+          const injury = currentInjury(player);
+          const injured = Boolean(injury);
           const availableSlot = !redshirted && !injured ? activeIndex++ : -1;
           const role = redshirted ? "RS" : injured ? "OUT" : availableSlot < starterCounts[position] ? "START" : `#${availableSlot + 1}`;
           const canRedshirt = player.eligibility.redshirtStatus === "AVAILABLE" || player.eligibility.redshirtStatus === "REDSHIRTING";
           return <div className={`depth-player ${redshirted || injured ? "inactive" : ""}`} key={player.id}>
-            <span><b>{role}</b> {player.name}<small>{eligibilityClass(player)} · {player.eligibility.gamesPlayedThisSeason} GP · {player.eligibility.seasonsRemaining} seasons left</small></span>
+            <span><b>{role}</b> {player.name}<small>{injury ? `${injury.name} · out ${injury.weeksRemaining} week${injury.weeksRemaining === 1 ? "" : "s"}` : `${eligibilityClass(player)} · ${player.eligibility.gamesPlayedThisSeason} GP · ${player.eligibility.seasonsRemaining} seasons left`}</small></span>
             <strong>{Math.round(player.overall)}</strong>
             <div className="depth-actions"><button disabled={index === 0} onClick={() => move(position, player.id, -1)} aria-label={`Move ${player.name} up`}>↑</button><button disabled={index === players.length - 1} onClick={() => move(position, player.id, 1)} aria-label={`Move ${player.name} down`}>↓</button>
               <button className={redshirted ? "selected" : ""} disabled={!canRedshirt} onClick={() => onQueue({ type: "SET_REDSHIRT", programId, playerId: player.id, enabled: !redshirted })}>{redshirted ? "Remove RS" : "Redshirt"}</button></div>
@@ -944,7 +966,8 @@ function Development({ state, roster, programId, pending, onQueue }: { state: Ga
     <div className="data-table spotlight-table"><div className="data-row data-header"><span>Affected player</span><span>OVR/POT</span><span>Core ratings</span><span>Projected payoff</span></div>
       {selectedPlayers.map((player) => {
         const payoff = projectedDevelopmentPayoff(state, player, selectedFocus, intensity);
-        return <div className="data-row" key={player.id}><strong>{player.name}<small>{player.position} · {player.injuryWeeksRemaining > 0 ? `Out ${player.injuryWeeksRemaining} week${player.injuryWeeksRemaining === 1 ? "" : "s"}` : `${Math.round(player.fatigue)}% fatigue`}</small></strong><span>{Math.round(player.overall)} / {Math.round(player.potential)}</span><span><small>{attributesFor(player.position).map((attribute) =>
+        const injury = currentInjury(player);
+        return <div className="data-row" key={player.id}><strong>{player.name}<small>{player.position} · {injury ? `${injury.name}, out ${injury.weeksRemaining} week${injury.weeksRemaining === 1 ? "" : "s"}` : `${Math.round(player.fatigue)}% fatigue`}</small></strong><span>{Math.round(player.overall)} / {Math.round(player.potential)}</span><span><small>{attributesFor(player.position).map((attribute) =>
         `${attribute.label} ${Math.round(player.ratings[attribute.key] ?? 50)}`).join(" · ")}</small></span><span><b>{formatRatingChanges(payoff.ratingChanges)}</b><small>{signed(payoff.fatigueChange)} fatigue</small></span></div>;
       })}
     </div>
@@ -1483,6 +1506,9 @@ function EventList({ events, game }: { events: GameEvent[]; game: GameView }): R
 
 function eventRelevantToProgram(event: GameEvent, game: GameView): boolean {
   const programId = game.playerProgramId;
+  if (event.type === "PLAYER_INJURED" || event.type === "PLAYER_RECOVERED" || event.type === "INJURY_RECOVERY_ACCELERATED") {
+    return game.state.players[event.playerId]?.programId === programId;
+  }
   if (event.type === "RECRUITING_CONTEST_RESOLVED") return event.offeredBy.includes(programId);
   if (event.type === "PROSPECT_COMMITTED") {
     return event.programId === programId || game.state.recruiting[programId]?.discoveredProspectIds.includes(event.prospectId) === true;
@@ -1504,6 +1530,7 @@ function eventIcon(event: GameEvent): string {
   if (event.type === "WEEKLY_RECAP") return "↗";
   if (event.type === "MARQUEE_GAME_SCHEDULED") return "TV";
   if (event.type === "PLAYER_INJURED") return "✚";
+  if (event.type === "INJURY_RECOVERY_ACCELERATED") return "⚕";
   if (event.type === "PLAYER_RECOVERED") return "✓";
   if (event.type === "WEEKLY_FINANCES") return "＄";
   if (event.type === "SPONSORSHIP_ACCEPTED" || event.type === "SPONSORSHIP_PAYMENT") return "＄";
@@ -1555,8 +1582,16 @@ function eventText(event: GameEvent, game: GameView): string {
   }
   if (event.type === "DEPTH_CHART_UPDATED") return `${event.position} depth chart updated.`;
   if (event.type === "REDSHIRT_STATUS_CHANGED") return `${game.state.players[event.playerId]?.name ?? "Player"} is now ${event.status === "REDSHIRTING" ? "redshirting" : label(event.status)}.`;
-  if (event.type === "PLAYER_INJURED") return `${game.state.players[event.playerId]?.name ?? "Player"} will miss approximately ${event.weeks} week${event.weeks === 1 ? "" : "s"} (${event.risk}% risk).`;
-  if (event.type === "PLAYER_RECOVERED") return `${game.state.players[event.playerId]?.name ?? "Player"} has returned to full availability.`;
+  if (event.type === "PLAYER_INJURED") {
+    const diagnosis = event.injuryName?.toLowerCase() ?? "undisclosed injury";
+    const article = /^[aeiou]/.test(diagnosis) ? "an" : "a";
+    const coachEffect = Number.isFinite(event.riskWithoutCoach) && event.coachReductionPercent > 0
+      ? ` His strength coach reduced the risk from ${event.riskWithoutCoach}% to ${event.risk}%.`
+      : "";
+    return `${game.state.players[event.playerId]?.name ?? "Player"} suffered ${article} ${diagnosis} and will miss approximately ${event.weeks} week${event.weeks === 1 ? "" : "s"}.${coachEffect}`;
+  }
+  if (event.type === "INJURY_RECOVERY_ACCELERATED") return `${game.state.staff[event.coachId]?.name ?? "The strength coach"} shortened ${game.state.players[event.playerId]?.name ?? "the player's"} recovery from a ${event.injuryName.toLowerCase()} by one week${event.weeksRemaining ? ` · approximately ${event.weeksRemaining} week${event.weeksRemaining === 1 ? "" : "s"} remain` : ""}.`;
+  if (event.type === "PLAYER_RECOVERED") return `${game.state.players[event.playerId]?.name ?? "Player"} has recovered from his ${event.injuryName?.toLowerCase() ?? "injury"} and returned to full availability.`;
   if (event.type === "PROSPECT_SIGNED") return `${game.state.prospects[event.prospectId]?.name ?? "Prospect"} signed with ${game.state.programs[event.programId]?.name}.`;
   if (event.type === "PROSPECTS_DISCOVERED") return `${event.prospectIds.length} new prospects found through ${label(event.searchType)} scouting for ${event.pointsSpent} points.`;
   if (event.type === "PROSPECT_EVALUATED") return `${label(event.evaluation)} report unlocked for ${game.state.prospects[event.prospectId]?.name ?? "prospect"} at a cost of ${event.pointsSpent} points.`;

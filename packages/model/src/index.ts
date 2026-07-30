@@ -43,6 +43,7 @@ export type DivisionId = "ATLANTIC" | "GREAT_LAKES" | "HEARTLAND" | "GULF" | "MO
 /** An attribute key. Which keys a player has depends on his position. */
 export type PlayerRating = string;
 export type PlayerMediaAction = "FOOTBALL_FOCUS" | "MEDIA_DAY" | "SOCIAL_MEDIA" | "COMMUNITY_APPEARANCE";
+export type InjurySeverity = "MINOR" | "MODERATE" | "MAJOR";
 export type RecruitingEvaluation = "BASIC" | "ATHLETIC" | "POSITION" | "CHARACTER" | "MEDICAL" | "PROJECTION";
 export type RecruitingSearchType = "LOCAL_REGION" | "POSITION" | "SLEEPERS" | "NATIONAL_SHOWCASE";
 export type RedshirtStatus = "AVAILABLE" | "REDSHIRTING" | "USED" | "INELIGIBLE";
@@ -392,6 +393,12 @@ export interface Player {
   workEthic: number;
   fatigue: number;
   ratings: PlayerRatings;
+  /** The player's current diagnosed injury. Null means fully available. */
+  injury: PlayerInjury | null;
+  /**
+   * Compatibility mirror for early prototype saves. New code reads `injury`;
+   * this stays synchronized until save migration exists.
+   */
   injuryWeeksRemaining: number;
   /** A persistent 0-100 measure of how recognizable the player is nationally. */
   stardom: number;
@@ -402,6 +409,16 @@ export interface Player {
   lastGameSummary: string | null;
   developmentFocus: DevelopmentFocus;
   eligibility: Eligibility;
+}
+
+export interface PlayerInjury {
+  name: string;
+  severity: InjurySeverity;
+  /** Games the player is still expected to miss. */
+  weeksRemaining: number;
+  originalWeeks: number;
+  occurredSeason: Season;
+  occurredWeek: number;
 }
 
 /** A recruit is intentionally not a Player until a program signs them. */
@@ -644,8 +661,30 @@ export type GameEvent =
         ratingChanges: Partial<Record<PlayerRating, number>>;
       };
     }
-  | { type: "PLAYER_INJURED"; season: Season; week: number; playerId: PlayerId; weeks: number; risk: number }
-  | { type: "PLAYER_RECOVERED"; season: Season; week: number; playerId: PlayerId }
+  | {
+      type: "PLAYER_INJURED";
+      season: Season;
+      week: number;
+      playerId: PlayerId;
+      injuryName: string;
+      severity: InjurySeverity;
+      weeks: number;
+      /** Final percentage risk after player health, workload, fatigue, and staff. */
+      risk: number;
+      /** Percentage risk before the strength coach's reduction. */
+      riskWithoutCoach: number;
+      coachReductionPercent: number;
+    }
+  | {
+      type: "INJURY_RECOVERY_ACCELERATED";
+      season: Season;
+      week: number;
+      playerId: PlayerId;
+      injuryName: string;
+      weeksRemaining: number;
+      coachId: string;
+    }
+  | { type: "PLAYER_RECOVERED"; season: Season; week: number; playerId: PlayerId; injuryName: string }
   | { type: "GAME_COMPLETED"; season: Season; week: number; gameId: string; homeProgramId: ProgramId; awayProgramId: ProgramId; homeScore: number; awayScore: number }
   | {
       type: "SEASON_AWARD_FINALIZED";

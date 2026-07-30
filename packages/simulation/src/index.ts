@@ -1,4 +1,4 @@
-import type { AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffFocus, StaffMember, StaffRole, OpponentDossier } from "@college-legends/model";
+import type { AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, InjurySeverity, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, PlayerInjury, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffFocus, StaffMember, StaffRole, OpponentDossier } from "@college-legends/model";
 import { FICTIONAL_PROGRAMS, fictionalPersonName, PROGRAM_CHARACTERS } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
 import { attributeByRole, attributesFor, computeOverall, ratingByRole, type AttributeDefinition } from "./attributes.js";
@@ -867,6 +867,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
         // attribute can move the weighted average, and a stored Overall that
         // disagrees with its own attributes is the exact defect this replaces.
         ratings: playerRatings,
+        injury: null,
         injuryWeeksRemaining: 0,
         stardom: clamp(Math.round((overall - 55) * 1.15 + rng.between(`${playerId}:stardom`, -4, 4)), 5, 75),
         personalFans: Math.max(100, Math.round((overall - 50) ** 2 * (tier === "POWER" ? 12 : tier === "MID" ? 7 : 4) + rng.between(`${playerId}:fans`, 0, 750))),
@@ -1214,6 +1215,7 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   state.developmentSpotlights ??= {};
   state.gamePlans ??= {};
   state.preparation ??= {};
+  normalizePlayerHealthState(state);
   ensureSponsorshipOffers(state);
   const events: GameEvent[] = [];
   for (const programId of Object.keys(state.programs)) {
@@ -1230,11 +1232,12 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   const rng = new AddressableRng(state.identity.rootSeed).fork(String(state.season), String(state.week));
   resolveCommands(state, commands, rng.fork("commands"), events);
   resolveRecruitingMarket(state, rng.fork("recruiting-market"), events);
-  recoverPlayers(state, rng.fork("recovery"), events);
+  recoverPlayers(state);
   developPlayers(state, rng.fork("development"), events);
   applyPracticeFatigue(state);
   resolveScheduledGames(state, rng.fork("games"), events);
   const playerBrandImpact = processPlayerBrands(state, rng.fork("player-brands"), events);
+  recoverInjuries(state, rng.fork("injury-recovery"), events);
   processInjuries(state, rng.fork("injuries"), events);
   processWeeklyRecapsAndFinances(state, playerBrandImpact, events);
   updateNationalRankings(state);
@@ -2012,6 +2015,7 @@ function prospectToPlayer(prospect: Prospect, id: string, programId: string, sea
     workEthic: prospect.workEthic,
     fatigue: 0,
     ratings: clone(prospect.ratings),
+    injury: null,
     injuryWeeksRemaining: 0,
     stardom: clamp(Math.round((prospect.overall - 55) * 0.9), 3, 45),
     personalFans: Math.max(100, Math.round((prospect.overall - 48) ** 2 * 2)),
@@ -2146,7 +2150,7 @@ function applyPracticeFatigue(state: GameState): void {
 function developPlayers(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
   const rules = state.identity.balanceConfiguration.weeklyDevelopment;
   for (const player of Object.values(state.players)) {
-    if (player.programId === null || player.eligibility.rosterStatus !== "SCHOLARSHIP" || player.overall >= player.potential || player.injuryWeeksRemaining > 0) continue;
+    if (player.programId === null || player.eligibility.rosterStatus !== "SCHOLARSHIP" || player.overall >= player.potential || currentInjury(player)) continue;
     const fatigueModifier = clamp(1 - player.fatigue / 180, rules.fatigueFloor, 1);
     const program = state.programs[player.programId]!;
     const trainingModifier = 1 + Math.max(0, program.facilities.TRAINING - 1) * 0.04;
@@ -2386,39 +2390,178 @@ export function gamePrepContribution(member: Pick<StaffMember, "rating" | "role"
   return member.rating * roleFit(member.role, "PREPARE") / 100;
 }
 
-function recoverPlayers(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
+function recoverPlayers(state: GameState): void {
   for (const program of Object.values(state.programs)) {
     const strengthCoach = programStrengthCoachBenefits(state, program.id);
     const allocatedRecovery = staffContribution(state, program.id, "RECOVER") / 30;
     const fatigueRecovery = allocatedRecovery + strengthCoach.fatigueRecoveryPoints;
     for (const player of Object.values(state.players).filter((candidate) => candidate.programId === program.id && candidate.eligibility.rosterStatus === "SCHOLARSHIP")) {
       player.fatigue = clamp(Number((player.fatigue - fatigueRecovery).toFixed(1)), 0, 100);
-      if (player.injuryWeeksRemaining <= 0) continue;
-      const extraRecovery = rng.at(`${player.id}:strength-coach:extra-recovery`)
-        < strengthCoach.extraRecoveryChancePercent / 100 ? 1 : 0;
-      player.injuryWeeksRemaining = Math.max(0, player.injuryWeeksRemaining - 1 - extraRecovery);
-      if (player.injuryWeeksRemaining === 0) events.push({ type: "PLAYER_RECOVERED", season: state.season, week: state.week, playerId: player.id });
+    }
+  }
+}
+
+const INJURY_NAMES: Readonly<Record<InjurySeverity, readonly string[]>> = {
+  MINOR: ["Ankle sprain", "Shoulder bruise", "Hamstring strain", "Wrist sprain"],
+  MODERATE: ["High ankle sprain", "Knee sprain", "Shoulder sprain", "Calf strain"],
+  MAJOR: ["Broken collarbone", "Torn meniscus", "Severe hamstring tear", "Foot fracture"]
+};
+
+const POSITION_INJURY_MULTIPLIER: Readonly<Record<Position, number>> = {
+  QB: 0.9,
+  RB: 1.25,
+  WR: 1,
+  TE: 1.08,
+  OL: 1.08,
+  DL: 1.15,
+  LB: 1.12,
+  DB: 1,
+  K: 0.4,
+  P: 0.35
+};
+
+export interface InjuryRiskProjection {
+  riskPercent: number;
+  riskWithoutCoachPercent: number;
+  coachReductionPercent: number;
+}
+
+/**
+ * The injury attached to a player, including a generic bridge for prototype
+ * saves that only stored a week counter.
+ */
+export function currentInjury(player: Readonly<Player>): PlayerInjury | null {
+  if (player.injury && player.injury.weeksRemaining > 0) return player.injury;
+  if (player.injuryWeeksRemaining <= 0) return null;
+  return {
+    name: "Undisclosed injury",
+    severity: player.injuryWeeksRemaining >= 6 ? "MAJOR" : player.injuryWeeksRemaining >= 3 ? "MODERATE" : "MINOR",
+    weeksRemaining: player.injuryWeeksRemaining,
+    originalWeeks: player.injuryWeeksRemaining,
+    occurredSeason: 0,
+    occurredWeek: 0
+  };
+}
+
+function normalizePlayerHealthState(state: GameState): void {
+  for (const player of Object.values(state.players)) {
+    const injury = currentInjury(player);
+    player.injury = injury;
+    player.injuryWeeksRemaining = injury?.weeksRemaining ?? 0;
+  }
+}
+
+function setPlayerInjury(player: Player, injury: PlayerInjury | null): void {
+  player.injury = injury;
+  player.injuryWeeksRemaining = injury?.weeksRemaining ?? 0;
+}
+
+/**
+ * Exact per-game risk used by the engine. The UI can compare the two posted
+ * percentages without having to reverse-engineer the coach's effect.
+ */
+export function playerInjuryRisk(
+  state: Readonly<GameState>,
+  player: Readonly<Player>,
+  snaps = 55
+): InjuryRiskProjection {
+  const durabilityModifier = clamp(1 - (ratingByRole(player.position, player.ratings, "DURABILITY") - 50) / 160, 0.55, 1.15);
+  const fatigueModifier = 1 + player.fatigue / 80;
+  const workloadModifier = clamp(snaps / 55, 0.35, 1.15);
+  const strengthTrainingModifier = player.developmentFocus === "STRENGTH" ? 1.15 : 1;
+  const riskWithoutCoach = clamp(
+    0.018 * POSITION_INJURY_MULTIPLIER[player.position] * durabilityModifier * fatigueModifier * workloadModifier * strengthTrainingModifier,
+    0.002,
+    0.055
+  );
+  const strengthCoach = player.programId
+    ? programStrengthCoachBenefits(state, player.programId)
+    : { injuryRiskReductionPercent: 0 };
+  const risk = riskWithoutCoach * (1 - strengthCoach.injuryRiskReductionPercent / 100);
+  return {
+    riskPercent: Number((risk * 100).toFixed(2)),
+    riskWithoutCoachPercent: Number((riskWithoutCoach * 100).toFixed(2)),
+    coachReductionPercent: strengthCoach.injuryRiskReductionPercent
+  };
+}
+
+/**
+ * Injured players first miss this week's game, then one recovery week comes off
+ * the diagnosis. This fixes the old counter, where a one-week injury cleared
+ * before the player missed a game.
+ */
+function recoverInjuries(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
+  for (const player of Object.values(state.players)) {
+    const injury = currentInjury(player);
+    if (!injury || !player.programId || player.eligibility.rosterStatus !== "SCHOLARSHIP") continue;
+    const coach = Object.values(state.staff)
+      .find((member) => member.programId === player.programId && member.role === "STRENGTH_COACH");
+    const benefits = programStrengthCoachBenefits(state, player.programId);
+    const extraRecovery = injury.weeksRemaining > 1
+      && rng.at(`${player.id}:strength-coach:extra-recovery`) < benefits.extraRecoveryChancePercent / 100;
+    const weeksRemaining = Math.max(0, injury.weeksRemaining - 1 - (extraRecovery ? 1 : 0));
+    if (extraRecovery && coach) {
+      events.push({
+        type: "INJURY_RECOVERY_ACCELERATED",
+        season: state.season,
+        week: state.week,
+        playerId: player.id,
+        injuryName: injury.name,
+        weeksRemaining,
+        coachId: coach.id
+      });
+    }
+    if (weeksRemaining === 0) {
+      setPlayerInjury(player, null);
+      events.push({
+        type: "PLAYER_RECOVERED",
+        season: state.season,
+        week: state.week,
+        playerId: player.id,
+        injuryName: injury.name
+      });
+    } else {
+      setPlayerInjury(player, { ...injury, weeksRemaining });
     }
   }
 }
 
 function processInjuries(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
-  const activePrograms = new Set(state.schedule
-    .filter((game) => game.week === state.week && game.played)
-    .flatMap((game) => [game.homeProgramId, game.awayProgramId]));
-  const activePlayerIds = new Set([...activePrograms].flatMap((programId) => activeLineup(state, programId).map((player) => player.id)));
-  for (const player of Object.values(state.players)) {
-    if (!player.programId || !activePlayerIds.has(player.id) || player.eligibility.rosterStatus !== "SCHOLARSHIP" || player.injuryWeeksRemaining > 0) continue;
-    const preventionModifier = clamp(1 - (ratingByRole(player.position, player.ratings, "DURABILITY") - 50) / 160, 0.55, 1.15);
-    const fatigueModifier = 1 + player.fatigue / 80;
-    const strengthTrainingModifier = player.developmentFocus === "STRENGTH" ? 1.2 : 1;
-    const strengthCoach = programStrengthCoachBenefits(state, player.programId);
-    const coachPreventionModifier = 1 - strengthCoach.injuryRiskReductionPercent / 100;
-    const risk = clamp(0.0035 * preventionModifier * fatigueModifier * strengthTrainingModifier * coachPreventionModifier, 0.001, 0.02);
-    if (rng.at(`${player.id}:injury`) >= risk) continue;
-    const weeks = 1 + Math.floor(rng.between(`${player.id}:injury-length`, 0, 3));
-    player.injuryWeeksRemaining = weeks;
-    events.push({ type: "PLAYER_INJURED", season: state.season, week: state.week, playerId: player.id, weeks, risk: Number((risk * 100).toFixed(2)) });
+  const snapsByPlayer = new Map(state.playerGameStats
+    .filter((line) => line.season === state.season && line.week === state.week && line.snaps > 0)
+    .map((line) => [line.playerId, line.snaps]));
+  for (const [playerId, snaps] of snapsByPlayer) {
+    const player = state.players[playerId];
+    if (!player?.programId || player.eligibility.rosterStatus !== "SCHOLARSHIP" || currentInjury(player)) continue;
+    const projection = playerInjuryRisk(state, player, snaps);
+    if (rng.at(`${player.id}:injury`) >= projection.riskPercent / 100) continue;
+    const severityRoll = rng.at(`${player.id}:injury-severity`);
+    const severity: InjurySeverity = severityRoll < 0.6 ? "MINOR" : severityRoll < 0.92 ? "MODERATE" : "MAJOR";
+    const names = INJURY_NAMES[severity];
+    const name = names[Math.floor(rng.at(`${player.id}:injury-name`) * names.length)]!;
+    const [minimum, maximum] = severity === "MINOR" ? [1, 2] : severity === "MODERATE" ? [3, 5] : [6, 9];
+    const weeks = minimum + Math.floor(rng.between(`${player.id}:injury-length`, 0, maximum - minimum + 1));
+    const injury: PlayerInjury = {
+      name,
+      severity,
+      weeksRemaining: weeks,
+      originalWeeks: weeks,
+      occurredSeason: state.season,
+      occurredWeek: state.week
+    };
+    setPlayerInjury(player, injury);
+    events.push({
+      type: "PLAYER_INJURED",
+      season: state.season,
+      week: state.week,
+      playerId: player.id,
+      injuryName: name,
+      severity,
+      weeks,
+      risk: projection.riskPercent,
+      riskWithoutCoach: projection.riskWithoutCoachPercent,
+      coachReductionPercent: projection.coachReductionPercent
+    });
   }
 }
 
@@ -2713,7 +2856,7 @@ export function activeDepthChart(state: Readonly<GameState>, programId: string):
         && player.position === position
         && player.eligibility.rosterStatus === "SCHOLARSHIP"
         && player.eligibility.redshirtStatus !== "REDSHIRTING"
-        && player.injuryWeeksRemaining === 0
+        && !currentInjury(player)
       );
     })
   ])) as DepthChart;
@@ -3311,6 +3454,7 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
     }
     player.eligibility.gamesPlayedThisSeason = 0;
     player.fatigue = 0;
+    player.injury = null;
     player.injuryWeeksRemaining = 0;
     if (player.eligibility.seasonsRemaining <= 0) {
       player.eligibility.rosterStatus = "GRADUATED";

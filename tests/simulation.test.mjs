@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, activeSponsorship, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectSponsorshipOffer, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, sponsorshipMarketValue, sponsorshipPayment, staffCapacity, computeOverall, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE, weeklyStories } from "../packages/simulation/dist/index.js";
+import { advanceWeek, activeSponsorship, AddressableRng, beginSeason, createFictionalLeague, currentInjury, marqueeGameOptions, playerInjuryRisk, prepareWeek, projectSponsorshipOffer, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, sponsorshipMarketValue, sponsorshipPayment, staffCapacity, computeOverall, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE, weeklyStories } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -401,6 +401,73 @@ test("the selected depth chart determines starters and injured players promote b
   result = advanceWeek(injuredState);
   assert.equal(result.state.playerGameStats.some((line) => line.week === 1 && line.playerId === injuredStarter), false);
   assert.ok(result.state.playerGameStats.some((line) => line.week === 1 && line.playerId === promotedBackup));
+});
+
+test("a one-week injury actually costs one game before the player recovers", () => {
+  let state = activeLeague("one-week-injury", 4);
+  const weekOneGame = state.schedule.find((game) => game.week === 1);
+  assert.ok(weekOneGame);
+  const programId = weekOneGame.homeProgramId;
+  const starterId = state.depthCharts[programId].QB[0];
+  const backupId = state.depthCharts[programId].QB[1];
+  const starter = state.players[starterId];
+  starter.injury = {
+    name: "Ankle sprain",
+    severity: "MINOR",
+    weeksRemaining: 1,
+    originalWeeks: 1,
+    occurredSeason: state.season,
+    occurredWeek: 0
+  };
+  starter.injuryWeeksRemaining = 1;
+
+  const result = advanceWeek(state);
+  state = result.state;
+  assert.equal(state.playerGameStats.some((line) => line.week === 1 && line.playerId === starterId), false);
+  assert.ok(state.playerGameStats.some((line) => line.week === 1 && line.playerId === backupId));
+  assert.equal(currentInjury(state.players[starterId]), null);
+  assert.ok(result.events.some((event) =>
+    event.type === "PLAYER_RECOVERED"
+    && event.playerId === starterId
+    && event.injuryName === "Ankle sprain"));
+});
+
+test("the strength coach lowers the exact injury roll used by the engine", () => {
+  const state = activeLeague("visible-injury-prevention", 12);
+  const programId = "program-1";
+  const player = state.players[state.depthCharts[programId].RB[0]];
+  player.fatigue = 30;
+  const protectedRisk = playerInjuryRisk(state, player, 55);
+  const unprotected = structuredClone(state);
+  for (const [staffId, member] of Object.entries(unprotected.staff)) {
+    if (member.programId === programId && member.role === "STRENGTH_COACH") delete unprotected.staff[staffId];
+  }
+  const unprotectedRisk = playerInjuryRisk(unprotected, unprotected.players[player.id], 55);
+
+  assert.ok(protectedRisk.coachReductionPercent > 0);
+  assert.equal(unprotectedRisk.coachReductionPercent, 0);
+  assert.equal(unprotectedRisk.riskPercent, protectedRisk.riskWithoutCoachPercent);
+  assert.ok(protectedRisk.riskPercent < unprotectedRisk.riskPercent);
+});
+
+test("injuries are diagnosed, persist on players, and occur often enough for depth to matter", () => {
+  let state = activeLeague("injury-rate-check", 24);
+  const season = state.season;
+  const injuries = [];
+  const acceleratedRecoveries = [];
+  while (state.season === season) {
+    const result = advanceWeek(state);
+    injuries.push(...result.events.filter((event) => event.type === "PLAYER_INJURED"));
+    acceleratedRecoveries.push(...result.events.filter((event) => event.type === "INJURY_RECOVERY_ACCELERATED"));
+    state = result.state;
+  }
+
+  assert.ok(injuries.length >= 90 && injuries.length <= 190, `expected a playable injury load, saw ${injuries.length}`);
+  assert.ok(injuries.every((event) => event.injuryName && ["MINOR", "MODERATE", "MAJOR"].includes(event.severity)));
+  assert.ok(injuries.some((event) => event.severity === "MODERATE"));
+  assert.ok(injuries.some((event) => event.severity === "MAJOR"));
+  assert.ok(injuries.every((event) => event.risk < event.riskWithoutCoach));
+  assert.ok(acceleratedRecoveries.length > 0, "strength coaches should visibly shorten some recoveries");
 });
 
 test("a redshirted player does not play and preserves a season of eligibility", () => {
