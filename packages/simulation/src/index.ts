@@ -3,6 +3,7 @@ import { FICTIONAL_PROGRAMS, fictionalPersonName, PROGRAM_CHARACTERS } from "@co
 import { AddressableRng } from "./rng.js";
 import { weeklyBriefing as buildBriefing, type BriefingItem } from "./briefing.js";
 import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES, bestSchemeFor, programRoster, coachSchemeFit, schemePersonnel } from "./scheme.js";
+import { DEFENSIVE_SPOTS, MINIMUM_SNAP_SHARE, OFFENSIVE_SPOTS, personnelLabel, schemeSpots, snapShares, spotsForRoom } from "./rotation.js";
 import { DEFAULT_GAME_PLAN, OFFENSIVE_IDENTITY_LABELS, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
 import { MAXIMUM_PRACTICE_HOURS, opponentScoutingReport, preparationWeeklyPoints, projectedGamePlan, scheduledOpponent, scoutingConfidence, filmGamesAvailable } from "./scouting.js";
 import {
@@ -108,6 +109,15 @@ export {
 export type { GamePlanOption, UnitEdge } from "./game.js";
 
 export { MAXIMUM_PRACTICE_HOURS } from "./scouting.js";
+export {
+  DEFENSIVE_SPOTS,
+  MINIMUM_SNAP_SHARE,
+  OFFENSIVE_SPOTS,
+  personnelLabel,
+  schemeSpots,
+  snapShares,
+  spotsForRoom
+} from "./rotation.js";
 export { scheduleAhead, seasonExpectation } from "./briefing.js";
 export { boxScore, latestBoxScore } from "./boxscore.js";
 export type { BoxScore, BoxScoreGroup, BoxScoreRow, BoxScoreTeam, BoxScoreTeamStat } from "./boxscore.js";
@@ -2002,7 +2012,8 @@ function developPlayers(state: GameState, rng: AddressableRng, events: GameEvent
  * Exposed so the roster and game-plan screens can show what a decision moves.
  */
 export function programUnitRatings(state: Readonly<GameState>, programId: string): TeamUnitRatings {
-  return unitRatingsFromLineup(activeLineup(state, programId), gamePrepBonus(state, programId));
+  const rotation = activeRotation(state, programId);
+  return unitRatingsFromLineup(rotation.players, gamePrepBonus(state, programId), rotation.shares);
 }
 
 /**
@@ -2271,9 +2282,11 @@ function teamSide(state: Readonly<GameState>, programId: string, opponentProgram
   // A file on *this* opponent is worth points on the board. That is the whole
   // payoff of the department now: readiness, not a prompt to change your call.
   const filePoints = opponentProgramId ? state.dossiers?.[programId]?.[opponentProgramId] ?? 0 : 0;
+  const rotation = activeRotation(state, programId);
   return {
     programId,
-    lineup: activeLineup(state, programId),
+    lineup: rotation.players,
+    snapShares: rotation.shares,
     plan: state.gamePlans?.[programId] ?? { ...DEFAULT_GAME_PLAN },
     prepBonus: gamePrepBonus(state, programId) + scoutingReadiness(filePoints),
     execution: {
@@ -2537,9 +2550,7 @@ export function activeDepthChart(state: Readonly<GameState>, programId: string):
  * generation and the lineup so the two cannot disagree about what a room is for.
  */
 function startersForRoom(identity: Readonly<SchemeIdentity> | undefined, position: Position): number {
-  const offense = identity ? schemePersonnel("OFFENSE", identity.offense) : {};
-  const defense = identity ? schemePersonnel("DEFENSE", identity.defense) : {};
-  return offense[position] ?? defense[position] ?? (position === "K" || position === "P" ? 1 : 1);
+  return Math.max(1, Math.ceil(spotsForRoom(identity, position)));
 }
 
 /**
@@ -2553,17 +2564,40 @@ export function startingLineup(state: Readonly<GameState>, programId: string): P
   return activeLineup(state, programId);
 }
 
-function activeLineup(state: Readonly<GameState>, programId: string): Player[] {
+/**
+ * Who takes snaps, and for what fraction of the game. Both sides put eleven on
+ * the field on an average play, but roughly twenty men are used getting there —
+ * the defensive line and the backfield rotate hard, the offensive line and the
+ * quarterback never come off.
+ */
+export function activeRotation(
+  state: Readonly<GameState>,
+  programId: string
+): { players: Player[]; shares: Record<string, number> } {
   const chart = activeDepthChart(state, programId);
   const identity = state.programs[programId]?.schemeIdentity;
-  const offense = identity ? schemePersonnel("OFFENSE", identity.offense) : {};
-  const defense = identity ? schemePersonnel("DEFENSE", identity.defense) : {};
-  return (Object.keys(chart) as Position[]).flatMap((position) =>
-    chart[position]
-      .slice(0, offense[position] ?? defense[position] ?? (position === "K" || position === "P" ? 1 : 0))
+  const players: Player[] = [];
+  const shares: Record<string, number> = {};
+  for (const position of Object.keys(chart) as Position[]) {
+    const spots = spotsForRoom(identity, position);
+    if (spots <= 0) continue;
+    const room = chart[position]
       .map((playerId) => state.players[playerId])
-      .filter((player): player is Player => Boolean(player))
-  );
+      .filter((player): player is Player => Boolean(player));
+    const allocation = snapShares(position, spots, room.length);
+    for (let index = 0; index < allocation.length; index += 1) {
+      const player = room[index];
+      const share = allocation[index] ?? 0;
+      if (!player || share < MINIMUM_SNAP_SHARE) continue;
+      players.push(player);
+      shares[player.id] = share;
+    }
+  }
+  return { players, shares };
+}
+
+function activeLineup(state: Readonly<GameState>, programId: string): Player[] {
+  return activeRotation(state, programId).players;
 }
 
 export function playerPerformanceSummary(line: Readonly<PlayerGameStatLine>): string {

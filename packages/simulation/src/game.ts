@@ -94,6 +94,8 @@ export interface TeamSide {
   plan: GamePlan;
   /** Contribution from staff assigned to game preparation. */
   prepBonus: number;
+  /** Fraction of plays each man is on the field for. Both sides total eleven. */
+  snapShares?: SnapShares;
   /** How well each side of the plan was installed this week, as a band. */
   execution: { offense: { low: number; high: number }; defense: { low: number; high: number } };
 }
@@ -160,9 +162,24 @@ function byPosition(lineup: readonly Player[], position: Position): Player[] {
   return lineup.filter((player) => player.position === position);
 }
 
-function average(players: readonly Player[], score: (player: Player) => number, fallback: number): number {
+/**
+ * Snap share per player, set by the rotation. A man on the field for 40% of
+ * plays counts 40% toward the unit he plays in, which is what makes a deep
+ * defensive line and a thin receiver room read differently.
+ */
+export type SnapShares = Readonly<Record<string, number>>;
+
+function average(
+  players: readonly Player[],
+  score: (player: Player) => number,
+  fallback: number,
+  shares?: SnapShares
+): number {
   if (players.length === 0) return fallback;
-  return players.reduce((total, player) => total + score(player), 0) / players.length;
+  if (!shares) return players.reduce((total, player) => total + score(player), 0) / players.length;
+  const weight = players.reduce((total, player) => total + (shares[player.id] ?? 0), 0);
+  if (weight <= 0) return players.reduce((total, player) => total + score(player), 0) / players.length;
+  return players.reduce((total, player) => total + score(player) * (shares[player.id] ?? 0), 0) / weight;
 }
 
 /**
@@ -170,7 +187,11 @@ function average(players: readonly Player[], score: (player: Player) => number, 
  * that actually produce them. Fatigue erodes every unit, which is what makes
  * tempo and a featured back cost something later in a season.
  */
-export function unitRatingsFromLineup(lineup: readonly Player[], prepBonus = 0): TeamUnitRatings {
+export function unitRatingsFromLineup(
+  lineup: readonly Player[],
+  prepBonus = 0,
+  shares?: SnapShares
+): TeamUnitRatings {
   const tired = (player: Player): number => player.overall - player.fatigue * 0.05;
   const quarterbacks = byPosition(lineup, "QB");
   const backs = byPosition(lineup, "RB");
@@ -181,18 +202,18 @@ export function unitRatingsFromLineup(lineup: readonly Player[], prepBonus = 0):
   const linebackers = byPosition(lineup, "LB");
   const backfield = byPosition(lineup, "DB");
 
-  const runBlocking = average(linemen, (player) => tired(player) + (player.ratings.strength - player.overall) * 0.5, 55);
-  const passBlocking = average(linemen, (player) => tired(player) + (player.ratings.technique - player.overall) * 0.5, 55);
-  const passer = average(quarterbacks, (player) => tired(player) + (player.ratings.armStrength + player.ratings.technique - player.overall * 2) * 0.35, 52);
-  const runners = average(backs, (player) => tired(player) + (player.ratings.strength - player.overall) * 0.3, 52);
-  const catchers = average([...receivers, ...tightEnds], tired, 52);
-  const frontSeven = average(defensiveLine, (player) => tired(player) + (player.ratings.strength - player.overall) * 0.4, 52);
-  const passRush = average(defensiveLine, (player) => tired(player) + (player.ratings.technique - player.overall) * 0.4, 52);
-  const secondLevel = average(linebackers, tired, 52);
-  const coverage = average(backfield, (player) => tired(player) + (player.ratings.technique - player.overall) * 0.35, 52);
+  const runBlocking = average(linemen, (player) => tired(player) + (player.ratings.strength - player.overall) * 0.5, 55, shares);
+  const passBlocking = average(linemen, (player) => tired(player) + (player.ratings.technique - player.overall) * 0.5, 55, shares);
+  const passer = average(quarterbacks, (player) => tired(player) + (player.ratings.armStrength + player.ratings.technique - player.overall * 2) * 0.35, 52, shares);
+  const runners = average(backs, (player) => tired(player) + (player.ratings.strength - player.overall) * 0.3, 52, shares);
+  const catchers = average([...receivers, ...tightEnds], tired, 52, shares);
+  const frontSeven = average(defensiveLine, (player) => tired(player) + (player.ratings.strength - player.overall) * 0.4, 52, shares);
+  const passRush = average(defensiveLine, (player) => tired(player) + (player.ratings.technique - player.overall) * 0.4, 52, shares);
+  const secondLevel = average(linebackers, tired, 52, shares);
+  const coverage = average(backfield, (player) => tired(player) + (player.ratings.technique - player.overall) * 0.35, 52, shares);
 
   return {
-    rushOffense: runBlocking * 0.45 + runners * 0.37 + average(tightEnds, tired, 52) * 0.1 + average(quarterbacks, (player) => player.ratings.conditioning, 52) * 0.08 + prepBonus,
+    rushOffense: runBlocking * 0.45 + runners * 0.37 + average(tightEnds, tired, 52, shares) * 0.1 + average(quarterbacks, (player) => player.ratings.conditioning, 52, shares) * 0.08 + prepBonus,
     passOffense: passer * 0.44 + catchers * 0.32 + passBlocking * 0.24 + prepBonus,
     rushDefense: frontSeven * 0.46 + secondLevel * 0.39 + coverage * 0.15 + prepBonus,
     passDefense: coverage * 0.48 + passRush * 0.28 + secondLevel * 0.24 + prepBonus
@@ -502,7 +523,7 @@ function buildSideState(side: TeamSide, opponentProgramId: string, context: Stat
     const depth = side.lineup.filter((other) => other.position === player.position).indexOf(player);
     lines.set(player.id, emptyStatLine(context, player, side.programId, opponentProgramId, depth === 0));
   }
-  const units = unitRatingsFromLineup(side.lineup, side.prepBonus);
+  const units = unitRatingsFromLineup(side.lineup, side.prepBonus, side.snapShares);
   // A week's install lands somewhere inside its band. Better coaching narrows
   // the band, so a good staff is more predictable as well as better.
   const draw = (band: { low: number; high: number }, key: string): number =>

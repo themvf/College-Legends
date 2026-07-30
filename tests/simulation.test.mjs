@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, schemePersonnel, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
+import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -59,12 +59,27 @@ test("the chosen scheme decides which players enter the Saturday rotation", () =
     line.gameId === gameEvent.gameId && line.programId === programId);
   const count = (position) => lines.filter((line) => line.position === position).length;
 
-  assert.equal(count("WR"), 4, "Air Raid must put WR4 into the game");
-  assert.equal(count("RB"), 1);
-  assert.equal(count("TE"), 1);
-  assert.equal(count("DB"), 5, "Nickel must put DB5 into the game");
-  assert.equal(count("LB"), 2);
-  assert.equal(count("DL"), 4);
+  // Eleven on the field, and a rotation behind them. A real snap sheet shows six
+  // receivers and eight defensive linemen taking snaps for four spots, so the
+  // claim is about *spots* — how many of a room are out there on an average play
+  // — not about a fixed set of starters.
+  const program = state.programs[programId];
+  const spots = schemeSpots(program.schemeIdentity);
+  const onField = (positions) => positions.reduce((total, position) => total + (spots[position] ?? 0), 0);
+  assert.equal(onField(["QB", "OL", "WR", "TE", "RB"]), 11, "the offense must field eleven");
+  assert.equal(onField(["DL", "LB", "DB"]), 11, "the defense must field eleven");
+
+  // An Air Raid asks for four receivers and no tight end at all; nickel asks for
+  // a fifth defensive back. Those are the numbers the scheme exists to change.
+  assert.equal(spots.WR, 4, "Air Raid puts four receivers on the field");
+  assert.equal(spots.TE, 0, "a real Air Raid does not dress a tight end");
+  assert.equal(spots.DB, 5, "nickel puts a fifth defensive back on the field");
+
+  // And more men than that take snaps, because football has substitutions.
+  assert.ok(count("WR") > spots.WR, `the receiver room must rotate, saw ${count("WR")} used for ${spots.WR} spots`);
+  assert.ok(count("DL") > spots.DL, `the defensive line must rotate, saw ${count("DL")} used for ${spots.DL} spots`);
+  assert.equal(count("TE"), 0, "a scheme that dresses no tight end must not give one snaps");
+  assert.ok(count("QB") === 1, "the quarterback does not come off");
 });
 
 test("players, coaches, and prospects receive stable unique fictional names", () => {

@@ -1129,6 +1129,60 @@ readiness is monotone with diminishing returns and buys nothing past a complete
 file, and that a season with a complete file every week beats the same season
 with none.
 
+### Eleven on the field, and a rotation behind them
+
+The lineup used to field a flat set of starters totalling **twelve** on offense
+(QB 1 + OL 5 + RB 2 + WR 3 + TE 1) against eleven on defense. But the naive fix —
+exactly eleven men, each on for every play — is not a football team either. From a
+real snap-count sheet (Chiefs, 61 offensive and 65 defensive snaps):
+
+```
+OL   5 men at 100%, one backup at 3%
+QB   1 man at 100%
+WR   93 / 80 / 72 / 10 / 5 / 2      → 2.6 on the field, six men used
+TE   84 / 41 / 8                    → 1.3 on the field
+RB   51 / 38 / 13                   → 1.0 on the field, a true committee
+DL   85 / 78 / 68 / 58 / 46 / 40 / 14 / 5  → 3.9, eight men for four spots
+LB   100 / 83 / 35 / 8              → 2.3
+DB   100 / 100 / 98 / 98 / 60 / 23  → 4.8
+```
+
+Both sides total eleven. Roughly twenty men take snaps. So the model is **spots on
+the field plus a snap share per man**, and unit ratings are snap-weighted: a man
+on for 40% of plays counts 40% toward the unit he plays in.
+
+`rotation.ts` replaces the starter table. `OFFENSIVE_SPOTS` and `DEFENSIVE_SPOTS`
+both sum to eleven, and `snapShares(position, spots, available)` distributes those
+spots down the depth chart by an exponential whose spread is position-specific —
+read straight off the sheet above. The rooms where fatigue actually bites rotate
+hardest.
+
+The **clamp at 100% is what reproduces real football without authoring it**: give
+the offensive line five spots and a tight spread and the top five saturate with
+the sixth picking up the remainder, exactly as a real sheet reads. Measured
+against the reference:
+
+| room | sim | Chiefs |
+|---|---|---|
+| OL | 100/100/100/100/97/3 | 100/100/100/100/100/3 |
+| RB | 44/28/18/11 | 51/38/13 |
+| DL | 90/68/51/39/30/22 | 85/78/68/58/46/40/14/5 |
+| men taking snaps | 42 | ~46 incl. special teams |
+
+`MINIMUM_SNAP_SHARE` is 2% — the reference bottoms out there, and without a floor
+a fringe player picked up a box-score line for a fraction of a snap.
+
+**This is what makes the fit score honest.** An Air Raid now dresses four
+receivers and *no tight end*, so the fit requirements can never tell a player to
+recruit a tight end for an offense that does not use one. That mistake would have
+been baked into recruiting for the rest of the game's life.
+
+Known drift to re-tune: snap-weighting favours the top of each room, so per-game
+rates came out slightly hot — 70.6 plays, 65.5% completion, 253 passing, 174
+rushing, **28.6 points against a real ~27**. The distribution tolerances accept
+it, but it is about 6% high and should be pulled back with the outcome-modifier
+work rather than by a blind constant.
+
 ### Still open: scheme identity is only half visible in the box score
 
 Measured over a full season with rooms shaped and personnel groupings live, pass
