@@ -117,6 +117,24 @@ function upcomingOpponent(state: Readonly<GameState>, programId: string): string
   return game.homeProgramId === programId ? game.awayProgramId : game.homeProgramId;
 }
 
+/**
+ * Rival business choices follow program character. A front-running brand backs
+ * itself to fill the stadium, bluebloods and talent magnets sell winning, while
+ * rebuilders and diehards protect the guaranteed floor.
+ */
+function planSponsorship(state: Readonly<GameState>, programId: string): GameCommand[] {
+  const sponsorship = state.sponsorships?.[programId];
+  if (!sponsorship || sponsorship.activeContractId) return [];
+  const character = state.programs[programId]?.character;
+  const strategy = character === "FRONTRUNNER"
+    ? "HOME_CROWD"
+    : character === "BLUEBLOOD" || character === "TALENT_MAGNET"
+      ? "WINNING"
+      : "GUARANTEED";
+  const offer = sponsorship.offers.find((candidate) => candidate.strategy === strategy);
+  return offer ? [{ type: "ACCEPT_SPONSORSHIP", programId, offerId: offer.id }] : [];
+}
+
 /** AI programs use the same limited development, media, and recruiting decisions as the human player. */
 export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId?: string): GameCommand[] {
   if (state.phase !== "REGULAR_SEASON" || state.week > 14) return [];
@@ -124,6 +142,7 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
     if (program.id === excludedProgramId) return [];
     const commands: GameCommand[] = [];
 
+    commands.push(...planSponsorship(state, program.id));
     commands.push(...planStaffAllocation(state, program.id));
     commands.push(...planPractice(state, program.id));
     commands.push(...planScouting(state, program.id));

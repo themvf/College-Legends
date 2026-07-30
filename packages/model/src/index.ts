@@ -449,6 +449,30 @@ export interface DevelopmentSpotlight {
   target: DevelopmentSpotlightTarget;
 }
 
+/**
+ * A sponsor is a season-long business choice. All three contracts convert the
+ * same program reach into money, but put a different share of the value at
+ * risk: none, a home-crowd trigger, or results on the field.
+ */
+export type SponsorshipStrategy = "GUARANTEED" | "HOME_CROWD" | "WINNING";
+
+export interface SponsorshipOffer {
+  id: string;
+  sponsorName: string;
+  strategy: SponsorshipStrategy;
+  weeklyPayment: number;
+  homeAttendanceTarget: number | null;
+  homeAttendanceBonus: number;
+  winBonus: number;
+  rankedWinBonus: number;
+}
+
+export interface SponsorshipProgramState {
+  season: Season;
+  offers: SponsorshipOffer[];
+  activeContractId: string | null;
+}
+
 export interface Program {
   id: ProgramId;
   name: string;
@@ -547,6 +571,8 @@ export interface GameState {
   players: Record<PlayerId, Player>;
   prospects: Record<ProspectId, Prospect>;
   recruiting: Record<ProgramId, RecruitingProgramState>;
+  /** One sponsor contract per program and season. */
+  sponsorships: Record<ProgramId, SponsorshipProgramState>;
   /** One optional development investment per program and week. Position groups trade intensity for breadth. */
   developmentSpotlights: Record<ProgramId, DevelopmentSpotlight | null>;
   /** Standing weekly preparation per program; persists until changed. */
@@ -588,6 +614,7 @@ export type GameCommand =
   | { type: "SET_GAME_PLAN"; programId: ProgramId; plan: Partial<GamePlan> }
   | { type: "SET_TICKET_PRICE"; programId: ProgramId; price: number }
   | { type: "SET_ADVERTISING"; programId: ProgramId; spend: number }
+  | { type: "ACCEPT_SPONSORSHIP"; programId: ProgramId; offerId: string }
   | { type: "SET_PRACTICE_REPS"; programId: ProgramId; side: "OFFENSE" | "DEFENSE"; reps: number }
   | { type: "SET_STAFF_ALLOCATION"; programId: ProgramId; staffId: string; allocation: Partial<StaffAllocation> }
   /**
@@ -751,6 +778,28 @@ export type GameEvent =
   | { type: "STAFF_REPLACED"; season: Season; week: number; programId: ProgramId; departingStaffId: string; arrivingStaffId: string; name: string; role: StaffRole; rating: number; salary: number; signingCost: number }
   | { type: "TICKET_PRICE_SET"; season: Season; week: number; programId: ProgramId; price: number; fairPrice: number }
   | { type: "ADVERTISING_SET"; season: Season; week: number; programId: ProgramId; spend: number }
+  | {
+      type: "SPONSORSHIP_ACCEPTED";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      offerId: string;
+      sponsorName: string;
+      strategy: SponsorshipStrategy;
+      weeklyPayment: number;
+    }
+  | {
+      type: "SPONSORSHIP_PAYMENT";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      sponsorName: string;
+      basePayment: number;
+      homeAttendanceBonus: number;
+      winBonus: number;
+      rankedWinBonus: number;
+      total: number;
+    }
   | { type: "PREP_POINTS_ADDED"; season: Season; week: number; programId: ProgramId; pointsAdded: number }
   | { type: "GAME_PLAN_SET"; season: Season; week: number; programId: ProgramId; plan: GamePlan; changed: (keyof GamePlan)[] }
   | {
@@ -778,7 +827,7 @@ export type GameEvent =
       defensiveExecution: number;
       notes: string[];
     }
-  | { type: "WEEKLY_FINANCES"; season: Season; week: number; programId: ProgramId; revenue: number; expenses: number; net: number }
+  | { type: "WEEKLY_FINANCES"; season: Season; week: number; programId: ProgramId; revenue: number; sponsorshipRevenue: number; expenses: number; net: number }
   | {
       type: "WEEKLY_RECAP";
       season: Season;
@@ -806,6 +855,7 @@ export type GameEvent =
       advertisingFans: number;
       ticketRevenue: number;
       concessionRevenue: number;
+      sponsorshipRevenue: number;
       localPressChange: number;
       nationalPressChange: number;
       guaranteePaid: number;

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - agent/sponsorship-stories-preview
   workflow_dispatch:
 
 permissions:

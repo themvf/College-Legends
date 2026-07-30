@@ -1,4 +1,11 @@
-import type { GamePlan, GameState, Player, Program } from "@college-legends/model";
+import type {
+  GamePlan,
+  GameState,
+  Player,
+  Program,
+  SponsorshipOffer,
+  SponsorshipProgramState
+} from "@college-legends/model";
 import { ratingByRole } from "./attributes.js";
 
 const clamp = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value));
@@ -6,6 +13,184 @@ const clamp = (value: number, minimum: number, maximum: number): number => Math.
 export const MINIMUM_TICKET_PRICE = 10;
 export const MAXIMUM_TICKET_PRICE = 200;
 export const MAXIMUM_WEEKLY_ADVERTISING = 400_000;
+export const SPONSOR_HOME_ATTENDANCE_TARGET = 0.9;
+
+const GUARANTEED_SPONSORS = ["Foundry Community Bank", "Crown Hardware", "Oakline Grocers", "Summit Family Markets"] as const;
+const CROWD_SPONSORS = ["Heartland Wireless", "IronTrail Motors", "BluePeak Energy", "Pioneer Outfitters"] as const;
+const WINNING_SPONSORS = ["VictoryGrid Sports", "Northstar Athletic", "Pulse Hydration", "Apex Mobile"] as const;
+
+const roundTo = (value: number, increment: number): number => Math.round(value / increment) * increment;
+
+function stableIndex(path: string, length: number): number {
+  let hash = 2166136261;
+  for (let index = 0; index < path.length; index += 1) {
+    hash ^= path.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) % length;
+}
+
+/**
+ * The weekly value of putting this program in front of a sponsor. This is the
+ * missing conversion from fame to money: fans, national recognition, prestige,
+ * and titles all raise the offers without directly improving a football rating.
+ */
+export function sponsorshipMarketValue(program: Readonly<Program>): number {
+  const audience = program.fanBase * 1.25;
+  const nationalRecognition = program.nationalPress * 900;
+  const institutionalStanding = program.prestige * 400;
+  const championshipLegacy = program.championships * 15_000;
+  return Math.max(35_000, roundTo(audience + nationalRecognition + institutionalStanding + championshipLegacy, 5_000));
+}
+
+/**
+ * Creates three offers against one market value. The safe contract pays all of
+ * it every week; the other two put part of it at risk in return for a higher
+ * ceiling. Values are frozen when the season opens, so an offer never moves
+ * while the player is deciding.
+ */
+export function createSponsorshipOffers(program: Readonly<Program>, season: number): SponsorshipOffer[] {
+  const market = sponsorshipMarketValue(program);
+  const name = (pool: readonly string[], strategy: string): string =>
+    pool[stableIndex(`${program.id}:${season}:${strategy}`, pool.length)]!;
+  return [
+    {
+      id: `${program.id}:${season}:guaranteed`,
+      sponsorName: name(GUARANTEED_SPONSORS, "guaranteed"),
+      strategy: "GUARANTEED",
+      weeklyPayment: roundTo(market, 5_000),
+      homeAttendanceTarget: null,
+      homeAttendanceBonus: 0,
+      winBonus: 0,
+      rankedWinBonus: 0
+    },
+    {
+      id: `${program.id}:${season}:home-crowd`,
+      sponsorName: name(CROWD_SPONSORS, "home-crowd"),
+      strategy: "HOME_CROWD",
+      weeklyPayment: roundTo(market * 0.65, 5_000),
+      homeAttendanceTarget: SPONSOR_HOME_ATTENDANCE_TARGET,
+      homeAttendanceBonus: roundTo(market * 1.35, 5_000),
+      winBonus: 0,
+      rankedWinBonus: 0
+    },
+    {
+      id: `${program.id}:${season}:winning`,
+      sponsorName: name(WINNING_SPONSORS, "winning"),
+      strategy: "WINNING",
+      weeklyPayment: roundTo(market * 0.45, 5_000),
+      homeAttendanceTarget: null,
+      homeAttendanceBonus: 0,
+      winBonus: roundTo(market * 0.75, 5_000),
+      rankedWinBonus: roundTo(market * 0.9, 5_000)
+    }
+  ];
+}
+
+export function activeSponsorship(
+  state: Readonly<GameState>,
+  programId: string
+): SponsorshipOffer | null {
+  const sponsorship = state.sponsorships?.[programId];
+  if (!sponsorship?.activeContractId) return null;
+  return sponsorship.offers.find((offer) => offer.id === sponsorship.activeContractId) ?? null;
+}
+
+export interface SponsorshipProjection {
+  remainingWeeks: number;
+  remainingGames: number;
+  remainingHomeGames: number;
+  remainingRankedGames: number;
+  guaranteedRemaining: number;
+  maximumBonusRemaining: number;
+  maximumRemaining: number;
+}
+
+/**
+ * Posts the entire remaining contract range before it is signed. "Maximum"
+ * assumes every still-available trigger is hit; the guarantee is money the
+ * program receives even on a bye.
+ */
+export function projectSponsorshipOffer(
+  state: Readonly<GameState>,
+  programId: string,
+  offer: Readonly<SponsorshipOffer>
+): SponsorshipProjection {
+  const firstPayingWeek = Math.max(1, state.week);
+  const remainingWeeks = Math.max(0, 15 - firstPayingWeek);
+  const remaining = state.schedule.filter((game) =>
+    !game.played
+    && game.week >= firstPayingWeek
+    && (game.homeProgramId === programId || game.awayProgramId === programId)
+  );
+  const remainingHomeGames = remaining.filter((game) => game.homeProgramId === programId).length;
+  const remainingRankedGames = remaining.filter((game) => {
+    const opponentId = game.homeProgramId === programId ? game.awayProgramId : game.homeProgramId;
+    return (state.programs[opponentId]?.nationalRank ?? 999) <= 25;
+  }).length;
+  const guaranteedRemaining = offer.weeklyPayment * remainingWeeks;
+  const maximumBonusRemaining = offer.homeAttendanceBonus * remainingHomeGames
+    + offer.winBonus * remaining.length
+    // Rankings move. Any remaining opponent can still enter the top 25 before
+    // kickoff, so the mathematical maximum has to count every remaining game.
+    + offer.rankedWinBonus * remaining.length;
+  return {
+    remainingWeeks,
+    remainingGames: remaining.length,
+    remainingHomeGames,
+    remainingRankedGames,
+    guaranteedRemaining,
+    maximumBonusRemaining,
+    maximumRemaining: guaranteedRemaining + maximumBonusRemaining
+  };
+}
+
+export interface SponsorshipPayment {
+  basePayment: number;
+  homeAttendanceBonus: number;
+  winBonus: number;
+  rankedWinBonus: number;
+  total: number;
+}
+
+/** Resolves only the triggers stated on the contract card. */
+export function sponsorshipPayment(
+  offer: Readonly<SponsorshipOffer> | null,
+  result: "WIN" | "LOSS" | "BYE",
+  homeGame: boolean,
+  attendance: number,
+  capacity: number,
+  opponentRank: number | null
+): SponsorshipPayment {
+  if (!offer) {
+    return { basePayment: 0, homeAttendanceBonus: 0, winBonus: 0, rankedWinBonus: 0, total: 0 };
+  }
+  const homeAttendanceBonus = homeGame
+    && offer.homeAttendanceTarget !== null
+    && capacity > 0
+    && attendance / capacity >= offer.homeAttendanceTarget
+    ? offer.homeAttendanceBonus
+    : 0;
+  const winBonus = result === "WIN" ? offer.winBonus : 0;
+  const rankedWinBonus = result === "WIN" && opponentRank !== null && opponentRank <= 25
+    ? offer.rankedWinBonus
+    : 0;
+  const total = offer.weeklyPayment + homeAttendanceBonus + winBonus + rankedWinBonus;
+  return {
+    basePayment: offer.weeklyPayment,
+    homeAttendanceBonus,
+    winBonus,
+    rankedWinBonus,
+    total
+  };
+}
+
+export function createSponsorshipProgramState(
+  program: Readonly<Program>,
+  season: number
+): SponsorshipProgramState {
+  return { season, offers: createSponsorshipOffers(program, season), activeContractId: null };
+}
 
 /**
  * What a ticket is worth given who the program is. Winning, recognition, and a

@@ -313,7 +313,7 @@ with a headline, the reason in plain language, a verb, and a destination the UI
 turns into a button. Items fire on: no practice reps, an unscouted opponent this
 week, a marquee game ahead with no file, a coordinator running someone else's
 scheme, recruiting points about to expire, nobody being developed, a ticket
-price well off fair, and a negative budget.
+price well off fair, no primary sponsor, and a negative budget.
 
 `seasonExpectation()` finally states the point of a season. `coachSecurity` and
 `championshipDeadline` have existed since the beginning and were never once
@@ -737,6 +737,50 @@ sold out regardless and has only a pricing lever.
 Advertising is deliberately **not** weekly arbitrage. Reach scales with the
 square root of spend, and a maximum spend costs more in the week than it returns
 at the gate — the return is the followers it compounds into.
+
+### Sponsorships turn fame into money
+
+The first sponsorship slice closes one part of the inert-fame finding. Every
+program receives three frozen, season-long offers:
+
+| contract | guarantee | upside |
+|---|---:|---|
+| Guaranteed partner | 100% of sponsor market value every week | none |
+| Game-day partner | 65% every week | 135% whenever a home crowd fills at least 90% of the stadium |
+| Performance partner | 45% every week | 75% for every win, plus 90% for a top-25 win |
+
+Sponsor market value is a named function of what the program has already built:
+`fanBase × $1.25 + nationalPress × $900 + prestige × $400 + championships ×
+$15,000`, rounded to $5,000 a week. These are balance hypotheses, but the shape
+is load-bearing: fans, recognition, institutional standing, and titles all
+become economically useful without buying a football rating.
+
+`projectSponsorshipOffer()` posts the exact remaining guarantee, every bonus
+still available, and the mathematical maximum before the player signs.
+`sponsorshipPayment()` owns the trigger logic used by the weekly finances, so
+the card and the cash cannot drift into parallel implementations.
+
+One primary sponsor may be signed per season and cannot be replaced until the
+rollover. Offers refresh after the new schedule is built. Rivals sign from the
+same market and choose by program character: front-runners back the crowd,
+bluebloods and talent magnets back winning, and diehards/developers protect the
+guaranteed floor.
+
+### Weekly stories make the numbers memorable
+
+`weeklyStories()` turns each completed week into a deterministic editorial
+package without adding prose to engine events or changing save data. The UI
+writes the sentences from structured facts already emitted by the simulation.
+
+Every issue leads with the player's program and changes its angle for a ranked
+upset, marquee breakthrough, blowout, one-score finish, close ranked loss, or
+bye. It then selects one consequential national result, one real box-score
+standout, and—only when earned—one program-business story for a sponsorship
+bonus, packed house, fan surge, or unusually profitable week.
+
+The package is deliberately capped at four stories. It is a summary, not a
+second inbox, and every claim can be traced to a `WEEKLY_RECAP`,
+`GAME_COMPLETED`, `PLAYER_BRAND_UPDATED`, or `SPONSORSHIP_PAYMENT` event.
 
 ### Development candidates
 
@@ -1521,7 +1565,7 @@ Each step is playable and each depends on the one before it.
    Playbook identity as a staged multi-week project, play concepts, and
    coordinator delegation remain — see `docs/GAMEPLAN_AND_PREPARATION.md`.
 6. ~~Ticket pricing and advertising~~ — done; see "The weekly decision loop".
-   Still open from finding 3: media rights, sponsorship, merchandise, recurring
+   Sponsorship is done. Still open from finding 3: media rights, merchandise, recurring
    facility costs, and an insolvency check. `weeklyRevenue` and `weeklyExpenses`
    are still stored constants.
 7. ~~The scouting department, staff hour allocation, and one weekly screen~~ —

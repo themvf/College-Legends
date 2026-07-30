@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, computeOverall, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
+import { advanceWeek, activeSponsorship, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectSponsorshipOffer, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, sponsorshipMarketValue, sponsorshipPayment, staffCapacity, computeOverall, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE, weeklyStories } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -290,6 +290,88 @@ test("facility upgrades spend budget and weekly finances are recorded", () => {
   assert.ok(result.state.eventHistory.some((event) => event.type === "FACILITY_UPGRADED"));
 });
 
+test("sponsorship offers turn reach into three exact risk-reward contracts", () => {
+  const state = createFictionalLeague("sponsorship-market", 12);
+  const programId = "program-1";
+  const program = state.programs[programId];
+  const sponsorship = state.sponsorships[programId];
+  assert.ok(program && sponsorship);
+  assert.deepEqual(
+    sponsorship.offers.map((offer) => offer.strategy).sort(),
+    ["GUARANTEED", "HOME_CROWD", "WINNING"]
+  );
+  const guaranteed = sponsorship.offers.find((offer) => offer.strategy === "GUARANTEED");
+  const crowd = sponsorship.offers.find((offer) => offer.strategy === "HOME_CROWD");
+  const winning = sponsorship.offers.find((offer) => offer.strategy === "WINNING");
+  assert.ok(guaranteed && crowd && winning);
+  assert.equal(guaranteed.weeklyPayment, sponsorshipMarketValue(program));
+  assert.equal(guaranteed.homeAttendanceBonus + guaranteed.winBonus + guaranteed.rankedWinBonus, 0);
+  assert.ok(crowd.weeklyPayment < guaranteed.weeklyPayment && crowd.homeAttendanceBonus > 0);
+  assert.ok(winning.weeklyPayment < guaranteed.weeklyPayment && winning.winBonus > 0 && winning.rankedWinBonus > 0);
+
+  const projection = projectSponsorshipOffer(state, programId, crowd);
+  const remainingGames = state.schedule.filter((game) =>
+    !game.played && (game.homeProgramId === programId || game.awayProgramId === programId));
+  const remainingHomeGames = remainingGames.filter((game) => game.homeProgramId === programId);
+  assert.equal(projection.remainingWeeks, 14);
+  assert.equal(projection.remainingGames, remainingGames.length);
+  assert.equal(projection.remainingHomeGames, remainingHomeGames.length);
+  assert.equal(projection.guaranteedRemaining, crowd.weeklyPayment * 14);
+  assert.equal(projection.maximumBonusRemaining, crowd.homeAttendanceBonus * projection.remainingHomeGames);
+  assert.equal(projection.maximumRemaining, projection.guaranteedRemaining + projection.maximumBonusRemaining);
+});
+
+test("sponsorship bonuses pay only when their stated trigger happens", () => {
+  const state = createFictionalLeague("sponsorship-triggers", 4);
+  const offers = state.sponsorships["program-1"].offers;
+  const crowd = offers.find((offer) => offer.strategy === "HOME_CROWD");
+  const winning = offers.find((offer) => offer.strategy === "WINNING");
+  assert.ok(crowd && winning);
+
+  const almostFull = sponsorshipPayment(crowd, "WIN", true, 89_999, 100_000, 5);
+  assert.equal(almostFull.total, crowd.weeklyPayment);
+  const full = sponsorshipPayment(crowd, "LOSS", true, 90_000, 100_000, null);
+  assert.equal(full.homeAttendanceBonus, crowd.homeAttendanceBonus);
+  assert.equal(full.total, crowd.weeklyPayment + crowd.homeAttendanceBonus);
+
+  const rankedWin = sponsorshipPayment(winning, "WIN", false, 0, 100_000, 12);
+  assert.equal(rankedWin.winBonus, winning.winBonus);
+  assert.equal(rankedWin.rankedWinBonus, winning.rankedWinBonus);
+  assert.equal(rankedWin.total, winning.weeklyPayment + winning.winBonus + winning.rankedWinBonus);
+  const loss = sponsorshipPayment(winning, "LOSS", false, 0, 100_000, 12);
+  assert.equal(loss.total, winning.weeklyPayment);
+});
+
+test("a signed sponsor pays into the budget and cannot be replaced mid-season", () => {
+  const preseason = createFictionalLeague("preseason-sponsorship", 4);
+  const preseasonOffer = preseason.sponsorships["program-1"].offers[0];
+  const started = beginSeason(preseason, [{ type: "ACCEPT_SPONSORSHIP", programId: "program-1", offerId: preseasonOffer.id }]);
+  assert.equal(activeSponsorship(started, "program-1")?.id, preseasonOffer.id);
+  assert.ok(started.eventHistory.some((event) => event.type === "SPONSORSHIP_ACCEPTED" && event.programId === "program-1"));
+
+  const state = activeLeague("sponsorship-finances", 4);
+  const programId = "program-1";
+  const offer = state.sponsorships[programId].offers.find((candidate) => candidate.strategy === "GUARANTEED");
+  assert.ok(offer);
+  const openingBudget = state.programs[programId].budget;
+  let result = advanceWeek(state, [{ type: "ACCEPT_SPONSORSHIP", programId, offerId: offer.id }]);
+  const payment = result.events.find((event) => event.type === "SPONSORSHIP_PAYMENT" && event.programId === programId);
+  const finance = result.events.find((event) => event.type === "WEEKLY_FINANCES" && event.programId === programId);
+  const recap = result.events.find((event) => event.type === "WEEKLY_RECAP" && event.programId === programId);
+  assert.ok(payment && finance && recap);
+  assert.equal(activeSponsorship(result.state, programId)?.id, offer.id);
+  assert.equal(payment.total, offer.weeklyPayment);
+  assert.equal(finance.sponsorshipRevenue, offer.weeklyPayment);
+  assert.equal(recap.sponsorshipRevenue, offer.weeklyPayment);
+  assert.equal(result.state.programs[programId].budget, openingBudget + finance.net);
+
+  const other = result.state.sponsorships[programId].offers.find((candidate) => candidate.id !== offer.id);
+  assert.ok(other);
+  result = advanceWeek(result.state, [{ type: "ACCEPT_SPONSORSHIP", programId, offerId: other.id }]);
+  assert.equal(activeSponsorship(result.state, programId)?.id, offer.id);
+  assert.ok(result.events.some((event) => event.type === "COMMAND_REJECTED" && /through the end of the season/i.test(event.reason)));
+});
+
 test("played games retain scores for the schedule and inbox", () => {
   const state = activeLeague("schedule-results", 4);
   const result = advanceWeek(state);
@@ -541,6 +623,70 @@ test("weekly recaps connect results to fans, attendance, press, and game-day rev
     assert.equal(Math.sign(recap.teamResultFanChange), recap.result === "WIN" ? 1 : -1);
     assert.equal(Math.sign(recap.localPressChange), recap.result === "WIN" ? 1 : -1);
   }
+});
+
+test("weekly stories turn the recap into a small factual editorial package", () => {
+  const state = activeLeague("weekly-story-package", 12);
+  const programId = "program-1";
+  const result = advanceWeek(state);
+  const recap = result.events.find((event) => event.type === "WEEKLY_RECAP" && event.programId === programId);
+  assert.ok(recap);
+  const stories = weeklyStories(result.state, programId, recap.season, recap.week);
+  assert.ok(stories.length >= 2 && stories.length <= 4);
+  assert.equal(stories[0].kind, "PROGRAM_RESULT");
+  assert.equal(new Set(stories.map((story) => story.id)).size, stories.length);
+  assert.ok(stories.every((story) => story.season === recap.season && story.week === recap.week));
+
+  const lead = stories[0];
+  assert.equal(lead.programId, programId);
+  assert.equal(lead.result, recap.result);
+  assert.equal(lead.scoreFor, recap.scoreFor);
+  assert.equal(lead.fanChange, recap.fanChange);
+  assert.equal(lead.weeklyNet, recap.weeklyNet);
+
+  const national = stories.find((story) => story.kind === "NATIONAL_RESULT");
+  assert.ok(national);
+  const sourceGame = result.events.find((event) =>
+    event.type === "GAME_COMPLETED"
+    && [event.homeProgramId, event.awayProgramId].includes(national.winnerProgramId)
+    && [event.homeProgramId, event.awayProgramId].includes(national.loserProgramId));
+  assert.ok(sourceGame);
+  assert.equal(national.winnerScore, Math.max(sourceGame.homeScore, sourceGame.awayScore));
+  assert.equal(national.loserScore, Math.min(sourceGame.homeScore, sourceGame.awayScore));
+
+  const playerStory = stories.find((story) => story.kind === "PLAYER_SPOTLIGHT");
+  if (playerStory) {
+    const sourcePerformance = result.events.find((event) =>
+      event.type === "PLAYER_BRAND_UPDATED" && event.playerId === playerStory.playerId);
+    assert.ok(sourcePerformance);
+    assert.equal(playerStory.gameRating, sourcePerformance.gameRating);
+    assert.equal(playerStory.performanceSummary, sourcePerformance.performanceSummary);
+  }
+});
+
+test("weekly stories call out an earned sponsorship bonus", () => {
+  const state = activeLeague("weekly-story-sponsor", 12);
+  const homeFixture = state.schedule.find((game) => game.week === state.week);
+  assert.ok(homeFixture);
+  const programId = homeFixture.homeProgramId;
+  const program = state.programs[programId];
+  program.fanBase = 1_000_000;
+  program.fanSupport = 100;
+  program.ticketPrice = 10;
+  const offer = state.sponsorships[programId].offers.find((candidate) => candidate.strategy === "HOME_CROWD");
+  assert.ok(offer);
+
+  const result = advanceWeek(state, [{ type: "ACCEPT_SPONSORSHIP", programId, offerId: offer.id }]);
+  const recap = result.events.find((event) => event.type === "WEEKLY_RECAP" && event.programId === programId);
+  const payment = result.events.find((event) => event.type === "SPONSORSHIP_PAYMENT" && event.programId === programId);
+  assert.ok(recap && payment);
+  assert.ok(payment.homeAttendanceBonus > 0);
+  const story = weeklyStories(result.state, programId, recap.season, recap.week)
+    .find((candidate) => candidate.kind === "PROGRAM_MOMENTUM");
+  assert.ok(story);
+  assert.equal(story.angle, "SPONSOR_BONUS");
+  assert.equal(story.sponsorName, offer.sponsorName);
+  assert.equal(story.sponsorBonus, payment.total - payment.basePayment);
 });
 
 test("individual game performances grow player stardom and feed school fans", () => {

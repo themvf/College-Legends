@@ -31,8 +31,10 @@ import {
   weeklyScoutingOutput,
   WORTH_SCOUTING
 } from "./department.js";
-import { advertisingReach, DEFENSIVE_PRESETS, developmentCandidates, fairTicketPrice, matchingPreset, MAXIMUM_TICKET_PRICE, MAXIMUM_WEEKLY_ADVERTISING, MINIMUM_TICKET_PRICE, OFFENSIVE_PRESETS, pricingGoodwill, projectGate } from "./business.js";
+import { activeSponsorship, advertisingReach, createSponsorshipProgramState, DEFENSIVE_PRESETS, developmentCandidates, fairTicketPrice, matchingPreset, MAXIMUM_TICKET_PRICE, MAXIMUM_WEEKLY_ADVERTISING, MINIMUM_TICKET_PRICE, OFFENSIVE_PRESETS, pricingGoodwill, projectGate, projectSponsorshipOffer, sponsorshipMarketValue, sponsorshipPayment } from "./business.js";
 import { MAXIMUM_REPS_PER_SIDE, planExecution, repsFatigue, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
+export { weeklyStories } from "./stories.js";
+export type { WeeklyStory } from "./stories.js";
 
 export { DEFAULT_GAME_PLAN, DEFENSIVE_IDENTITY_LABELS, GAME_PLAN_OPTIONS, IDENTITY_BASE_DEFENSE, IDENTITY_BASE_PLAN, intendedGamePlan, OFFENSIVE_IDENTITY_LABELS, plannedUnitRatings, projectUnitEdges, unitLabel, unitRatingsFromLineup } from "./game.js";
 export {
@@ -46,9 +48,13 @@ export {
   MINIMUM_TICKET_PRICE,
   OFFENSIVE_PRESETS,
   projectGate,
+  projectSponsorshipOffer,
+  sponsorshipMarketValue,
+  sponsorshipPayment,
+  activeSponsorship,
   ticketDemandMultiplier
 } from "./business.js";
-export type { GateProjection, StrategyPreset } from "./business.js";
+export type { GateProjection, SponsorshipPayment, SponsorshipProjection, StrategyPreset } from "./business.js";
 export { MAXIMUM_REPS_PER_SIDE, planExecution, planInstaller, repsFatigue, staffCard, staffModifiers, staffSalary } from "./installation.js";
 export {
   filmGamesAvailable,
@@ -724,7 +730,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
   const nameFor = (ordinal: number): string => fictionalPersonName(ordinal, firstNameOffset, lastNameOffset);
   const state: GameState = {
     identity: { rootSeed, balanceConfiguration: { version: "0.1.0", weeklyDevelopment: { base: 0.012, workEthicWeight: 0.022, fatigueFloor: 0.62, maximum: 0.09 }, game: { homeFieldAdvantage: 2.8 } }, simulationVersion: "0.1.0" },
-    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, dossiers: {}, staff: {}, depthCharts: {}, playerGameStats: [], schedule: [], seasonHistory: [], eventHistory: []
+    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, sponsorships: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, dossiers: {}, staff: {}, depthCharts: {}, playerGameStats: [], schedule: [], seasonHistory: [], eventHistory: []
   };
   const rosterPositions = Object.entries(ROSTER_COMPOSITION).flatMap(([position, count]) =>
     Array.from({ length: count }, () => position as Position)
@@ -904,7 +910,25 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
   generateProspects(state, rng.fork("prospects"), actualProgramCount * 30, "initial", actualProgramCount * (STARTING_ROSTER_SIZE + STAFF_ROLES.length), firstNameOffset, lastNameOffset);
   initializeRecruitingBoards(state, rng.fork("initial-recruiting-boards"));
   buildSeasonSchedule(state);
+  refreshSponsorshipOffers(state);
   return state;
+}
+
+function refreshSponsorshipOffers(state: GameState): void {
+  state.sponsorships ??= {};
+  for (const program of Object.values(state.programs)) {
+    state.sponsorships[program.id] = createSponsorshipProgramState(program, state.season);
+  }
+}
+
+function ensureSponsorshipOffers(state: GameState): void {
+  state.sponsorships ??= {};
+  for (const program of Object.values(state.programs)) {
+    const current = state.sponsorships[program.id];
+    if (!current || current.season !== state.season) {
+      state.sponsorships[program.id] = createSponsorshipProgramState(program, state.season);
+    }
+  }
 }
 
 const OFFENSIVE_IDENTITIES = OFFENSIVE_SCHEMES;
@@ -959,17 +983,25 @@ function createPlayerRatings(overall: number, position: Position, rng: Addressab
 
 export function beginSeason(input: Readonly<GameState>, commands: readonly GameCommand[] = []): GameState {
   const state = clone<GameState>(input);
+  ensureSponsorshipOffers(state);
   if (state.phase === "ROSTER_REVIEW") {
     const events: GameEvent[] = [];
     for (const command of commands) {
       if (command.type === "SCHEDULE_MARQUEE_HOME_GAME") {
         scheduleMarqueeHomeGame(state, command.programId, command.opponentProgramId, events);
+      } else if (command.type === "ACCEPT_SPONSORSHIP") {
+        resolveCommands(
+          state,
+          [command],
+          new AddressableRng(state.identity.rootSeed).fork("preseason-sponsorship", String(state.season)),
+          events
+        );
       } else if (command.type === "SET_DEPTH_CHART") {
         applyDepthChartCommand(state, command, events);
       } else if (command.type === "SET_REDSHIRT" || command.type === "RED_SHIRT") {
         applyRedshirtCommand(state, command, events);
       } else {
-        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Only depth-chart, redshirt, and preseason scheduling decisions can be made before the season begins." });
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Only sponsorship, depth-chart, redshirt, and preseason scheduling decisions can be made before the season begins." });
       }
     }
     state.eventHistory.push(...events);
@@ -1182,6 +1214,7 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   state.developmentSpotlights ??= {};
   state.gamePlans ??= {};
   state.preparation ??= {};
+  ensureSponsorshipOffers(state);
   const events: GameEvent[] = [];
   for (const programId of Object.keys(state.programs)) {
     state.developmentSpotlights[programId] = null;
@@ -1259,6 +1292,7 @@ function refreshPreparation(state: GameState, events: GameEvent[]): void {
  */
 export function prepareWeek(input: Readonly<GameState>, commands: readonly GameCommand[] = []): SimulationResult {
   const state = clone<GameState>(input);
+  ensureSponsorshipOffers(state);
   const events: GameEvent[] = [];
   // Everything a coach settles *before* Saturday resolves here. Practice reps
   // belong with scouting: setting them and then being told you haven't
@@ -1656,6 +1690,36 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       }
       program.advertisingSpend = spend;
       events.push({ type: "ADVERTISING_SET", season: state.season, week: state.week, programId: program.id, spend });
+      continue;
+    }
+    if (command.type === "ACCEPT_SPONSORSHIP") {
+      const sponsorship = state.sponsorships[program.id];
+      const offer = sponsorship?.offers.find((candidate) => candidate.id === command.offerId);
+      if (!sponsorship || sponsorship.season !== state.season || !offer) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That sponsorship offer is no longer available." });
+        continue;
+      }
+      if (sponsorship.activeContractId) {
+        const active = sponsorship.offers.find((candidate) => candidate.id === sponsorship.activeContractId);
+        events.push({
+          type: "COMMAND_REJECTED",
+          programId: command.programId,
+          command,
+          reason: `${active?.sponsorName ?? "The current sponsor"} has the primary partnership through the end of the season.`
+        });
+        continue;
+      }
+      sponsorship.activeContractId = offer.id;
+      events.push({
+        type: "SPONSORSHIP_ACCEPTED",
+        season: state.season,
+        week: state.week,
+        programId: program.id,
+        offerId: offer.id,
+        sponsorName: offer.sponsorName,
+        strategy: offer.strategy,
+        weeklyPayment: offer.weeklyPayment
+      });
       continue;
     }
     if (command.type === "SET_GAME_PLAN") {
@@ -2785,12 +2849,40 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
     const attendance = playedAtHome ? gate.attendance : 0;
     const ticketRevenue = playedAtHome ? gate.ticketRevenue : 0;
     const concessionRevenue = playedAtHome ? gate.concessionRevenue : 0;
-    const revenue = program.weeklyRevenue + ticketRevenue + concessionRevenue;
+    const sponsor = activeSponsorship(state, program.id);
+    const sponsorPayment = sponsorshipPayment(
+      sponsor,
+      result,
+      playedAtHome,
+      attendance,
+      capacity,
+      opponentRank
+    );
+    if (sponsor && sponsorPayment.total > 0) {
+      events.push({
+        type: "SPONSORSHIP_PAYMENT",
+        season: state.season,
+        week: state.week,
+        programId: program.id,
+        sponsorName: sponsor.sponsorName,
+        ...sponsorPayment
+      });
+    }
+    const revenue = program.weeklyRevenue + ticketRevenue + concessionRevenue + sponsorPayment.total;
     const staffPayroll = Object.values(state.staff).filter((staff) => staff.programId === program.id).reduce((sum, staff) => sum + staff.salary / 52, 0);
     const expenses = Math.round(program.weeklyExpenses + staffPayroll + (playedAtHome ? program.advertisingSpend : 0));
     const net = Math.round(revenue - expenses);
     program.budget += net;
-    events.push({ type: "WEEKLY_FINANCES", season: state.season, week: state.week, programId: program.id, revenue: Math.round(revenue), expenses, net });
+    events.push({
+      type: "WEEKLY_FINANCES",
+      season: state.season,
+      week: state.week,
+      programId: program.id,
+      revenue: Math.round(revenue),
+      sponsorshipRevenue: sponsorPayment.total,
+      expenses,
+      net
+    });
     events.push({
       type: "WEEKLY_RECAP",
       season: state.season,
@@ -2818,6 +2910,7 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
       advertisingFans,
       ticketRevenue,
       concessionRevenue,
+      sponsorshipRevenue: sponsorPayment.total,
       localPressChange,
       nationalPressChange,
       guaranteePaid: game?.guaranteePaid ?? 0,
@@ -3272,4 +3365,5 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
     recruiting.points = recruiting.weeklyPoints;
   }
   buildSeasonSchedule(state);
+  refreshSponsorshipOffers(state);
 }
