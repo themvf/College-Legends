@@ -191,7 +191,7 @@ const DEFENSIVE_DEMANDS: Readonly<Record<DefensiveIdentity, readonly SchemeDeman
 function groupStrength(roster: readonly Player[], demand: SchemeDemand): number | null {
   const room = roster
     .filter((player) => player.position === demand.position)
-    .map((player) => demand.rating === "overall" ? player.overall : player.ratings[demand.rating])
+    .map((player) => demand.rating === "overall" ? player.overall : player.ratings[demand.rating] ?? player.overall)
     .sort((left, right) => right - left)
     .slice(0, demand.count);
   if (room.length === 0) return null;

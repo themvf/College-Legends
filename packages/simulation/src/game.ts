@@ -19,6 +19,7 @@ import type {
   TeamUnitRatings
 } from "@college-legends/model";
 import { AddressableRng } from "./rng.js";
+import { ratingByRole } from "./attributes.js";
 
 const clamp = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value));
 
@@ -202,18 +203,26 @@ export function unitRatingsFromLineup(
   const linebackers = byPosition(lineup, "LB");
   const backfield = byPosition(lineup, "DB");
 
-  const runBlocking = average(linemen, (player) => tired(player) + (player.ratings.strength - player.overall) * 0.5, 55, shares);
-  const passBlocking = average(linemen, (player) => tired(player) + (player.ratings.technique - player.overall) * 0.5, 55, shares);
-  const passer = average(quarterbacks, (player) => tired(player) + (player.ratings.armStrength + player.ratings.technique - player.overall * 2) * 0.35, 52, shares);
-  const runners = average(backs, (player) => tired(player) + (player.ratings.strength - player.overall) * 0.3, 52, shares);
-  const catchers = average([...receivers, ...tightEnds], tired, 52, shares);
-  const frontSeven = average(defensiveLine, (player) => tired(player) + (player.ratings.strength - player.overall) * 0.4, 52, shares);
-  const passRush = average(defensiveLine, (player) => tired(player) + (player.ratings.technique - player.overall) * 0.4, 52, shares);
-  const secondLevel = average(linebackers, tired, 52, shares);
-  const coverage = average(backfield, (player) => tired(player) + (player.ratings.technique - player.overall) * 0.35, 52, shares);
+  // Each term reads the attribute that actually produces it, by role, so the
+  // engine stays generic while a lineman contributes Run blocking and a
+  // quarterback contributes Accuracy.
+  const role = (player: Player, name: Parameters<typeof ratingByRole>[2]): number =>
+    ratingByRole(player.position, player.ratings, name);
+
+  const runBlocking = average(linemen, (player) => tired(player) + (role(player, "SECONDARY") - player.overall) * 0.5, 55, shares);
+  const passBlocking = average(linemen, (player) => tired(player) + (role(player, "PRIMARY") - player.overall) * 0.5, 55, shares);
+  const passer = average(quarterbacks, (player) =>
+    tired(player) + (role(player, "PRIMARY") + role(player, "SECONDARY") - player.overall * 2) * 0.35, 52, shares);
+  const runners = average(backs, (player) => tired(player) + (role(player, "POWER") - player.overall) * 0.3, 52, shares);
+  const catchers = average([...receivers, ...tightEnds], (player) =>
+    tired(player) + (role(player, "PRIMARY") - player.overall) * 0.25, 52, shares);
+  const frontSeven = average(defensiveLine, (player) => tired(player) + (role(player, "SECONDARY") - player.overall) * 0.4, 52, shares);
+  const passRush = average(defensiveLine, (player) => tired(player) + (role(player, "PRIMARY") - player.overall) * 0.4, 52, shares);
+  const secondLevel = average(linebackers, (player) => tired(player) + (role(player, "PRIMARY") - player.overall) * 0.25, 52, shares);
+  const coverage = average(backfield, (player) => tired(player) + (role(player, "PRIMARY") - player.overall) * 0.35, 52, shares);
 
   return {
-    rushOffense: runBlocking * 0.45 + runners * 0.37 + average(tightEnds, tired, 52, shares) * 0.1 + average(quarterbacks, (player) => player.ratings.conditioning, 52, shares) * 0.08 + prepBonus,
+    rushOffense: runBlocking * 0.45 + runners * 0.37 + average(tightEnds, tired, 52, shares) * 0.1 + average(quarterbacks, (player) => ratingByRole("QB", player.ratings, "SPEED"), 52, shares) * 0.08 + prepBonus,
     passOffense: passer * 0.44 + catchers * 0.32 + passBlocking * 0.24 + prepBonus,
     rushDefense: frontSeven * 0.46 + secondLevel * 0.39 + coverage * 0.15 + prepBonus,
     passDefense: coverage * 0.48 + passRush * 0.28 + secondLevel * 0.24 + prepBonus
@@ -692,7 +701,7 @@ function resolvePlay(
     if (receiver) offense.lines.get(receiver.id)!.targets += 1;
     const defender = pickWeighted(
       defense.secondary,
-      defense.secondary.map((player) => Math.max(1, player.ratings.technique - 50)),
+      defense.secondary.map((player) => Math.max(1, ratingByRole(player.position, player.ratings, "PRIMARY") - 50)),
       rng.at(`${key}:interceptor`)
     );
     if (defender) {

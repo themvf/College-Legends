@@ -1,4 +1,5 @@
 import type { GamePlan, GameState, Player, Program } from "@college-legends/model";
+import { ratingByRole } from "./attributes.js";
 
 const clamp = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value));
 
@@ -176,7 +177,7 @@ export function developmentCandidates(state: Readonly<GameState>, programId: str
       (right.potential - right.overall) - (left.potential - left.overall) || left.id.localeCompare(right.id));
   const stars = [...roster].sort((left, right) => right.stardom - left.stardom || left.id.localeCompare(right.id));
   const atRisk = [...roster].sort((left, right) =>
-    (right.fatigue - right.ratings.injuryPrevention * 0.4) - (left.fatigue - left.ratings.injuryPrevention * 0.4)
+    (right.fatigue - ratingByRole(right.position, right.ratings, "DURABILITY") * 0.4) - (left.fatigue - ratingByRole(left.position, left.ratings, "DURABILITY") * 0.4)
     || left.id.localeCompare(right.id));
 
   return [
@@ -188,7 +189,7 @@ export function developmentCandidates(state: Readonly<GameState>, programId: str
       (player) => `${player.stardom} stardom and ${player.personalFans.toLocaleString()} personal followers — the brand the gate is built on.`),
     pick(atRisk, "AT_RISK",
       (player) => "Closest to breaking down",
-      (player) => `${Math.round(player.fatigue)} fatigue against ${Math.round(player.ratings.injuryPrevention)} durability. Conditioning work protects him.`)
+      (player) => `${Math.round(player.fatigue)} fatigue against ${Math.round(ratingByRole(player.position, player.ratings, "DURABILITY"))} durability. Conditioning work protects him.`)
   ].filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null);
 }
 

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
+import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, computeOverall, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -413,7 +413,7 @@ test("the season crowns six division champions, resolves a 12-team playoff, and 
   assert.equal(state.staff[coachAward.winner.staffId].role, "HEAD_COACH");
 });
 
-test("training choices create distinct permanent attributes and injury-prevention payoffs", () => {
+test("a development week permanently raises the position's attributes and Overall", () => {
   const strengthState = activeLeague("training-payoffs", 4);
   const conditioningState = structuredClone(strengthState);
   const player = Object.values(strengthState.players).find((candidate) => candidate.programId === "program-1" && candidate.position === "QB");
@@ -421,10 +421,28 @@ test("training choices create distinct permanent attributes and injury-preventio
   const before = structuredClone(player.ratings);
   const strength = advanceWeek(strengthState, [{ type: "SET_DEVELOPMENT_SPOTLIGHT", programId: "program-1", target: { type: "PLAYER", playerId: player.id }, focus: "STRENGTH" }]);
   const conditioning = advanceWeek(conditioningState, [{ type: "SET_DEVELOPMENT_SPOTLIGHT", programId: "program-1", target: { type: "PLAYER", playerId: player.id }, focus: "CONDITIONING" }]);
-  assert.ok(strength.state.players[player.id].ratings.armStrength > before.armStrength);
-  assert.ok(strength.state.players[player.id].ratings.strength > conditioning.state.players[player.id].ratings.strength);
-  assert.ok(conditioning.state.players[player.id].ratings.injuryPrevention > strength.state.players[player.id].ratings.injuryPrevention);
-  assert.ok(conditioning.state.players[player.id].fatigue < strength.state.players[player.id].fatigue);
+  assert.ok(
+    computeOverall(player.position, strength.state.players[player.id].ratings)
+      >= computeOverall(player.position, before)
+  );
+  // Overall is derived now, so growth has to land on the attributes and Overall
+  // has to follow. This is the invariant the old model broke: it moved five
+  // sub-ratings and grew `overall` from a separate formula, linked only by a
+  // fudge factor, so the choice barely touched the number the player watches.
+  const grown = strength.state.players[player.id];
+  assert.equal(
+    Number(grown.overall.toFixed(2)),
+    Number(computeOverall(grown.position, grown.ratings).toFixed(2)),
+    "stored Overall must equal the Overall its own attributes imply"
+  );
+  assert.ok(grown.overall > player.overall, "a development week must move Overall");
+  for (const key of Object.keys(before)) {
+    assert.ok(grown.ratings[key] >= before[key], `${key} must never fall from a development week`);
+  }
+  assert.ok(grown.overall <= grown.potential, "Overall may never pass potential");
+  // Choosing *which* attribute to develop is the next slice; today the week's
+  // work spreads across the position's five, so the focus value is inert.
+  assert.ok(conditioning.state.players[player.id].fatigue <= strength.state.players[player.id].fatigue);
 });
 
 test("one weekly development spotlight supports a full-intensity player or diluted position room", () => {
@@ -433,7 +451,7 @@ test("one weekly development spotlight supports a full-intensity player or dilut
   const quarterbacks = Object.values(individualState.players).filter((player) => player.programId === "program-1" && player.position === "QB");
   const target = quarterbacks[0];
   assert.ok(target && quarterbacks.length > 1);
-  const before = target.ratings.technique;
+  const before = target.overall;
   const individual = advanceWeek(individualState, [{
     type: "SET_DEVELOPMENT_SPOTLIGHT",
     programId: "program-1",
@@ -446,10 +464,17 @@ test("one weekly development spotlight supports a full-intensity player or dilut
     target: { type: "POSITION", position: "QB" },
     focus: "TECHNIQUE"
   }]);
-  const individualGain = individual.state.players[target.id].ratings.technique - before;
-  const groupGain = group.state.players[target.id].ratings.technique - before;
-  assert.ok(individualGain > groupGain);
-  assert.ok(group.state.players[quarterbacks[1].id].ratings.technique > quarterbacks[1].ratings.technique);
+  // Overall is what the spotlight has to move, because Overall is the number the
+  // player watches. It used to grow on its own formula while the spotlight moved
+  // only sub-ratings, so concentrating a week on one man changed nothing visible.
+  const individualGain = individual.state.players[target.id].overall - before;
+  const groupGain = group.state.players[target.id].overall - before;
+  assert.ok(
+    individualGain > groupGain,
+    `a full-intensity spotlight must beat a diluted room (${individualGain.toFixed(3)} vs ${groupGain.toFixed(3)})`
+  );
+  // And the room option still lifts everybody in it, just by less each.
+  assert.ok(group.state.players[quarterbacks[1].id].overall > quarterbacks[1].overall);
   const spotlight = group.events.find((event) => event.type === "DEVELOPMENT_SPOTLIGHT_SET");
   assert.ok(spotlight);
   assert.equal(spotlight.intensity, 0.28);

@@ -1,6 +1,7 @@
 import type { AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffFocus, StaffMember, StaffRole, OpponentDossier } from "@college-legends/model";
 import { FICTIONAL_PROGRAMS, fictionalPersonName, PROGRAM_CHARACTERS } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
+import { attributeByRole, attributesFor, computeOverall, ratingByRole, type AttributeDefinition } from "./attributes.js";
 import { weeklyBriefing as buildBriefing, type BriefingItem } from "./briefing.js";
 import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES, bestSchemeFor, programRoster, coachSchemeFit, schemePersonnel } from "./scheme.js";
 import { DEFENSIVE_SPOTS, MINIMUM_SNAP_SHARE, OFFENSIVE_SPOTS, personnelLabel, schemeSpots, snapShares, spotsForRoom } from "./rotation.js";
@@ -118,6 +119,16 @@ export {
   snapShares,
   spotsForRoom
 } from "./rotation.js";
+export {
+  ATTRIBUTE_KEYS,
+  attributeByRole,
+  attributesFor,
+  computeOverall,
+  overallPerPoint,
+  POSITION_ATTRIBUTES,
+  ratingByRole
+} from "./attributes.js";
+export type { AttributeDefinition, AttributeRole } from "./attributes.js";
 export { scheduleAhead, seasonExpectation } from "./briefing.js";
 export { boxScore, latestBoxScore } from "./boxscore.js";
 export type { BoxScore, BoxScoreGroup, BoxScoreRow, BoxScoreTeam, BoxScoreTeamStat } from "./boxscore.js";
@@ -339,12 +350,16 @@ export function prospectScoutingReport(state: Readonly<GameState>, programId: st
     return `${clamp(center - Math.ceil(width / 2), 40, 99)}–${clamp(center + Math.floor(width / 2), 40, 99)}`;
   };
   const grade = (value: number): string => value >= 0.82 ? "A" : value >= 0.68 ? "B" : value >= 0.5 ? "C" : value >= 0.34 ? "D" : "F";
-  const athletic = evaluations.has("ATHLETIC")
-    ? `STR ${estimate(prospect.ratings.strength, "strength")} · CON ${estimate(prospect.ratings.conditioning, "conditioning")}`
-    : "Unknown";
-  const positionSkill = evaluations.has("POSITION")
-    ? `TEC ${estimate(prospect.ratings.technique, "technique")}${prospect.position === "QB" ? ` · ARM ${estimate(prospect.ratings.armStrength, "arm")}` : ""}`
-    : "Unknown";
+  // Named for the position, so a quarterback's card talks about accuracy and a
+  // lineman's about pass blocking.
+  const attribute = (role: Parameters<typeof attributeByRole>[1]): AttributeDefinition =>
+    attributeByRole(prospect.position, role);
+  const band = (role: Parameters<typeof attributeByRole>[1]): string => {
+    const definition = attribute(role);
+    return `${definition.label} ${estimate(prospect.ratings[definition.key] ?? 50, definition.key)}`;
+  };
+  const athletic = evaluations.has("ATHLETIC") ? `${band("POWER")} · ${band("SPEED")}` : "Unknown";
+  const positionSkill = evaluations.has("POSITION") ? `${band("PRIMARY")} · ${band("SECONDARY")}` : "Unknown";
   const competition = Object.entries(state.recruiting)
     .map(([candidateProgramId, recruiting]) => ({
       programId: candidateProgramId,
@@ -361,7 +376,7 @@ export function prospectScoutingReport(state: Readonly<GameState>, programId: st
     positionSkill,
     character: evaluations.has("CHARACTER") ? `Work ethic ${grade(prospect.workEthic)}` : "Unknown",
     medical: evaluations.has("MEDICAL")
-      ? prospect.ratings.injuryPrevention >= 78 ? "Low injury concern" : prospect.ratings.injuryPrevention >= 62 ? "Average medical profile" : "Elevated injury concern"
+      ? ratingByRole(prospect.position, prospect.ratings, "DURABILITY") >= 78 ? "Low injury concern" : ratingByRole(prospect.position, prospect.ratings, "DURABILITY") >= 62 ? "Average medical profile" : "Elevated injury concern"
       : "Unknown",
     priorities: evaluations.has("CHARACTER") ? prospect.priorities : [],
     fitScore: evaluations.has("CHARACTER") ? Math.round(prospectProgramFit(state, prospect, programId)) : null,
@@ -809,12 +824,14 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       // program builds two receivers plus tight ends.
       const starters = startersForRoom(state.programs[id]!.schemeIdentity, position);
       const overall = initialPlayerOverall(baseline, tier, position, roomOrdinal, starters, rosterShape, rng, playerId);
+      const playerRatings = createPlayerRatings(overall, position, rng, playerId);
+      const derivedOverall = computeOverall(position, playerRatings);
       state.players[playerId] = {
         id: playerId,
         name: nameFor(personOrdinal),
         programId: id,
         position,
-        overall,
+        overall: derivedOverall,
         // A struggling program has to be able to out-develop a rich one, so its
         // rosters carry more headroom — and a tail, so a rebuild can inherit a
         // genuine star nobody knew was there.
@@ -833,7 +850,11 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
         ),
         workEthic: rng.between(`${playerId}:work-ethic`, 0.2, 1),
         fatigue: 0,
-        ratings: createPlayerRatings(overall, position, rng, playerId),
+        // Overall is derived, so it is set from the attributes rather than being
+        // the number they were drawn around. The clamp at either end of an
+        // attribute can move the weighted average, and a stored Overall that
+        // disagrees with its own attributes is the exact defect this replaces.
+        ratings: playerRatings,
         injuryWeeksRemaining: 0,
         stardom: clamp(Math.round((overall - 55) * 1.15 + rng.between(`${playerId}:stardom`, -4, 4)), 5, 75),
         personalFans: Math.max(100, Math.round((overall - 50) ** 2 * (tier === "POWER" ? 12 : tier === "MID" ? 7 : 4) + rng.between(`${playerId}:fans`, 0, 750))),
@@ -895,16 +916,25 @@ function assignSchemeIdentity(rng: AddressableRng, programId: string): SchemeIde
   };
 }
 
+/**
+ * The five attributes this position actually has, spread around the target
+ * overall. The spread is what makes two players of the same calibre different
+ * footballers — one quarterback is accurate with a modest arm, another has the
+ * arm and forces throws.
+ *
+ * The draw is centred so `computeOverall` lands back on the target: the weighted
+ * offsets are subtracted out. Without that, generation and the derived Overall
+ * would disagree and every tier baseline would drift.
+ */
 function createPlayerRatings(overall: number, position: Position, rng: AddressableRng, path: string): PlayerRatings {
-  const rating = (name: PlayerRating, offset = 0): number =>
-    clamp(Number((overall + offset + rng.between(`${path}:${name}`, -4, 4)).toFixed(1)), 40, 99);
-  return {
-    technique: rating("technique"),
-    strength: rating("strength", ["OL", "DL", "LB", "RB"].includes(position) ? 2 : 0),
-    conditioning: rating("conditioning"),
-    injuryPrevention: rating("injuryPrevention"),
-    armStrength: rating("armStrength", position === "QB" ? 3 : -3)
-  };
+  const group = attributesFor(position);
+  const offsets = group.map((attribute) => rng.between(`${path}:${attribute.key}`, -7, 7));
+  const centre = group.reduce((total, attribute, index) => total + offsets[index]! * attribute.weight, 0);
+  const ratings: PlayerRatings = {};
+  for (const [index, attribute] of group.entries()) {
+    ratings[attribute.key] = clamp(Number((overall + offsets[index]! - centre).toFixed(1)), 32, 99);
+  }
+  return ratings;
 }
 
 export function beginSeason(input: Readonly<GameState>, commands: readonly GameCommand[] = []): GameState {
@@ -1995,13 +2025,41 @@ function developPlayers(state: GameState, rng: AddressableRng, events: GameEvent
     const focus = projectedDevelopmentPayoff(state, player, player.developmentFocus, intensity);
     const ratingChanges: Partial<Record<PlayerRating, number>> = {};
     for (const [rating, actualChange] of Object.entries(focus.ratingChanges) as [PlayerRating, number][]) {
-      player.ratings[rating] = clamp(Number((player.ratings[rating] + actualChange).toFixed(2)), 40, 99);
+      player.ratings[rating] = clamp(Number(((player.ratings[rating] ?? 50) + actualChange).toFixed(2)), 32, 99);
       ratingChanges[rating] = actualChange;
     }
-    const directGrowthWeight = player.developmentFocus === "CONDITIONING" ? 0.72 : player.developmentFocus === "BALANCED" ? 0.9 : 1;
-    const gain = clamp((rules.base + player.workEthic * rules.workEthicWeight + rng.between(player.id, -0.01, 0.01)) * fatigueModifier * trainingModifier * coachingModifier * directGrowthWeight, 0, rules.maximum);
+    // Overall is not grown by its own formula any more — it *is* the attributes.
+    // The old code moved five sub-ratings and separately grew `overall`, linked
+    // only by a fudge factor, so what a player chose to develop barely moved the
+    // number he cared about. Now the week's work lands on attributes and Overall
+    // follows by definition.
+    // Intensity is what the development spotlight buys, so it has to reach the
+    // number the player watches. Before, it moved only the sub-ratings while
+    // `overall` grew on its own — so concentrating a week on one man did nothing
+    // visible. Now that Overall *is* the attributes, intensity scales the growth.
+    const gain = clamp(
+      (rules.base + player.workEthic * rules.workEthicWeight + rng.between(player.id, -0.01, 0.01))
+        * fatigueModifier * trainingModifier * coachingModifier * Math.max(0.25, intensity),
+      0,
+      rules.maximum * 2.5
+    );
     const previousOverall = player.overall;
-    player.overall = clamp(Number((player.overall + gain).toFixed(3)), 40, player.potential);
+    const headroom = Math.max(0, player.potential - previousOverall);
+    if (headroom > 0) {
+      // Spread the week's growth across the position's attributes in proportion
+      // to what the focus asked for, then let Overall fall out of them.
+      const group = attributesFor(player.position);
+      // Weights sum to one, so adding the same amount to every attribute moves
+      // Overall by exactly that amount. Dividing by the group size would make
+      // Overall grow five times slower than the gain says it does.
+      const share = Math.min(gain, headroom);
+      for (const attribute of group) {
+        player.ratings[attribute.key] = clamp(
+          Number(((player.ratings[attribute.key] ?? 50) + share).toFixed(3)), 32, 99
+        );
+      }
+    }
+    player.overall = clamp(computeOverall(player.position, player.ratings), 32, player.potential);
     player.fatigue = clamp(Number((player.fatigue + focus.fatigueChange).toFixed(1)), 0, 100);
     if (player.overall !== previousOverall) events.push({ type: "PLAYER_DEVELOPED", season: state.season, week: state.week, playerId: player.id, previousOverall, newOverall: player.overall, factors: { workEthic: player.workEthic, fatigueModifier, focus: player.developmentFocus, ratingChanges } });
   }
@@ -2235,7 +2293,7 @@ function processInjuries(state: GameState, rng: AddressableRng, events: GameEven
   const activePlayerIds = new Set([...activePrograms].flatMap((programId) => activeLineup(state, programId).map((player) => player.id)));
   for (const player of Object.values(state.players)) {
     if (!player.programId || !activePlayerIds.has(player.id) || player.eligibility.rosterStatus !== "SCHOLARSHIP" || player.injuryWeeksRemaining > 0) continue;
-    const preventionModifier = clamp(1 - (player.ratings.injuryPrevention - 50) / 160, 0.55, 1.15);
+    const preventionModifier = clamp(1 - (ratingByRole(player.position, player.ratings, "DURABILITY") - 50) / 160, 0.55, 1.15);
     const fatigueModifier = 1 + player.fatigue / 80;
     const strengthTrainingModifier = player.developmentFocus === "STRENGTH" ? 1.2 : 1;
     const strengthCoach = programStrengthCoachBenefits(state, player.programId);

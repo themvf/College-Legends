@@ -40,7 +40,8 @@ export type FacilityType = "TRAINING" | "STADIUM" | "ACADEMICS" | "RECRUITING" |
  */
 export type ProgramCharacter = "BLUEBLOOD" | "DIEHARD" | "FRONTRUNNER" | "TALENT_MAGNET" | "DEVELOPER";
 export type DivisionId = "ATLANTIC" | "GREAT_LAKES" | "HEARTLAND" | "GULF" | "MOUNTAIN" | "PACIFIC";
-export type PlayerRating = "technique" | "strength" | "conditioning" | "injuryPrevention" | "armStrength";
+/** An attribute key. Which keys a player has depends on his position. */
+export type PlayerRating = string;
 export type PlayerMediaAction = "FOOTBALL_FOCUS" | "MEDIA_DAY" | "SOCIAL_MEDIA" | "COMMUNITY_APPEARANCE";
 export type RecruitingEvaluation = "BASIC" | "ATHLETIC" | "POSITION" | "CHARACTER" | "MEDICAL" | "PROJECTION";
 export type RecruitingSearchType = "LOCAL_REGION" | "POSITION" | "SLEEPERS" | "NATIONAL_SHOWCASE";
@@ -76,14 +77,17 @@ export type RecruitPriority =
   | "CLOSE_TO_HOME"
   | "PERSONAL_STARDOM";
 
-export interface PlayerRatings {
-  technique: number;
-  strength: number;
-  conditioning: number;
-  injuryPrevention: number;
-  /** Arm strength affects quarterbacks directly and represents throwing/power skill for other positions. */
-  armStrength: number;
-}
+/**
+ * Five attributes, named for the position that has them — a quarterback carries
+ * Accuracy and Arm talent, a lineman carries Pass blocking and Run blocking.
+ * Storage is still five numbers; only the meaning is positional, which is what
+ * keeps this free against a save file that is already an iOS blocker.
+ *
+ * Keyed rather than fixed-field because the keys differ by position. The set for
+ * any position is `POSITION_ATTRIBUTES` in the simulation package, and `overall`
+ * is derived from these rather than stored.
+ */
+export type PlayerRatings = Record<string, number>;
 
 export interface Eligibility {
   cohortYear: number;
