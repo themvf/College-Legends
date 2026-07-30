@@ -1248,6 +1248,219 @@ Two assertions that must hold or the whole thing has failed:
   different Air Raid fit and different production.
 - A strong system advantage never exceeds half a full tactical counter.
 
+## The player model: five attributes per position, and Overall is derived
+
+This supersedes the "derived traits" item in the MVP cut. The direction changed
+after a playtest: rather than deriving named traits from five *universal*
+ratings, each position gets its own five, and **Overall stops being stored**.
+
+### Overall is a weighted average, not a number that grows on its own
+
+The defect this fixes: `developPlayers` moved the five sub-ratings by ~0.2 each
+*and separately* grew `overall` from its own formula
+(`base + workEthic x weight + noise`, scaled by fatigue and facilities). The only
+link between the two was one fudge factor — `directGrowthWeight`, 0.72 for
+conditioning, 0.9 for balanced, 1.0 otherwise. So **what you chose to develop had
+almost no effect on Overall**, which is exactly why the development screen felt
+inert.
+
+`overall` becomes a pure function of the five attributes and the position's
+weights. Then "development improves Overall" is true by construction, and the
+screen can post an honest number:
+
+```
+8 hours on Accuracy → +2.4 Accuracy → +0.7 Overall
+```
+
+`potential` becomes a ceiling per attribute rather than a ceiling on one scalar.
+
+### Five per position, named in football
+
+Storage is unchanged — five numbers per player, as today. Only the *meaning* is
+position-specific, so this costs nothing against a save file that is already an
+iOS blocker.
+
+| QB | weight |
+|---|---|
+| Accuracy | 0.30 |
+| Decision making | 0.28 |
+| Arm talent | 0.18 |
+| Mobility | 0.14 |
+| Durability | 0.10 |
+
+Every position gets its own table: a lineman is Pass Block / Run Block / Strength
+/ Agility / Durability, a receiver is Route Running / Hands / Separation / Speed /
+Durability.
+
+**Scheme fit falls out of this for free**, which was going to be the most
+expensive part of the fit work. Overall is fixed, but *which attributes matter on
+Saturday* depends on the scheme: an Air Raid leans on Accuracy and Decision
+making, a Triple Option on Mobility, a Power Run barely cares about the
+quarterback at all. So a 78 Overall quarterback is a good Air Raid starter and a
+poor option quarterback without any separate fit formula.
+
+Attributes are shown on the **depth chart**, because that is the screen where you
+decide who plays.
+
+Position changes are not supported. College rosters in a management sim do not
+need them, and Option A has no other loose ends.
+
+## The weekly loop: one pool, one screen
+
+The complaint that produced this: "why wouldn't every player just increase reps
+to the maximum every game? We need the total pool built."
+
+Correct, and the reason is structural. Practice hours come from `PREPARE`
+allocation only, so they can *only* buy practice — and hours do not bank. So
+spending all of them is always right, and the only decision left is the split.
+Worse, the allocation itself happens on a different screen (Staff, ~20 sliders),
+so the four jobs never visibly compete.
+
+**One screen, one pool, four ways to spend it:**
+
+```
+Your staff has 34 hours this week · 0 unassigned
+
+Practice — offense        8 hrs → 60–83% installed
+Practice — defense        4 hrs → 47–66% installed
+Scout Lake Erie (wk 6)   10 hrs → +2.1 to every unit that game
+Develop Hernandez (Pass Block)  8 hrs → +2.4 Pass Block, +0.8 Overall
+Recruiting                4 hrs → +12 on the trail
+```
+
+Now maxing practice *means* not scouting and not developing, and it is visible in
+one place. That is the answer to "why not max reps": because those hours were
+building your left tackle.
+
+### The weekly tactical call is cut on both sides
+
+`runPassBalance`, `backfieldUsage`, `targetDistribution`, `tempo`,
+`defensivePriority`, `defensivePosture` and `pressure` stop being weekly player
+choices and become fixed properties of the scheme. An Air Raid program is never
+offered "Ground and pound" again.
+
+**On the record, because this deletes an asset:** the emphasis matchup matrix is
+calibrated over 400 games a cell and a full counter is worth ~2.7 points of
+scoring — currently the single biggest way a weaker team beats a better one
+through decisions rather than talent. Allocating scouting hours is the replacement
+decision. If the weekly loop ends up feeling thin, the matrix is the thing to
+bring back, on defense only, informed by the file. **Keep the matrix code intact
+and unused rather than deleting it**, so restoring it is a config change.
+
+## Scouting is a collaboration, not a file
+
+`scoutingReadiness` currently returns one flat number for all four units. It
+becomes four, and **you choose the split**. Each part of the opponent you study
+improves one specific thing for your own team:
+
+| you study | you get better at |
+|---|---|
+| their pass defense | passing — completion %, quarterback yardage |
+| their run defense | running — yards per carry, short yardage |
+| their passing offense | pass defense — completions allowed, sacks |
+| their running offense | run defense — yards allowed |
+
+So 60% of your hours on their pass defense reads as *"+8% quarterback yardage
+against Lake Erie."*
+
+Three reasons this is better than a flat bonus:
+
+- It is an allocation with a **shape**, not just an amount.
+- **It reinforces identity instead of fighting it.** An Air Raid program naturally
+  studies the pass defense standing in front of what it already does. The player
+  is never asked to become a different offense.
+- There is a real judgment call: their pass defense is elite and their run defense
+  is soft — do you spend to crack the strength, or not bother because you are
+  already winning there?
+
+**Scouting only ever boosts your own team.** Never "we made them worse" — same
+arithmetic, much easier to read, and it keeps the payoff on the side the player
+controls. Diminishing returns inside each bucket, so dumping everything into one
+is not four times as good.
+
+## Recruiting: an offer, a price, and a percentage
+
+Recruiting currently asks the player to hold four search types, six evaluation
+types, pursuit points, recruiting points and a hype-versus-potential distinction —
+and all of it pays off a year later, so it never lands.
+
+It becomes one row per recruit:
+
+```
+Marcus Webb · QB · Overall 71–79
+Natural Air Raid arm. Real questions about his decisions.
+Wants ~$2.4M · you're 2 prestige short → $4.1M · 34% to sign
+```
+
+### Money substitutes for prestige, and that fixes the economy
+
+This is bigger than recruiting. Finding 3 — money has faucets and no drains, and
+programs net $34.9M a season by 2032 with nothing to spend it on — is closed by
+making recruiting **the** money sink. And it is the right kind of sink: money buys
+*access to players*, who still have to be developed and coached. It never buys a
+win directly.
+
+It is also the anti-frustration valve. A low-prestige program can outbid a
+blueblood for a player the blueblood would have signed cheaply.
+
+His price scales with the gap between what he expects and what you are, as a
+**curve rather than authored tiers**, so every program sees a sensible number and
+being above his standard earns a discount. Prices are set as a fraction of tier
+revenue rather than as authored dollar figures — LOW opens with a $1.5M budget
+against POWER's $20M, so a $5M quarterback is a third of a powerhouse's annual
+revenue and triple a low-tier program's entire opening budget. That asymmetry is
+correct; the numbers only work once anchored to what a program actually earns.
+
+### Criteria are eligibility; the percentage is odds
+
+If matching the criteria guaranteed the signature, recruiting would be a
+checklist — *can I afford him, yes or no* — with no tension. Criteria decide
+whether you may **bid**; the percentage is your odds **given everyone else
+bidding**, or it is a lie. Offers resolve together, so nobody wins by clicking
+first — the order-independent market invariant already requires this.
+
+### Money alone would flatten it
+
+If only cash and prestige mattered, recruiting is "who is richer" and program
+character stops meaning anything. His asking price also comes down for things the
+player controls that are not money, all of which already exist in the engine:
+
+- **playing time** — is the room thin, or is there a returning starter?
+- **scheme fit** — an Air Raid arm wants an Air Raid
+- **home state** — `homeRegionBias`
+- **a Closer head coach** — the trait already exists
+
+### What scouting a recruit buys
+
+Narrowing an attribute range is only information, which is the same defect just
+fixed on the game-plan side. So scouting a recruit also **reveals what he wants**
+— unscouted, you do not know his asking price or his criteria, so you cannot make
+a sensible offer at all. The first points are the ones that matter.
+
+And the range must be able to **move, not merely narrow**. If it always converges
+symmetrically on the truth there are no busts and no gems. It is built on the
+existing `hype`-versus-`potential` decoupling rather than a fresh mechanism, so
+scouting more can reveal that he is worse than the consensus believed.
+
+Screen space: the **Overall range is the headline** on the list, the five
+attribute ranges live on the detail card only, and the percentage moves live as
+the money slider moves — that is the part that is actually fun.
+
+Settled: offers resolve **immediately** rather than at a signing day, because the
+offseason phase does not exist yet. Money is **per year and charged weekly**,
+which is what finally creates insolvency pressure.
+
+## Build order
+
+Each step is playable and each depends on the one before it.
+
+1. **Five position attributes, Overall derived.** Everything else needs it.
+2. **The one combined week screen** with the shared pool. Cuts the weekly
+   tactical call as a side effect.
+3. **Scouting as a four-way split** paying in named football outcomes.
+4. **Development popup**, wired so the box score reflects the attribute that grew.
+5. **Recruiting** — offer, price, percentage, ranges.
+
 ## Suggested order of work
 
 1. ~~RNG finalizer plus a distribution test~~ — done.
