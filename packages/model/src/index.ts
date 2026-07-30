@@ -272,7 +272,7 @@ export interface StaffCandidate {
 
 /** Why a weekly decision is worth revisiting. Absent when nothing has changed. */
 export interface DecisionAlert {
-  id: "TICKET_PRICE" | "ADVERTISING" | "DEVELOPMENT" | "OFFENSE" | "DEFENSE";
+  id: "TICKET_PRICE" | "ADVERTISING" | "DEVELOPMENT" | "SCOUTING";
   label: string;
   current: string;
   detail: string;

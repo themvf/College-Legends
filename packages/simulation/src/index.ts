@@ -14,6 +14,7 @@ import {
   emptyAllocation,
   distributeWeekHours,
   focusShare,
+  readinessNote,
   focusWeight,
   pickStaffTrait,
   weekAllocation,
@@ -2194,36 +2195,22 @@ export function weeklyDecisions(state: Readonly<GameState>, programId: string): 
     attention: spotlight ? null : "Nobody is being developed this week."
   });
 
-  const counteredOffense = report.identity && (
-    (plan.runPassBalance === "RUN_HEAVY" && report.identity.defense === "FOUR_THREE_BASE")
-    || (plan.runPassBalance === "PASS_HEAVY" && report.identity.defense === "NICKEL_PRESSURE")
-  );
+  // The weekly offensive and defensive calls are gone: every emphasis axis is a
+  // property of the scheme, so a program never chooses to stop being itself. What
+  // remains a weekly decision is where the coaching hours go and what the file on
+  // this opponent is worth, which is the scouting board's job rather than a
+  // strategy dropdown.
+  const filePoints = opponent ? state.dossiers?.[programId]?.[opponent.id] ?? 0 : 0;
   decisions.push({
-    id: "OFFENSE",
-    label: "Offensive strategy",
-    current: matchingPreset(plan, OFFENSIVE_PRESETS)?.label ?? "Custom",
+    id: "SCOUTING",
+    label: "Scouting this opponent",
+    current: readinessNote(filePoints),
     detail: opponent
-      ? `Against ${opponent.name}${report.identity ? ` — a ${OFFENSIVE_IDENTITY_LABELS[report.identity.offense].toLowerCase()} programme` : ", unscouted"}.`
+      ? `${opponent.name}${report.identity ? ` — a ${OFFENSIVE_IDENTITY_LABELS[report.identity.offense].toLowerCase()} programme` : ", unscouted"}.`
       : "No opponent scheduled.",
     attention: !opponent ? null
-      : counteredOffense ? "Their defensive temperament is built to take away what you are calling."
-        : report.identity === null ? "You have not scouted them, so this is a guess."
-          : null
-  });
-
-  decisions.push({
-    id: "DEFENSE",
-    label: "Defensive strategy",
-    current: matchingPreset(plan, DEFENSIVE_PRESETS)?.label ?? "Custom",
-    detail: report.identity
-      ? `They run a ${OFFENSIVE_IDENTITY_LABELS[report.identity.offense].toLowerCase()} offense.`
-      : opponent ? "Their offensive identity is unscouted." : "No opponent scheduled.",
-    attention: !opponent ? null
-      : (report.identity?.offense === "POWER_RUN" || report.identity?.offense === "TRIPLE_OPTION") && plan.defensivePriority !== "STOP_THE_RUN"
-        ? "They are a running programme and you are not committed to stopping it."
-        : (report.identity?.offense === "AIR_RAID" || report.identity?.offense === "SPREAD_TEMPO") && plan.defensivePriority !== "STOP_THE_PASS"
-          ? "They throw it and you are not committed to stopping that."
-          : null
+      : filePoints <= 0 ? "Your guys go into this one cold. A file is worth about a home game."
+        : null
   });
 
   return decisions;

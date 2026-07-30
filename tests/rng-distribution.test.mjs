@@ -10,6 +10,9 @@ import {
   scoutingBoard,
   scoutingReport,
   staffCapacity,
+  schemeGamePlan,
+  OFFENSIVE_SCHEMES,
+  DEFENSIVE_SCHEMES,
   schemePersonnel,
   scoutingReadiness,
   FULL_FILE_READINESS,
@@ -35,13 +38,13 @@ import {
   MAXIMUM_WEEKLY_ADVERTISING,
   MINIMUM_TICKET_PRICE,
   MAXIMUM_REPS_PER_SIDE,
+  MAXIMUM_PRACTICE_HOURS,
   planExecution,
   staffCandidatesFor,
   staffModifiers,
   programRoster,
   rosterSchemeFit,
   schemeAffinity,
-  OFFENSIVE_SCHEMES,
   weeklyBriefing,
   seasonExpectation,
   planAlignment
@@ -343,31 +346,35 @@ test("game-plan calls beat their counter and lose to it", () => {
   );
 });
 
-test("a game plan is a standing instruction and is reported after the game", () => {
-  let state = beginSeason(createFictionalLeague("game-plan-persistence", 12));
+test("the game plan comes from the scheme and cannot be changed week to week", () => {
+  // The weekly tactical call is gone. An Air Raid program was being offered
+  // "Ground and pound" every week, which is precisely what `planAlignment`
+  // exists to discourage — a team is not a menu. Every emphasis axis is a
+  // property of the scheme now, so changing how you play means changing what you
+  // run, and that only happens between seasons.
+  let state = beginSeason(createFictionalLeague("game-plan-from-scheme", 12));
   const programId = "program-1";
+  const identity = state.programs[programId].schemeIdentity;
+  assert.deepEqual(state.gamePlans[programId], schemeGamePlan(identity),
+    "the standing plan must be exactly what the scheme runs");
+
   const result = advanceWeek(state, [
     { type: "SET_GAME_PLAN", programId, plan: { runPassBalance: "PASS_HEAVY", defensivePosture: "TAKEAWAY_HUNT" } }
   ]);
-  state = result.state;
-  assert.equal(state.gamePlans[programId].runPassBalance, "PASS_HEAVY");
-  assert.equal(state.gamePlans[programId].defensivePosture, "TAKEAWAY_HUNT");
-  assert.deepEqual(
-    result.events.find((event) => event.type === "GAME_PLAN_SET" && event.programId === programId)?.changed,
-    ["defensivePosture", "runPassBalance"]
-  );
+  const refused = result.events.find((event) =>
+    event.type === "COMMAND_REJECTED" && event.command?.type === "SET_GAME_PLAN" && event.programId === programId);
+  assert.ok(refused, "a weekly plan change must be refused, with a reason");
+  assert.match(refused.reason, /scheme/i);
+  assert.deepEqual(result.state.gamePlans[programId], schemeGamePlan(identity),
+    "and the plan must not have moved");
 
+  // The report still explains what the week's football produced — that is how the
+  // player learns, and it is independent of who chose the call.
   const report = result.events.find((event) => event.type === "GAME_PLAN_REPORT" && event.programId === programId);
   assert.ok(report, "the week should report what the plan produced");
-  assert.equal(report.plan.runPassBalance, "PASS_HEAVY");
   assert.equal(report.matchups.length, 4);
-  assert.ok(report.passPlays > report.runPlays, "a pass-heavy plan should throw more than it runs");
   assert.ok(report.notes.length > 0, "the report should explain what the calls were worth");
-
-  // Unchanged next week: a plan persists until the player changes it.
-  const next = advanceWeek(state);
-  assert.equal(next.state.gamePlans[programId].runPassBalance, "PASS_HEAVY");
-  assert.equal(next.events.some((event) => event.type === "GAME_PLAN_SET" && event.programId === programId), false);
+  assert.ok(report.runPlays + report.passPlays > 0);
 });
 
 test("rival programs have lasting, distinguishable identities", () => {
@@ -575,14 +582,17 @@ test("advertising is an investment in the fan base, not weekly arbitrage", () =>
   assert.ok(lots.net < none.net, "maximum spend should cost more this week than it returns at the gate");
 });
 
-test("the five weekly decisions persist and only flag what has gone stale", () => {
+test("the weekly decisions persist and only flag what has gone stale", () => {
   let state = beginSeason(createFictionalLeague("weekly-decisions", 24));
   const programId = "program-1";
 
   const opening = weeklyDecisions(state, programId);
+  // Offensive and defensive strategy are no longer weekly decisions — a program
+  // runs its scheme. What replaced them is the file on this week's opponent,
+  // which is a decision about where the coaching hours went.
   assert.deepEqual(
     opening.map((decision) => decision.id),
-    ["TICKET_PRICE", "ADVERTISING", "DEVELOPMENT", "OFFENSE", "DEFENSE"]
+    ["TICKET_PRICE", "ADVERTISING", "DEVELOPMENT", "SCOUTING"]
   );
   assert.ok(opening.every((decision) => decision.current.length > 0), "every decision must show its current value");
   assert.ok(
@@ -593,8 +603,7 @@ test("the five weekly decisions persist and only flag what has gone stale", () =
   // Settings carry over rather than being re-entered every week.
   const result = advanceWeek(state, [
     { type: "SET_TICKET_PRICE", programId, price: 37 },
-    { type: "SET_ADVERTISING", programId, spend: 20_000 },
-    { type: "SET_GAME_PLAN", programId, plan: OFFENSIVE_PRESETS[0].plan }
+    { type: "SET_ADVERTISING", programId, spend: 20_000 }
   ]);
   state = result.state;
   assert.equal(state.programs[programId].ticketPrice, 37);
@@ -603,7 +612,8 @@ test("the five weekly decisions persist and only flag what has gone stale", () =
   const next = weeklyDecisions(state, programId);
   assert.equal(next.find((decision) => decision.id === "TICKET_PRICE").current, "$37");
   assert.equal(next.find((decision) => decision.id === "ADVERTISING").current, "$20,000/wk");
-  assert.equal(next.find((decision) => decision.id === "OFFENSE").current, OFFENSIVE_PRESETS[0].label);
+  // Scouting reports what the file on this opponent is worth, in points.
+  assert.ok(next.find((decision) => decision.id === "SCOUTING").current.length > 0);
 
   const afterAnotherWeek = advanceWeek(state).state;
   assert.equal(afterAnotherWeek.programs[programId].ticketPrice, 37, "price must not reset each week");
@@ -619,21 +629,44 @@ test("development offers three distinct players for three distinct reasons", () 
   assert.ok(candidates.every((candidate) => candidate.headline && candidate.detail), "each candidate must explain itself");
 });
 
-test("strategy presets round-trip through the game plan", () => {
-  let state = beginSeason(createFictionalLeague("strategy-presets", 12));
-  const programId = "program-1";
-  for (const preset of [...OFFENSIVE_PRESETS, ...DEFENSIVE_PRESETS]) {
-    const applied = advanceWeek(state, [{ type: "SET_GAME_PLAN", programId, plan: preset.plan }]).state;
-    const plan = applied.gamePlans[programId];
-    for (const [axis, value] of Object.entries(preset.plan)) {
-      assert.equal(plan[axis], value, `${preset.label} did not set ${axis}`);
+test("every scheme runs a plan with a name, and no two schemes read alike", () => {
+  // Strategy presets were a weekly menu; they are gone. What has to hold now is
+  // that each *scheme* produces a coherent, nameable plan — and that the schemes
+  // actually differ, or the personnel groupings are the only thing separating an
+  // Air Raid from a power-running program.
+  const plans = new Map();
+  for (const offense of OFFENSIVE_SCHEMES) {
+    for (const defense of DEFENSIVE_SCHEMES) {
+      const plan = schemeGamePlan({ offense, defense });
+      for (const axis of ["runPassBalance", "backfieldUsage", "targetDistribution", "tempo",
+        "defensivePriority", "defensivePosture", "pressure"]) {
+        assert.ok(plan[axis], `${offense}/${defense} left ${axis} unset`);
+      }
+      plans.set(`${offense}/${defense}`, plan);
     }
-    const presets = OFFENSIVE_PRESETS.includes(preset) ? OFFENSIVE_PRESETS : DEFENSIVE_PRESETS;
-    assert.equal(matchingPreset(plan, presets)?.id, preset.id, `${preset.label} was not recognised after being applied`);
   }
-  // The default plan must be a named strategy, not "Custom".
-  assert.ok(matchingPreset(state.gamePlans[programId], OFFENSIVE_PRESETS), "the opening offense should have a name");
-  assert.ok(matchingPreset(state.gamePlans[programId], DEFENSIVE_PRESETS), "the opening defense should have a name");
+
+  // The offensive schemes must not collapse onto one call.
+  const offensiveShapes = new Set(OFFENSIVE_SCHEMES.map((offense) => {
+    const plan = schemeGamePlan({ offense, defense: "FOUR_THREE_BASE" });
+    return `${plan.runPassBalance}/${plan.backfieldUsage}/${plan.targetDistribution}/${plan.tempo}`;
+  }));
+  assert.ok(offensiveShapes.size >= 4,
+    `five offensive schemes must produce distinct plans, saw ${offensiveShapes.size}`);
+
+  const defensiveShapes = new Set(DEFENSIVE_SCHEMES.map((defense) => {
+    const plan = schemeGamePlan({ offense: "PRO_BALANCED", defense });
+    return `${plan.defensivePosture}/${plan.pressure}`;
+  }));
+  assert.ok(defensiveShapes.size >= 3,
+    `four defensive schemes must produce distinct plans, saw ${defensiveShapes.size}`);
+
+  // And a program's standing plan is exactly its scheme's, at league creation.
+  const state = beginSeason(createFictionalLeague("scheme-plans", 24));
+  for (const program of Object.values(state.programs)) {
+    assert.deepEqual(state.gamePlans[program.id], schemeGamePlan(program.schemeIdentity),
+      `${program.id} is not running the plan its scheme implies`);
+  }
 });
 
 test("installing the plan is worth real points and costs real reps", () => {
@@ -710,10 +743,14 @@ test("a better-executed plan wins more games than the same plan unprepared", () 
     let conceded = 0;
     let games = 0;
     for (let week = 0; week < 10; week += 1) {
-      const result = advanceWeek(state, [
+      // Reps have to be set *before* the week is advanced — that is the path a
+      // player uses, and `prepareWeek` is what resolves them in time to matter.
+      // Passing them to `advanceWeek` applies them after the game is played.
+      state = prepareWeek(state, [
         { type: "SET_PRACTICE_REPS", programId, side: "OFFENSE", reps },
         { type: "SET_PRACTICE_REPS", programId, side: "DEFENSE", reps }
-      ]);
+      ]).state;
+      const result = advanceWeek(state);
       state = result.state;
       for (const event of result.events) {
         if (event.type !== "GAME_COMPLETED") continue;
@@ -728,7 +765,8 @@ test("a better-executed plan wins more games than the same plan unprepared", () 
   };
 
   const unprepared = measure(0);
-  const drilled = measure(MAXIMUM_REPS_PER_SIDE);
+  // Half the pool per side: maxing both is deliberately out of reach now.
+  const drilled = measure(Math.floor(MAXIMUM_PRACTICE_HOURS / 2));
   assert.ok(unprepared.games >= 8 && drilled.games >= 8, "both runs need a full slate");
   assert.ok(
     drilled.margin > unprepared.margin,
