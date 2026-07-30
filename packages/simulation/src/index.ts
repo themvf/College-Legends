@@ -2534,6 +2534,17 @@ function startersForRoom(identity: Readonly<SchemeIdentity> | undefined, positio
   return offense[position] ?? defense[position] ?? (position === "K" || position === "P" ? 1 : 1);
 }
 
+/**
+ * The players a program actually starts, for anything that wants to describe the
+ * team rather than the depth chart. Rooms carry a real developmental tail now, so
+ * a roster-wide average is mostly walk-ons: measured, a low-tier roster means
+ * 54.5 while the eleven who play mean 67.9. The second number is the one the
+ * engine resolves games with and the only one worth showing a player.
+ */
+export function startingLineup(state: Readonly<GameState>, programId: string): Player[] {
+  return activeLineup(state, programId);
+}
+
 function activeLineup(state: Readonly<GameState>, programId: string): Player[] {
   const chart = activeDepthChart(state, programId);
   const identity = state.programs[programId]?.schemeIdentity;

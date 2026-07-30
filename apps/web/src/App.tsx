@@ -39,6 +39,7 @@ import {
   weeklyDecisions,
   weeklyBriefing,
   seasonExpectation,
+  startingLineup,
   boxScore,
   latestBoxScore,
   MAXIMUM_WEEKLY_ADVERTISING,
@@ -732,7 +733,11 @@ function ProgramDashboard({ game, roster, onNavigate }: {
         <p><span>In the bank</span><strong>{money(program.budget)}</strong></p>
         <p><span>Prestige</span><strong>{program.prestige}/100</strong></p>
         <p><span>They're talking about you</span><strong>{program.nationalPress}/100</strong></p>
-        <p><span>Roster average</span><strong>{(roster.reduce((sum, player) => sum + player.overall, 0) / Math.max(roster.length, 1)).toFixed(1)}</strong></p>
+        <p><span>Starters average</span><strong>{(() => {
+          const starters = startingLineup(game.state, program.id);
+          const source = starters.length > 0 ? starters : roster;
+          return (source.reduce((sum, player) => sum + player.overall, 0) / Math.max(source.length, 1)).toFixed(1);
+        })()}</strong></p>
       </div>
     </article>
 
