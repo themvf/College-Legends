@@ -1395,6 +1395,25 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         const member = state.staff[staffId];
         if (member) member.allocation = allocation;
       }
+      // Practice hours are the coaches' PREPARE hours, so moving the pool has to
+      // move the practice budget in the same breath. Leaving it until the weekly
+      // refresh made the pool say ten hours while the practice panel still said
+      // fifteen — a posted number that disagrees with the engine.
+      const preparation = state.preparation[program.id];
+      if (preparation) {
+        const refreshed = preparationWeeklyPoints(state, program.id);
+        const alreadySpent = preparation.offensiveReps + preparation.defensiveReps;
+        preparation.weeklyPoints = refreshed;
+        preparation.points = Math.max(0, refreshed - alreadySpent);
+        // Reps already bought beyond the new budget have to give way.
+        let over = alreadySpent - refreshed;
+        for (const side of ["defensiveReps", "offensiveReps"] as const) {
+          if (over <= 0) break;
+          const given = Math.min(over, preparation[side]);
+          preparation[side] -= given;
+          over -= given;
+        }
+      }
       const settled = weekAllocation(state, program.id);
       events.push({
         type: "STAFF_ALLOCATION_SET",

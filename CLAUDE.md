@@ -1183,6 +1183,56 @@ rushing, **28.6 points against a real ~27**. The distribution tolerances accept
 it, but it is about 6% high and should be pulled back with the outcome-modifier
 work rather than by a blind constant.
 
+### Step 2 shipped — one pool, one screen
+
+`weekAllocation` aggregates the staff into hours per job and `SET_WEEK_HOURS`
+puts a target on one job for the whole staff, taking what it needs from the
+others. The per-coach split still exists underneath — it is what makes a trait
+and a role matter — but the decision is one number per job against one total.
+
+| | before | after |
+|---|---|---|
+| where hours were set | Staff screen, ~20 sliders | one screen, four sliders |
+| what they became | prep points *and* scouting points, spent again elsewhere | the job itself |
+| screens for a week | This week / Scouting / Practice / Game plan / Last Saturday | Your week / Scouting board / Business / Last Saturday |
+
+Measured on a 28-hour staff, moving hours between jobs:
+
+```
+start          PREPARE 18  SCOUT 5   RECRUIT 5   DEVELOP 0   practice 15
+SCOUT   → 12   PREPARE 13  SCOUT 12  RECRUIT 3   DEVELOP 0   practice 12
+DEVELOP →  8   PREPARE  9  SCOUT  9  RECRUIT 2   DEVELOP 8   practice  9
+RECRUIT → 10   PREPARE  6  SCOUT  6  RECRUIT 10  DEVELOP 6   practice  6
+```
+
+The pool stays whole at every step. **An hour that vanishes is an hour the player
+believes he spent**, which is why the distribution rebalances the other jobs in
+proportion rather than shedding hours, and why a test asserts `spent ===
+totalHours` after every move.
+
+Two defects found by building the screen rather than by reading the code:
+
+- **The slider was dead.** Clamping it to spare hours meant it could never grow
+  once the week was fully assigned — which is always, since hours never bank.
+  Raising a job has to *take* from the others, which is the whole point.
+- **The practice budget went stale.** `preparation.points` only refreshed at the
+  week boundary, so the pool read ten practice hours while the practice panel
+  still said fifteen. It is recomputed when the pool moves now, and reps already
+  bought beyond the new budget are trimmed — you cannot keep reps you can no
+  longer afford.
+
+**The weekly tactical call is gone.** `schemeGamePlan()` derives every emphasis
+axis from the scheme, `SET_SCHEME` writes the plan, and `SET_GAME_PLAN` is
+refused with a reason. `weeklyDecisions` no longer offers offensive and defensive
+strategy; what replaced them is what the file on this week's opponent is worth.
+The emphasis matchup matrix in `game.ts` is left **intact and unused** rather than
+deleted, because it is calibrated over 400 games a cell and restoring it — on
+defense only, informed by a file — has to stay a config change.
+
+A test that was quietly passing on nothing: the execution-value test passed
+`SET_PRACTICE_REPS` to `advanceWeek`, where reps land *after* the game resolves,
+so it measured 1.3 against 1.3. It prepares the week first now.
+
 ### Still open: scheme identity is only half visible in the box score
 
 Measured over a full season with rooms shaped and personnel groupings live, pass

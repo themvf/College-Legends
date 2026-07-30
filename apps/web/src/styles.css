@@ -456,3 +456,20 @@ dd { margin:0; font-weight:700; text-align:right; }
 .rep-caption .rep-count { font-weight: 700; white-space: nowrap; }
 .readiness-line { margin: 0 0 0.35rem; font-size: 0.86rem; color: #6ed4a7; }
 .readiness-line .muted { color: #91a8b9; font-weight: 400; }
+
+/* The week as one pool: four jobs competing for the same hours. */
+.pool-panel .pool-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden;
+  background: rgba(255,255,255,.06); margin: .9rem 0 1.2rem; }
+.pool-slice { display: block; height: 100%; }
+.pool-slice.prepare { background: #6ea8fe; }
+.pool-slice.scout { background: #e0b057; }
+.pool-slice.develop { background: #6ed4a7; }
+.pool-slice.recruit { background: #c98be0; }
+.pool-slice.idle { background: repeating-linear-gradient(45deg, rgba(255,255,255,.14) 0 4px, transparent 4px 8px); }
+.pool-row { border-top: 1px solid #294864; padding-top: .85rem; margin-top: .85rem; }
+.pool-row input[type="range"] { width: 100%; margin: .25rem 0 .35rem; }
+.pool-row .plan-label { display: flex; justify-content: space-between; margin: 0 0 .15rem; font-weight: 700; }
+.pool-row .plan-label .hours { color: #e0b057; font-variant-numeric: tabular-nums; }
+.pool-payoff { margin: 0 0 .15rem; font-size: .86rem; color: #6ed4a7; }
+.pool-row .muted { margin: 0; font-size: .8rem; }
+.pool-note { margin: 0 0 .9rem; font-size: .84rem; }

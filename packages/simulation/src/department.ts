@@ -525,34 +525,60 @@ export function distributeWeekHours(
   targetHours: number
 ): Record<string, StaffAllocation> {
   const staff = allocatableStaff(state, programId);
-  const plans = new Map<string, StaffAllocation>(
-    staff.map((member) => [member.id, { ...emptyAllocation(), ...(member.allocation ?? {}) }])
-  );
   const capacityOf = (member: StaffMember) => staffCapacity(member.rating, member.trait);
   const ceiling = staff.reduce((total, member) => total + capacityOf(member), 0);
-  let wanted = Math.max(0, Math.min(Math.round(targetHours), ceiling));
+  const target = Math.max(0, Math.min(Math.round(targetHours), ceiling));
 
-  // Clear the job, then refill it best-first.
-  for (const member of staff) plans.get(member.id)![focus] = 0;
-  const ranked = [...staff].sort((left, right) =>
-    focusWeight(right, focus) - focusWeight(left, focus) || left.id.localeCompare(right.id));
-  for (const member of ranked) {
-    if (wanted <= 0) break;
-    const plan = plans.get(member.id)!;
-    const capacity = capacityOf(member);
-    const take = Math.min(wanted, capacity);
-    plan[focus] = take;
-    wanted -= take;
-    // Whatever else he was doing has to give way, worst-value job first.
-    let over = allocatedTotal(plan) - capacity;
-    const donors = STAFF_FOCUSES
-      .filter((other) => other !== focus)
-      .sort((left, right) => focusWeight(member, left) - focusWeight(member, right));
-    for (const donor of donors) {
-      if (over <= 0) break;
-      const given = Math.min(over, plan[donor]);
-      plan[donor] -= given;
-      over -= given;
+  // What the other jobs held before, so raising one takes from the rest in
+  // proportion rather than silently losing hours off the total. The pool has to
+  // stay whole: an hour that vanishes is an hour the player thinks he spent.
+  const previous = emptyAllocation();
+  for (const member of staff) {
+    for (const other of STAFF_FOCUSES) previous[other] += Math.max(0, member.allocation?.[other] ?? 0);
+  }
+  const others = STAFF_FOCUSES.filter((other) => other !== focus);
+  const otherTotal = others.reduce((total, other) => total + previous[other], 0);
+  const remaining = ceiling - target;
+
+  const wanted = emptyAllocation();
+  wanted[focus] = target;
+  if (otherTotal > 0) {
+    let assigned = 0;
+    const shares = others.map((other) => {
+      const exact = previous[other] / otherTotal * remaining;
+      const whole = Math.floor(exact);
+      wanted[other] = whole;
+      assigned += whole;
+      return { focus: other, remainder: exact - whole };
+    }).sort((left, right) => right.remainder - left.remainder);
+    for (let index = 0; assigned < remaining && shares.length > 0; index += 1, assigned += 1) {
+      wanted[shares[index % shares.length]!.focus] += 1;
+    }
+  } else if (others.length > 0) {
+    // Nothing else was running, so the rest goes where it is worth the most.
+    const best = [...others].sort((left, right) =>
+      staff.reduce((total, member) => total + focusWeight(member, right), 0)
+      - staff.reduce((total, member) => total + focusWeight(member, left), 0))[0]!;
+    wanted[best] = remaining;
+  }
+
+  // Hand each job to the coaches worth the most at it, filling their weeks.
+  const plans = new Map<string, StaffAllocation>(staff.map((member) => [member.id, emptyAllocation()]));
+  const left = new Map<string, number>(staff.map((member) => [member.id, capacityOf(member)]));
+  const order = [focus, ...others];
+  for (const job of order) {
+    let need = wanted[job];
+    if (need <= 0) continue;
+    const ranked = [...staff].sort((a, b) =>
+      focusWeight(b, job) - focusWeight(a, job) || a.id.localeCompare(b.id));
+    for (const member of ranked) {
+      if (need <= 0) break;
+      const room = left.get(member.id) ?? 0;
+      if (room <= 0) continue;
+      const take = Math.min(need, room);
+      plans.get(member.id)![job] += take;
+      left.set(member.id, room - take);
+      need -= take;
     }
   }
   return Object.fromEntries(plans);

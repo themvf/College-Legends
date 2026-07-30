@@ -40,6 +40,7 @@ import {
   weeklyBriefing,
   seasonExpectation,
   startingLineup,
+  weekAllocation,
   attributesFor,
   boxScore,
   latestBoxScore,
@@ -47,6 +48,8 @@ import {
   MAXIMUM_TICKET_PRICE,
   MINIMUM_TICKET_PRICE,
   MAXIMUM_REPS_PER_SIDE,
+  MAXIMUM_PRACTICE_HOURS,
+  personnelLabel,
   repsFatigue,
   planExecution,
   staffModifiers,
@@ -102,13 +105,12 @@ type Screen = "DASHBOARD" | "THIS_WEEK" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CH
  * intermediate step: the player picks what part of the week to work on before
  * being shown a wall of controls.
  */
-type WeekTab = "DECISIONS" | "SCOUTING" | "INSTALL" | "PLAYBOOK" | "REPORT";
+type WeekTab = "WEEK" | "SCOUTING" | "BUSINESS" | "REPORT";
 const weekTabs: { id: WeekTab; label: string; detail: string }[] = [
-  { id: "DECISIONS", label: "This week", detail: "Tickets, marketing, who you coach up, and how you're playing it" },
-  { id: "SCOUTING", label: "Scouting", detail: "Your department, and which opponents are worth a film study" },
-  { id: "INSTALL", label: "Practice", detail: "Who's installing the plan and how hard you're going" },
-  { id: "PLAYBOOK", label: "Game plan", detail: "Every call you can make and how the matchups look" },
-  { id: "REPORT", label: "Last Saturday", detail: "What those calls actually got you" }
+  { id: "WEEK", label: "Your week", detail: "Every hour your staff has, and the four things it can buy" },
+  { id: "SCOUTING", label: "Scouting board", detail: "Which opponent this week's film study is worth spending on" },
+  { id: "BUSINESS", label: "Business", detail: "Tickets and marketing — money, not hours" },
+  { id: "REPORT", label: "Last Saturday", detail: "What all of it actually got you" }
 ];
 
 const careerOrder: CareerPath[] = ["DYNASTY_BUILDER", "PROGRAM_RISER", "CHAMPIONSHIP_MANDATE"];
@@ -207,7 +209,7 @@ export function App(): ReactElement {
     // These settle now rather than on advance, so the screens and the dashboard
     // briefing reflect the decision the moment it is made.
     if (command.type === "ALLOCATE_SCOUTING" || command.type === "SET_PRACTICE_REPS"
-      || command.type === "SET_STAFF_ALLOCATION") { prepare(command); return; }
+      || command.type === "SET_STAFF_ALLOCATION" || command.type === "SET_WEEK_HOURS") { prepare(command); return; }
     const key = command.type === "REPLACE_STAFF" ? `replace:${command.staffId}`
       : command.type === "SET_TICKET_PRICE" ? "ticket-price"
       : command.type === "SET_ADVERTISING" ? "advertising"
@@ -270,6 +272,7 @@ function commandKey(command: GameCommand): string {
   if (command.type === "SET_DEVELOPMENT_SPOTLIGHT") return "development-spotlight";
   if (command.type === "SET_PLAYER_MEDIA_ACTION") return "featured-media";
   if (command.type === "SET_STAFF_ALLOCATION") return `staff:${command.staffId}`;
+  if (command.type === "SET_WEEK_HOURS") return `hours:${command.focus}`;
   if (command.type === "UPGRADE_FACILITY") return `facility:${command.facility}`;
   if (command.type === "SCHEDULE_MARQUEE_HOME_GAME") return "marquee-game";
   if (command.type === "SEARCH_PROSPECTS") return `recruit-search:${command.searchType}:${command.position ?? "ALL"}`;
@@ -686,10 +689,10 @@ function ProgramDashboard({ game, roster, onNavigate }: {
   );
 
   const go = (destination: string): void => {
-    if (destination === "WEEK_DECISIONS") return onNavigate("THIS_WEEK", "DECISIONS");
+    if (destination === "WEEK_DECISIONS") return onNavigate("THIS_WEEK", "BUSINESS");
     if (destination === "WEEK_SCOUTING") return onNavigate("THIS_WEEK", "SCOUTING");
-    if (destination === "WEEK_PRACTICE") return onNavigate("THIS_WEEK", "INSTALL");
-    if (destination === "WEEK_GAMEPLAN") return onNavigate("THIS_WEEK", "PLAYBOOK");
+    if (destination === "WEEK_PRACTICE") return onNavigate("THIS_WEEK", "WEEK");
+    if (destination === "WEEK_GAMEPLAN") return onNavigate("THIS_WEEK", "WEEK");
     if (destination === "DEVELOPMENT") return onNavigate("DEVELOPMENT");
     onNavigate(destination as Screen);
   };
@@ -1446,7 +1449,7 @@ function WeekHub({ game, pending, onQueue, initialTab }: {
   game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void; initialTab: WeekTab | undefined;
 }): ReactElement {
   const programId = game.playerProgramId;
-  const [tab, setTab] = useState<WeekTab>(initialTab ?? "DECISIONS");
+  const [tab, setTab] = useState<WeekTab>(initialTab ?? "WEEK");
   // Arriving from the dashboard briefing should land on the tab that fixes it.
   useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
   const decisions = weeklyDecisions(game.state, programId);
@@ -1457,11 +1460,14 @@ function WeekHub({ game, pending, onQueue, initialTab }: {
   const atHome = fixture?.homeProgramId === programId;
   const opponent = fixture ? game.state.programs[atHome ? fixture.awayProgramId : fixture.homeProgramId] ?? null : null;
 
+  const hours = weekAllocation(game.state, programId);
   const flagged: Record<WeekTab, number> = {
-    DECISIONS: decisions.filter((decision) => decision.attention).length,
+    // Unspent hours are the single most wasteful thing a player can do, because
+    // hours never bank. That is what the badge is for.
+    WEEK: (hours.available > 0 ? 1 : 0)
+      + ((preparation?.offensiveReps ?? 0) + (preparation?.defensiveReps ?? 0) === 0 ? 1 : 0),
     SCOUTING: scouting.opponentProgramId && scouting.tiers.length === 0 ? 1 : 0,
-    INSTALL: (preparation?.offensiveReps ?? 0) + (preparation?.defensiveReps ?? 0) === 0 ? 1 : 0,
-    PLAYBOOK: 0,
+    BUSINESS: decisions.filter((decision) => decision.attention).length,
     REPORT: 0
   };
 
@@ -1481,12 +1487,134 @@ function WeekHub({ game, pending, onQueue, initialTab }: {
         <span>{entry.detail}</span>
       </button>)}
     </nav>
-    {tab === "DECISIONS" && <WeekDecisions game={game} pending={pending} onQueue={onQueue} />}
+    {tab === "WEEK" && <WeekPool game={game} pending={pending} onQueue={onQueue} />}
     {tab === "SCOUTING" && <WeekScouting game={game} pending={pending} onQueue={onQueue} />}
-    {tab === "INSTALL" && <WeekInstall game={game} pending={pending} onQueue={onQueue} />}
-    {tab === "PLAYBOOK" && <WeekPlaybook game={game} pending={pending} onQueue={onQueue} />}
+    {tab === "BUSINESS" && <WeekDecisions game={game} pending={pending} onQueue={onQueue} />}
     {tab === "REPORT" && <WeekReport game={game} />}
   </section>;
+}
+
+/**
+ * The week as one screen. Every hour the staff has, and the four things it can
+ * buy, competing against each other in one place.
+ *
+ * This replaces four screens. Hours were edited per coach on the staff page —
+ * roughly twenty sliders — and then spent again as prep points on a practice page
+ * and scouting points on a board, so the jobs never visibly competed and each
+ * downstream screen looked like a free pool. The honest answer to "why wouldn't I
+ * max practice every week" was: you would, because those hours could not buy
+ * anything else.
+ */
+function WeekPool({ game, pending, onQueue }: {
+  game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void;
+}): ReactElement {
+  const programId = game.playerProgramId;
+  const program = game.state.programs[programId]!;
+  const preparation = game.state.preparation?.[programId];
+  const hours = weekAllocation(game.state, programId);
+  const identity = program.schemeIdentity;
+
+  const queuedHours = (focus: StaffFocus): number | null => {
+    const queued = [...pending].reverse().find((command): command is Extract<GameCommand, { type: "SET_WEEK_HOURS" }> =>
+      command.type === "SET_WEEK_HOURS" && command.focus === focus);
+    return queued ? queued.hours : null;
+  };
+  const hoursOn = (focus: StaffFocus): number => queuedHours(focus) ?? hours.byFocus[focus];
+  const spent = (["PREPARE", "SCOUT", "RECRUIT", "DEVELOP"] as const)
+    .reduce((total, focus) => total + hoursOn(focus), 0);
+  const available = Math.max(0, hours.totalHours - spent);
+
+  const JOBS: { focus: StaffFocus; label: string; blurb: string; payoff: (value: number) => string }[] = [
+    {
+      focus: "PREPARE",
+      label: "Practice",
+      blurb: "Installs your game plan. Split between the two sides below.",
+      payoff: (value) => `${Math.min(value, MAXIMUM_PRACTICE_HOURS)} practice hours to spend on the two sides`
+    },
+    {
+      focus: "SCOUT",
+      label: "Scouting",
+      blurb: "Film study on a future opponent. Assign the points on the Scouting board.",
+      payoff: (value) => `about ${Math.round(weeklyScoutingOutput(game.state, programId) * Math.max(0.1, value / Math.max(1, hours.byFocus.SCOUT || 1)))} scouting points this week`
+    },
+    {
+      focus: "DEVELOP",
+      label: "Developing players",
+      blurb: "Coaching a man up. Pick who on the Development screen.",
+      payoff: (value) => value === 0 ? "nobody gets extra work" : `+${(value * 0.9).toFixed(0)}% growth on whoever you spotlight`
+    },
+    {
+      focus: "RECRUIT",
+      label: "Recruiting",
+      blurb: "Next year's roster. Pays off a season from now.",
+      payoff: (value) => value === 0 ? "nobody is on the road" : `+${Math.round(value * 2.6)} on the recruiting trail`
+    }
+  ];
+
+  return <div className="week-tab-body">
+    <article className="panel pool-panel">
+      <p className="eyebrow">Your staff · {hours.totalHours} hours this week</p>
+      <h2>{available === 0 ? "Every hour is spoken for" : `${available} hour${available === 1 ? "" : "s"} unassigned`}</h2>
+      <p className="muted">
+        Your head coach and coordinators have <strong>{hours.totalHours} hours</strong> between them. Hours never bank —
+        whatever you don't assign by Saturday is gone. So the question is never how much to spend, it's{" "}
+        <strong>which of these four</strong> gets it. Practice pays this Saturday, scouting pays a Saturday you choose,
+        developing pays slowly and forever, recruiting pays next year.
+      </p>
+      <div className="pool-bar" aria-label="How the week is allocated">
+        {(["PREPARE", "SCOUT", "DEVELOP", "RECRUIT"] as const).map((focus) =>
+          hoursOn(focus) > 0 && <span className={`pool-slice ${focus.toLowerCase()}`} key={focus}
+            style={{ width: `${hoursOn(focus) / Math.max(1, hours.totalHours) * 100}%` }}
+            title={`${STAFF_FOCUS_LABELS[focus]}: ${hoursOn(focus)}h`} />)}
+        {available > 0 && <span className="pool-slice idle" style={{ width: `${available / Math.max(1, hours.totalHours) * 100}%` }}
+          title={`${available}h unassigned`} />}
+      </div>
+
+      {JOBS.map((job) => {
+        const value = hoursOn(job.focus);
+        return <div className="pool-row" key={job.focus}>
+          <p className="plan-label">{job.label}<span className="hours">{value}h</span></p>
+          <input type="range" min={0} max={hours.totalHours} value={value}
+            aria-label={`Hours on ${job.label}`}
+            // No clamp: raising one job takes hours from the others, which is
+            // the whole point. Clamping to what is spare made the control dead
+            // whenever the week was already fully assigned — which is always.
+            onChange={(event) => onQueue({
+              type: "SET_WEEK_HOURS", programId, focus: job.focus, hours: Number(event.target.value)
+            })} />
+          <p className="pool-payoff"><strong>{job.payoff(value)}</strong></p>
+          <p className="muted">{job.blurb}</p>
+        </div>;
+      })}
+    </article>
+
+    <article className="panel">
+      <p className="eyebrow">
+        Practice · {hoursOn("PREPARE") > 0 ? `${Math.min(hoursOn("PREPARE"), MAXIMUM_PRACTICE_HOURS)} hours` : "no hours assigned"}
+      </p>
+      <h2>You cannot drill both sides. Pick one.</h2>
+      <p className="muted">
+        A full week on one side of the ball costs <strong>{MAXIMUM_REPS_PER_SIDE}</strong>, so even a staff that spends
+        every hour on practice cannot install both. Reps also tire the roster, and fatigue does not come off on its own.
+      </p>
+      <PracticeSplit game={game} pending={pending} onQueue={onQueue} />
+    </article>
+
+    <article className="panel">
+      <p className="eyebrow">What you run</p>
+      <h2>{OFFENSIVE_IDENTITY_LABELS[identity.offense]} · {DEFENSIVE_IDENTITY_LABELS[identity.defense]}</h2>
+      <p className="muted">
+        Your scheme is your game plan. There is no weekly call to make and no preset to pick — an Air Raid program is
+        never asked whether it would rather grind it out this Saturday. Your offense puts{" "}
+        <strong>{personnelLabel(identity.offense)}</strong> on the field. Changing how you play means changing your
+        scheme, and that only happens between seasons.
+      </p>
+      <p className="muted">
+        Practice decides how much of it holds up. Scouting decides how ready your guys are for the opponent in front
+        of them.
+      </p>
+    </article>
+  </div>;
 }
 
 function WeekDecisions({ game, pending, onQueue }: {
@@ -1866,7 +1994,7 @@ function WeekReport({ game }: { game: GameView }): ReactElement {
   </div>;
 }
 
-function WeekInstall({ game, pending, onQueue }: {
+function PracticeSplit({ game, pending, onQueue }: {
   game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void;
 }): ReactElement {
   const programId = game.playerProgramId;
@@ -1881,21 +2009,11 @@ function WeekInstall({ game, pending, onQueue }: {
   }, 0);
   const remainingPrep = remaining - queuedReps;
 
-  return <div className="week-tab-body">
-    <article className="panel">
-      <p className="eyebrow">Practice · {remainingPrep} of {preparation?.weeklyPoints ?? 0} coaching hours left this week</p>
-      <h2>You cannot practise everything. Pick a side.</h2>
-      <p className="muted">
-        Your staff gives you <strong>{preparation?.weeklyPoints ?? 0} hours</strong> of practice this week — that is
-        the hours your head coach and coordinators actually spend preparing the team, set on the Staff screen. A full
-        week on one side of the ball costs {MAXIMUM_REPS_PER_SIDE}. So you can drill one side hard, or split it, but
-        you cannot have both. That is the decision.
-      </p>
-      <ol className="eli5">
-        <li><strong>Picking a play call isn’t the same as running it.</strong> Whatever you called on the Game plan tab, your guys have to practise it first.</li>
-        <li><strong>Hours come out of your coaches’ week.</strong> Send a coordinator out recruiting or scouting and you have fewer hours here, so less of Saturday gets installed.</li>
-        <li><strong>You get a range, not a number.</strong> The coloured band is your best day to your worst day. A better coordinator lifts the whole band <em>and</em> squeezes it tighter, so you know what you’re getting.</li>
-      </ol>
+  return <>
+    <p className="muted pool-note">
+      {remainingPrep} of {preparation?.weeklyPoints ?? 0} practice hours left. Whatever your coordinators do not spend
+      here is spent somewhere else — or wasted.
+    </p>
       {(["OFFENSE", "DEFENSE"] as const).map((side) => {
         const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_PRACTICE_REPS" }> =>
           command.type === "SET_PRACTICE_REPS" && command.side === side);
@@ -1931,13 +2049,11 @@ function WeekInstall({ game, pending, onQueue }: {
           {current.limits.map((limit) => <p className="attention" key={limit}>{limit}</p>)}
         </div>;
       })}
-      <p className="muted">
-        Your offensive coordinator runs offensive practice and your defensive coordinator runs defensive practice.
-        If you've sent one of them out recruiting or scouting on the Staff screen, he has less time for this and
-        your head coach fills in.
-      </p>
-    </article>
-  </div>;
+    <p className="muted">
+      Your offensive coordinator installs the offense and your defensive coordinator the defense. Move either one's
+      hours to scouting or recruiting above and your head coach covers, at a discount.
+    </p>
+  </>;
 }
 
 function WeekPlaybook({ game, pending, onQueue }: {

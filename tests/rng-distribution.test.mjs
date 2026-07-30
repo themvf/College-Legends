@@ -11,6 +11,7 @@ import {
   scoutingReport,
   staffCapacity,
   schemeGamePlan,
+  weekAllocation,
   OFFENSIVE_SCHEMES,
   DEFENSIVE_SCHEMES,
   schemePersonnel,
@@ -1671,4 +1672,45 @@ test("a scouted opponent is measurably easier to beat", () => {
     scouted.margin > blind.margin,
     `a complete file every week must be worth points (${scouted.margin.toFixed(2)} vs ${blind.margin.toFixed(2)})`
   );
+});
+
+
+test("the week is one pool: every job competes for the same hours", () => {
+  let state = beginSeason(createFictionalLeague("week-pool", 24));
+  const programId = "program-1";
+  const opening = weekAllocation(state, programId);
+  assert.ok(opening.totalHours > 12, "a staff should have a real week to spend");
+
+  // The pool has to stay whole through every move. An hour that vanishes is an
+  // hour the player believes he spent — the exact defect of the old model, where
+  // hours were edited per coach on one screen and spent again as prep points and
+  // scouting points on others, so each downstream screen looked free.
+  for (const [focus, hours] of [["SCOUT", 12], ["DEVELOP", 8], ["RECRUIT", 10], ["PREPARE", 20]]) {
+    state = prepareWeek(state, [{ type: "SET_WEEK_HOURS", programId, focus, hours }]).state;
+    const settled = weekAllocation(state, programId);
+    assert.equal(settled.spent, settled.totalHours,
+      `after ${hours}h on ${focus} the pool lost hours (${settled.spent} of ${settled.totalHours})`);
+    assert.equal(settled.available, 0);
+    assert.equal(settled.byFocus[focus], Math.min(hours, settled.totalHours),
+      `${focus} did not take the hours it was given`);
+  }
+
+  // And the practice budget is those hours, not a separate currency that drifts.
+  const spending = (hours) => {
+    const next = prepareWeek(
+      beginSeason(createFictionalLeague("week-pool", 24)),
+      [{ type: "SET_WEEK_HOURS", programId, focus: "SCOUT", hours }]
+    ).state;
+    return {
+      prepare: weekAllocation(next, programId).byFocus.PREPARE,
+      practice: preparationWeeklyPoints(next, programId),
+      budget: next.preparation[programId].weeklyPoints
+    };
+  };
+  const light = spending(2);
+  const heavy = spending(16);
+  assert.ok(heavy.prepare < light.prepare, "sending coaches scouting must take hours off practice");
+  assert.ok(heavy.practice < light.practice, "and that must reduce the practice budget");
+  assert.equal(heavy.budget, heavy.practice, "the posted practice budget must equal what the engine will use");
+  assert.equal(light.budget, light.practice);
 });
