@@ -49,8 +49,27 @@ export function scoutingTierLabel(tier: ScoutingTier): string {
 export function preparationWeeklyPoints(state: Readonly<GameState>, programId: string): number {
   const program = state.programs[programId];
   if (!program) return 0;
-  return Math.round(12 + program.facilities.TRAINING * 2 + staffContribution(state, programId, "PREPARE") / 22);
+  // Literally the hours the staff put into preparing the team, lightly scaled by
+  // the weight room. This used to be `12 + facility + contribution/22`, a second
+  // currency derived from hours and then spent again — two pools for one
+  // decision. It also produced 26 a week against a 24-hour cost to max both
+  // sides, so practice was free and there was no decision on the screen at all.
+  const hours = Object.values(state.staff)
+    .filter((member) => member.programId === programId)
+    .reduce((total, member) => total + Math.max(0, member.allocation?.PREPARE ?? 0), 0);
+  // Ceiling on purpose. There are only so many hours you can put pads on in a
+  // week — real football caps this too — and it is what guarantees a full install
+  // on both sides is always out of reach, however good the staff is. A strong
+  // staff is rewarded through the *quality* of each rep in `planInstaller`, not
+  // by escaping the choice.
+  return Math.round(clampValue(hours * (0.85 + program.facilities.TRAINING * 0.05), 2, MAXIMUM_PRACTICE_HOURS));
 }
+
+/** A week only holds so much practice, whoever is running it. */
+export const MAXIMUM_PRACTICE_HOURS = 15;
+
+const clampValue = (value: number, minimum: number, maximum: number): number =>
+  Math.max(minimum, Math.min(maximum, value));
 
 /**
  * How reliable a file is: the department behind it, the film available, and how

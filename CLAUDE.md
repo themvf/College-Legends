@@ -1073,6 +1073,62 @@ six. It pools six now. The department itself is healthy: blind programs call
 `BALANCED` every week because they cannot read an opponent, while scouted
 programs split 328 / 281 / 255 across the three calls.
 
+### The attention economy, phase one — one pool, and scouting that pays
+
+Two complaints from a playtest, both correct: the practice sliders had no stated
+purpose, and scouting still cashed out as a prompt to change your call. Both were
+untouched work — the plan below was written and only slice 1 had been built.
+
+**Practice is coaching hours, not a second currency.** `preparationWeeklyPoints`
+was `12 + facility + staffContribution/22`: a pool derived from hours and then
+spent again, two currencies for one decision. It is now literally the hours the
+staff put into `PREPARE`, lightly scaled by the weight room, with a hard weekly
+ceiling of 15.
+
+| | before | after |
+|---|---|---|
+| weekly pool | 26 | 15 hours |
+| a full install on one side | 12 | 8 |
+| cost to max both sides | 24 of 26 — free | **16 of 15 — impossible** |
+| fatigue for a maximum week | 5.3 | 8.8, against ~2.4 recovery |
+
+So the screen finally holds a decision: drill one side hard, or split. And the
+hours come out of the coaches' week, so **sending a coordinator scouting costs
+Saturday** — that is the link that makes the staff screen matter.
+
+The 15-hour ceiling is deliberate rather than a fudge. A week only holds so much
+practice, real football caps it too, and it is what keeps a full install on both
+sides out of reach *however good the staff is*. A strong staff is rewarded
+through the quality of each rep in `planInstaller`, not by escaping the choice.
+
+**A file makes your own team better; it does not ask you to change what you
+run.** The department's payoff was information alone, and information only cashes
+if you counter them — which is the one thing `planAlignment` exists to
+discourage. The reward had been designed out from under the system.
+
+`scoutingReadiness(points)` returns a flat bonus to all four units in that
+game, on a square-root curve so the first points matter most and no tier is a
+cliff:
+
+| file | readiness |
+|---|---|
+| none | 0 — your guys go in cold |
+| 6 pts (tendencies) | +1.2 |
+| 18 pts (personnel) | +2.1 |
+| 36 pts (complete) | **+3.0** |
+
+Anchored on the two numbers the engine already lives by: home field is 2.8 and a
+full emphasis counter about 2.7 points of scoring. A complete file is worth about
+a home game, and never more than the tactical layer it must not replace. The
+information still arrives — it is what tells you where to spend practice hours —
+but it is no longer the thing you are paying for.
+
+Guarded by three tests: that a full install on both sides always outruns the
+hours available, that moving a coordinator to scouting costs practice hours, that
+readiness is monotone with diminishing returns and buys nothing past a complete
+file, and that a season with a complete file every week beats the same season
+with none.
+
 ### Still open: scheme identity is only half visible in the box score
 
 Measured over a full season with rooms shaped and personnel groupings live, pass

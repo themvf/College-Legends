@@ -4,7 +4,7 @@ import { AddressableRng } from "./rng.js";
 import { weeklyBriefing as buildBriefing, type BriefingItem } from "./briefing.js";
 import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES, bestSchemeFor, programRoster, coachSchemeFit, schemePersonnel } from "./scheme.js";
 import { DEFAULT_GAME_PLAN, OFFENSIVE_IDENTITY_LABELS, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
-import { opponentScoutingReport, preparationWeeklyPoints, projectedGamePlan, scheduledOpponent, scoutingConfidence, filmGamesAvailable } from "./scouting.js";
+import { MAXIMUM_PRACTICE_HOURS, opponentScoutingReport, preparationWeeklyPoints, projectedGamePlan, scheduledOpponent, scoutingConfidence, filmGamesAvailable } from "./scouting.js";
 import {
   allocatedTotal,
   defaultAllocation,
@@ -13,6 +13,7 @@ import {
   focusShare,
   focusWeight,
   pickStaffTrait,
+  scoutingReadiness,
   rebalanceAllocation,
   roleFit,
   scoutingDepartmentSummary,
@@ -88,6 +89,9 @@ export {
   opponentValue,
   roleFit,
   scoutingDepartmentSummary,
+  scoutingReadiness,
+  readinessNote,
+  FULL_FILE_READINESS,
   SCOUTING_FUNDING_LABELS,
   staffCapacity,
   staffContribution,
@@ -103,6 +107,7 @@ export {
 } from "./department.js";
 export type { GamePlanOption, UnitEdge } from "./game.js";
 
+export { MAXIMUM_PRACTICE_HOURS } from "./scouting.js";
 export { scheduleAhead, seasonExpectation } from "./briefing.js";
 export { boxScore, latestBoxScore } from "./boxscore.js";
 export type { BoxScore, BoxScoreGroup, BoxScoreRow, BoxScoreTeam, BoxScoreTeamStat } from "./boxscore.js";
@@ -2262,12 +2267,15 @@ function resolveScheduledGames(state: GameState, rng: AddressableRng, events: Ga
   }
 }
 
-function teamSide(state: Readonly<GameState>, programId: string): TeamSide {
+function teamSide(state: Readonly<GameState>, programId: string, opponentProgramId?: string): TeamSide {
+  // A file on *this* opponent is worth points on the board. That is the whole
+  // payoff of the department now: readiness, not a prompt to change your call.
+  const filePoints = opponentProgramId ? state.dossiers?.[programId]?.[opponentProgramId] ?? 0 : 0;
   return {
     programId,
     lineup: activeLineup(state, programId),
     plan: state.gamePlans?.[programId] ?? { ...DEFAULT_GAME_PLAN },
-    prepBonus: gamePrepBonus(state, programId),
+    prepBonus: gamePrepBonus(state, programId) + scoutingReadiness(filePoints),
     execution: {
       offense: planExecution(state, programId, "OFFENSE"),
       defense: planExecution(state, programId, "DEFENSE")
@@ -2284,8 +2292,8 @@ function playGame(
   homeField: boolean
 ): GameResult {
   return resolveGame(
-    teamSide(state, homeProgramId),
-    teamSide(state, awayProgramId),
+    teamSide(state, homeProgramId, awayProgramId),
+    teamSide(state, awayProgramId, homeProgramId),
     { season: state.season, week: state.week, gameId: game.id },
     homeField ? state.identity.balanceConfiguration.game.homeFieldAdvantage : 0,
     rng

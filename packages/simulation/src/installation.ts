@@ -23,8 +23,14 @@ import { coachSchemeFit, schemeFitLabel, planAlignment, OFFENSIVE_SCHEMES, DEFEN
 
 const clamp = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value));
 
-/** Reps are bought with the same weekly attention that pays for scouting. */
-export const MAXIMUM_REPS_PER_SIDE = 12;
+/**
+ * A full install on one side is half a normal staff's prep week. At 12 a side
+ * against a 26-point pool a program could max both and still have change, which
+ * is why the practice screen had no decision on it. Sixteen prep-hours against
+ * an 8-per-side cap means maxing both sides costs every hour you have — and
+ * sending a coordinator scouting takes it straight out of Saturday.
+ */
+export const MAXIMUM_REPS_PER_SIDE = 8;
 
 /**
  * A game plan is built during the week rather than merely chosen. Who installs
@@ -119,6 +125,8 @@ export function planExecution(
   const alignment = program && plan ? planAlignment(plan, program.schemeIdentity, side) : 1;
   const base = (0.3 + installer.rating / 100 * 0.28) * alignment;
   const repsBonus = Math.sqrt(clamp(reps, 0, MAXIMUM_REPS_PER_SIDE) / MAXIMUM_REPS_PER_SIDE) * 0.26;
+  // Reps still tire the roster, and now each one is worth more because there are
+  // fewer of them to buy.
   const centre = base + repsBonus + facility;
   const width = clamp(0.32 - installer.rating / 100 * 0.16, 0.08, 0.32);
 
@@ -157,7 +165,7 @@ export function planExecution(
  * wants to practise hard all season has to staff recovery to pay for it.
  */
 export function repsFatigue(reps: number): number {
-  return Number((reps * 0.22).toFixed(2));
+  return Number((reps * 0.55).toFixed(2));
 }
 
 /**

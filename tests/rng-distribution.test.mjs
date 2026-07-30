@@ -11,6 +11,10 @@ import {
   scoutingReport,
   staffCapacity,
   schemePersonnel,
+  scoutingReadiness,
+  FULL_FILE_READINESS,
+  repsFatigue,
+  preparationWeeklyPoints,
   staffContribution,
   staffSkills,
   strengthCoachBenefits,
@@ -1524,5 +1528,109 @@ test("the box score prints the game that was actually played", () => {
     latestBoxScore(afterScheduleRollover, "program-1")?.gameId,
     box.gameId,
     "the postgame screen must still find the latest completed game after schedule rollover"
+  );
+});
+
+
+test("practice is a choice: you cannot drill both sides of the ball", () => {
+  const state = beginSeason(createFictionalLeague("practice-squeeze", 24));
+  for (const program of Object.values(state.programs)) {
+    const hours = preparationWeeklyPoints(state, program.id);
+    // The defect this replaces: the pool was 26 a week against a 24-hour cost to
+    // max both sides, so practice was free and the screen held no decision. A
+    // full week on one side has to cost more than half of what a staff produces.
+    assert.ok(
+      MAXIMUM_REPS_PER_SIDE * 2 > hours,
+      `${program.id}: maxing both sides costs ${MAXIMUM_REPS_PER_SIDE * 2} against ${hours} hours, so practice is free`
+    );
+    // And one side has to be reachable, or the control is decoration.
+    assert.ok(
+      hours >= MAXIMUM_REPS_PER_SIDE,
+      `${program.id}: only ${hours} hours, so a full install on one side is impossible`
+    );
+  }
+
+  // Hours come out of the coaches' week, so sending a coordinator away costs
+  // Saturday. That is the link that makes the staff screen matter.
+  const programId = "program-1";
+  const coordinator = Object.values(state.staff)
+    .find((member) => member.programId === programId && member.role === "OFFENSIVE_COORDINATOR");
+  const before = preparationWeeklyPoints(state, programId);
+  const moved = structuredClone(state);
+  const moving = moved.staff[coordinator.id];
+  moving.allocation = { ...moving.allocation, SCOUT: moving.allocation.PREPARE + moving.allocation.SCOUT, PREPARE: 0 };
+  assert.ok(
+    preparationWeeklyPoints(moved, programId) < before - 2,
+    `moving a coordinator to scouting must cost practice hours (${before} to ${preparationWeeklyPoints(moved, programId)})`
+  );
+
+  // Maxing has to be felt, not merely charged. Recovery is roughly 2-3 a week.
+  assert.ok(repsFatigue(MAXIMUM_REPS_PER_SIDE * 2) > 6, "a maximum practice week must outrun recovery");
+});
+
+test("a scouting file pays in readiness, not in a prompt to change your call", () => {
+  // Anchored against the two numbers the engine already lives by: home field is
+  // 2.8 and a full emphasis counter is about 2.7 points of scoring. A complete
+  // file should be worth about a home game, and never more than the tactical
+  // layer it must not replace.
+  assert.ok(FULL_FILE_READINESS >= 2 && FULL_FILE_READINESS <= 3.2, "a full file should be worth about a home game");
+  assert.equal(scoutingReadiness(0), 0, "no file is worth nothing");
+  assert.ok(scoutingReadiness(DOSSIER_THRESHOLDS.GAME_PLAN) === FULL_FILE_READINESS);
+
+  // Monotone and diminishing: the first points matter most, and there is no
+  // cliff at a tier boundary.
+  let previous = -1;
+  let previousStep = Infinity;
+  for (const points of [0, 6, 12, 18, 24, 30, 36]) {
+    const value = scoutingReadiness(points);
+    assert.ok(value >= previous, `readiness must never fall (${points} pts)`);
+    if (previous >= 0) {
+      const step = value - previous;
+      assert.ok(step <= previousStep + 0.01, `readiness must have diminishing returns (${points} pts)`);
+      previousStep = step;
+    }
+    previous = value;
+  }
+  // Overspending past a complete file buys nothing, so points go elsewhere.
+  assert.equal(scoutingReadiness(DOSSIER_THRESHOLDS.GAME_PLAN * 3), FULL_FILE_READINESS);
+});
+
+test("a scouted opponent is measurably easier to beat", () => {
+  // The claim the readiness bonus exists to make. Same league, same seed, same
+  // commands: one run where a program has a complete file every week and one
+  // where it has none. Nothing else differs.
+  const season = (withFile) => {
+    let state = beginSeason(createFictionalLeague("readiness-value", 24));
+    const programId = "program-1";
+    let scored = 0;
+    let allowed = 0;
+    let games = 0;
+    for (let week = 0; week < 12; week += 1) {
+      if (withFile) {
+        const fixture = state.schedule.find((game) => game.week === state.week && !game.played
+          && (game.homeProgramId === programId || game.awayProgramId === programId));
+        if (fixture) {
+          const opponentId = fixture.homeProgramId === programId ? fixture.awayProgramId : fixture.homeProgramId;
+          state = { ...state, dossiers: { ...state.dossiers, [programId]: { [opponentId]: DOSSIER_THRESHOLDS.GAME_PLAN } } };
+        }
+      } else {
+        state = { ...state, dossiers: { ...state.dossiers, [programId]: {} } };
+      }
+      const result = advanceWeek(state);
+      state = result.state;
+      for (const event of result.events) {
+        if (event.type !== "GAME_COMPLETED") continue;
+        if (event.homeProgramId === programId) { scored += event.homeScore; allowed += event.awayScore; games += 1; }
+        else if (event.awayProgramId === programId) { scored += event.awayScore; allowed += event.homeScore; games += 1; }
+      }
+    }
+    return { margin: (scored - allowed) / Math.max(1, games), games };
+  };
+  const scouted = season(true);
+  const blind = season(false);
+  assert.ok(scouted.games >= 10 && blind.games >= 10, "both runs must play a season");
+  assert.ok(
+    scouted.margin > blind.margin,
+    `a complete file every week must be worth points (${scouted.margin.toFixed(2)} vs ${blind.margin.toFixed(2)})`
   );
 });

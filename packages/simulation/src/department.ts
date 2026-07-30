@@ -419,3 +419,40 @@ export function upcomingDossiers(
     })
     .filter((dossier): dossier is OpponentDossier => dossier !== null);
 }
+
+
+/**
+ * What a scouting file is worth on the field.
+ *
+ * The department's payoff used to be information alone, and information only
+ * cashes if you change your call to counter them. But a team is not a menu — an
+ * Air Raid roster asked to grind it out is running something it has never
+ * repped, which is what `planAlignment` exists to discourage. So the reward was
+ * designed out from under the system.
+ *
+ * A file now makes your own team better in that game instead: your guys have
+ * seen the formation on tape and react half a step faster. It never asks you to
+ * abandon what you run. The information still comes with it — that is what tells
+ * you where to spend practice hours — but it is no longer the thing you are
+ * paying for.
+ *
+ * Scaled against the anchors the engine already has: home field is worth 2.8,
+ * and a full emphasis counter about 2.7 points of scoring. A complete file is
+ * worth about the same as playing at home, which is the right order of magnitude
+ * for something the player pays for every single week.
+ */
+export const FULL_FILE_READINESS = 3;
+
+export function scoutingReadiness(dossierPoints: number): number {
+  const capped = clamp(dossierPoints, 0, DOSSIER_THRESHOLDS.GAME_PLAN);
+  // Square root, so the first points matter most and a full file is a
+  // diminishing-returns purchase rather than a cliff at each tier.
+  return Number((FULL_FILE_READINESS * Math.sqrt(capped / DOSSIER_THRESHOLDS.GAME_PLAN)).toFixed(2));
+}
+
+/** Plain-language version for the board and the week screen. */
+export function readinessNote(dossierPoints: number): string {
+  const bonus = scoutingReadiness(dossierPoints);
+  if (bonus <= 0) return "No file. Your guys go in cold.";
+  return `+${bonus.toFixed(1)} to every unit — they have seen this on tape`;
+}

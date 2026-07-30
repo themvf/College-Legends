@@ -46,6 +46,7 @@ import {
   MAXIMUM_TICKET_PRICE,
   MINIMUM_TICKET_PRICE,
   MAXIMUM_REPS_PER_SIDE,
+  repsFatigue,
   planExecution,
   staffModifiers,
   staffCard,
@@ -64,6 +65,8 @@ import {
   scoutingReport,
   DOSSIER_THRESHOLDS,
   SCOUTING_FUNDING_LABELS,
+  readinessNote,
+  FULL_FILE_READINESS,
   STAFF_FOCUSES,
   STAFF_FOCUS_LABELS,
   STAFF_TRAITS,
@@ -1462,7 +1465,7 @@ function WeekHub({ game, pending, onQueue, initialTab }: {
 
   return <section className="screen week-hub">
     <article className="panel week-header">
-      <p className="eyebrow">Week {game.state.week} · {preparation?.points ?? 0} prep · {preparation?.scoutingPoints ?? 0} scouting points</p>
+      <p className="eyebrow">Week {game.state.week} · {preparation?.points ?? 0} practice hours left · {preparation?.scoutingPoints ?? 0} scouting</p>
       <h2>{opponent ? `${atHome ? "Hosting" : "At"} ${opponent.name}` : "No game this week"}</h2>
       <ul className="decision-list">{decisions.map((decision) =>
         <li className={decision.attention ? "attention-row" : ""} key={decision.id}>
@@ -1673,11 +1676,20 @@ function WeekScouting({ game, pending, onQueue }: {
         <p><span>Opens a file at</span><strong>{DOSSIER_THRESHOLDS.TENDENCIES} / {DOSSIER_THRESHOLDS.PERSONNEL} / {DOSSIER_THRESHOLDS.GAME_PLAN}</strong></p>
       </div>
       <p className="muted">Points never bank. Whatever is not allocated by Saturday is gone.</p>
-      <p className="eyebrow tier-heading">What a file buys you</p>
+      <p className="eyebrow tier-heading">What a file is worth</p>
+      <p className="muted">
+        A file makes <strong>your own team better in that game</strong> — your guys have seen the formation on tape
+        and react half a step faster. A complete file is worth <strong>+{FULL_FILE_READINESS.toFixed(1)} to all four
+        units</strong>, which is about what playing at home is worth. It never asks you to change what you run.
+      </p>
+      <p className="eyebrow tier-heading">And what it tells you</p>
       <ol className="tier-ladder">{SCOUTING_TIERS.map((tier) =>
         <li key={tier}>
           <span className="tier-cost">{DOSSIER_THRESHOLDS[tier]} pts</span>
-          <span><strong>{SCOUTING_TIER_LABELS[tier]}</strong> — {SCOUTING_TIER_DESCRIPTIONS[tier].toLowerCase()}</span>
+          <span>
+            <strong>{SCOUTING_TIER_LABELS[tier]}</strong> — {SCOUTING_TIER_DESCRIPTIONS[tier].toLowerCase()}
+            <small> · {readinessNote(DOSSIER_THRESHOLDS[tier]).replace(" — they have seen this on tape", "")}</small>
+          </span>
         </li>)}
       </ol>
     </article>
@@ -1698,6 +1710,12 @@ function WeekScouting({ game, pending, onQueue }: {
             <span className={dossier.value >= 55 ? "dossier-value high" : "dossier-value"}>worth {dossier.value}</span>
           </div>
           <p className="muted">{dossier.valueNote}</p>
+          <p className={dossier.points > 0 ? "readiness-line" : "muted"}>
+            <strong>{readinessNote(dossier.points)}</strong>
+            {dossier.points < DOSSIER_THRESHOLDS.GAME_PLAN && (
+              <span className="muted"> · a complete file is +{FULL_FILE_READINESS.toFixed(1)}</span>
+            )}
+          </p>
           <p className="muted">
             File: {dossier.points} point{dossier.points === 1 ? "" : "s"} · {dossier.confidence}% reliable ·
             {" "}{dossier.tiers.length > 0 ? dossier.tiers.map((tier) => SCOUTING_TIER_LABELS[tier]).join(", ") : "nothing readable yet"}
@@ -1863,11 +1881,17 @@ function WeekInstall({ game, pending, onQueue }: {
 
   return <div className="week-tab-body">
     <article className="panel">
-      <p className="eyebrow">Practice · {remainingPrep} of {preparation?.weeklyPoints ?? 0} practice hours left this week</p>
-      <h2>How much of your game plan actually shows up on Saturday</h2>
+      <p className="eyebrow">Practice · {remainingPrep} of {preparation?.weeklyPoints ?? 0} coaching hours left this week</p>
+      <h2>You cannot practise everything. Pick a side.</h2>
+      <p className="muted">
+        Your staff gives you <strong>{preparation?.weeklyPoints ?? 0} hours</strong> of practice this week — that is
+        the hours your head coach and coordinators actually spend preparing the team, set on the Staff screen. A full
+        week on one side of the ball costs {MAXIMUM_REPS_PER_SIDE}. So you can drill one side hard, or split it, but
+        you cannot have both. That is the decision.
+      </p>
       <ol className="eli5">
         <li><strong>Picking a play call isn’t the same as running it.</strong> Whatever you called on the Game plan tab, your guys have to practise it first.</li>
-        <li><strong>Every rep you buy puts more of it on the field.</strong> Twelve reps a side is a full week of work. It costs practice hours and it tires the roster out.</li>
+        <li><strong>Hours come out of your coaches’ week.</strong> Send a coordinator out recruiting or scouting and you have fewer hours here, so less of Saturday gets installed.</li>
         <li><strong>You get a range, not a number.</strong> The coloured band is your best day to your worst day. A better coordinator lifts the whole band <em>and</em> squeezes it tighter, so you know what you’re getting.</li>
       </ol>
       {(["OFFENSE", "DEFENSE"] as const).map((side) => {
@@ -1900,7 +1924,7 @@ function WeekInstall({ game, pending, onQueue }: {
             <span className="rep-count">{reps} of {MAXIMUM_REPS_PER_SIDE} reps</span>
             <span className="muted">{reps === 0
               ? "You haven’t practised this at all — drag right to start"
-              : `Costs ${reps} practice hour${reps === 1 ? "" : "s"} · tires the roster by ${(reps * 0.22).toFixed(1)}`}</span>
+              : `Costs ${reps} coaching hour${reps === 1 ? "" : "s"} · tires the roster by ${repsFatigue(reps).toFixed(1)}`}</span>
           </p>
           {current.limits.map((limit) => <p className="attention" key={limit}>{limit}</p>)}
         </div>;

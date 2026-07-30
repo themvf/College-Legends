@@ -454,3 +454,5 @@ dd { margin:0; font-weight:700; text-align:right; }
 .rep-caption { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem;
   margin: 0.35rem 0 0; font-size: 0.82rem; }
 .rep-caption .rep-count { font-weight: 700; white-space: nowrap; }
+.readiness-line { margin: 0 0 0.35rem; font-size: 0.86rem; color: #6ed4a7; }
+.readiness-line .muted { color: #91a8b9; font-weight: 400; }
