@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, computeOverall, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
+import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, computeOverall, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, planWeekHours, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -259,21 +259,26 @@ test("development and staff decisions resolve through the shared command boundar
   const player = Object.values(state.players).find((candidate) => candidate.programId === "program-1");
   const staff = Object.values(state.staff).find((candidate) => candidate.programId === "program-1");
   assert.ok(player && staff);
-  const capacity = staffCapacity(staff.rating);
+  const capacity = staffCapacity(staff.rating, staff.trait);
   const result = advanceWeek(state, [
     { type: "SET_DEVELOPMENT_SPOTLIGHT", programId: "program-1", target: { type: "PLAYER", playerId: player.id }, focus: "STRENGTH" },
-    { type: "SET_STAFF_ALLOCATION", programId: "program-1", staffId: staff.id, allocation: { PREPARE: 0, SCOUT: 0, RECRUIT: 0, DEVELOP: capacity, RECOVER: 0 } }
+    { type: "SET_WEEK_FOCUS", programId: "program-1", focuses: ["DEVELOP"] }
   ]);
   assert.equal(result.state.players[player.id].developmentFocus, "STRENGTH");
-  assert.equal(result.state.staff[staff.id].allocation.DEVELOP, capacity);
   assert.ok(result.events.some((event) => event.type === "DEVELOPMENT_SPOTLIGHT_SET"));
-  assert.ok(result.events.some((event) => event.type === "STAFF_ALLOCATION_SET"));
+  assert.ok(result.events.some((event) => event.type === "WEEK_FOCUS_SET"));
+  assert.deepEqual(result.state.weekFocus["program-1"], ["DEVELOP"]);
 
-  // A coach cannot work more hours than he has, so every allocation is a trade.
-  const overcommitted = advanceWeek(state, [
-    { type: "SET_STAFF_ALLOCATION", programId: "program-1", staffId: staff.id, allocation: { PREPARE: capacity, SCOUT: capacity, RECRUIT: 0, DEVELOP: 0, RECOVER: 0 } }
+  // A coach's hours are derived from the week's priorities, so reaching in to set
+  // one man's week by hand is refused rather than silently overwritten. Two ways
+  // to set the same number is how a posted payoff starts disagreeing with the
+  // engine.
+  const byHand = advanceWeek(state, [
+    { type: "SET_STAFF_ALLOCATION", programId: "program-1", staffId: staff.id, allocation: { PREPARE: 0, SCOUT: 0, RECRUIT: 0, DEVELOP: capacity, RECOVER: 0 } }
   ]);
-  assert.ok(overcommitted.events.some((event) => event.type === "COMMAND_REJECTED"));
+  assert.ok(byHand.events.some((event) => event.type === "COMMAND_REJECTED"));
+  const byPool = advanceWeek(state, [{ type: "SET_WEEK_HOURS", programId: "program-1", focus: "SCOUT", hours: 10 }]);
+  assert.ok(byPool.events.some((event) => event.type === "COMMAND_REJECTED"));
 });
 
 test("facility upgrades spend budget and weekly finances are recorded", () => {
@@ -487,12 +492,21 @@ test("recovery assignments lower fatigue and recruiting staff and facilities gen
   const coach = Object.values(base.staff).find((candidate) => candidate.programId === "program-1");
   assert.ok(player && coach);
   player.fatigue = 20;
-  const noRecovery = advanceWeek(base);
-  const recovery = advanceWeek(base, [{
-    type: "SET_STAFF_ALLOCATION", programId: "program-1", staffId: coach.id,
-    allocation: { PREPARE: 0, SCOUT: 0, RECRUIT: 0, DEVELOP: 0, RECOVER: staffCapacity(coach.rating) }
-  }]);
-  assert.ok(recovery.state.players[player.id].fatigue < noRecovery.state.players[player.id].fatigue);
+  // The strength coach is money in, health out — he has no sliders at all, so a
+  // better one is the only way to recover faster.
+  const weakStaff = structuredClone(base);
+  const strongStaff = structuredClone(base);
+  for (const state of [weakStaff, strongStaff]) {
+    for (const member of Object.values(state.staff)) {
+      if (member.programId !== "program-1" || member.role !== "STRENGTH_COACH") continue;
+      member.rating = state === strongStaff ? 92 : 40;
+    }
+  }
+  assert.ok(
+    advanceWeek(strongStaff).state.players[player.id].fatigue
+      < advanceWeek(weakStaff).state.players[player.id].fatigue,
+    "a better strength coach must leave the roster fresher"
+  );
 
   const basicRecruiting = activeLeague("recruiting-investment", 4);
   const investedRecruiting = structuredClone(basicRecruiting);
@@ -500,11 +514,19 @@ test("recovery assignments lower fatigue and recruiting staff and facilities gen
   investedRecruiting.programs["program-1"].facilities.RECRUITING = 5;
   const basicPoints = recruitingWeeklyPoints(basicRecruiting, "program-1");
   const investedPoints = recruitingWeeklyPoints(investedRecruiting, "program-1");
-  assert.equal(investedPoints - basicPoints, 16);
-  const recruiter = Object.values(investedRecruiting.staff).find((candidate) => candidate.programId === "program-1");
-  assert.ok(recruiter);
-  recruiter.allocation = { PREPARE: 0, SCOUT: 0, RECRUIT: staffCapacity(recruiter.rating), DEVELOP: 0, RECOVER: 0 };
-  assert.ok(recruitingWeeklyPoints(investedRecruiting, "program-1") > investedPoints);
+  assert.equal(investedPoints - basicPoints, 12);
+  // And putting the week behind the trail has to matter at least as much as the
+  // building does, or the recruiting card cannot state a real trade.
+  const focused = structuredClone(investedRecruiting);
+  const plan = planWeekHours(focused, "program-1", ["RECRUIT"]);
+  for (const [staffId, allocation] of Object.entries(plan.byStaff)) focused.staff[staffId].allocation = allocation;
+  const idle = structuredClone(investedRecruiting);
+  const idlePlan = planWeekHours(idle, "program-1", ["INSTALL_OFFENSE"]);
+  for (const [staffId, allocation] of Object.entries(idlePlan.byStaff)) idle.staff[staffId].allocation = allocation;
+  const focusedPoints = recruitingWeeklyPoints(focused, "program-1");
+  const idlePoints = recruitingWeeklyPoints(idle, "program-1");
+  assert.ok(focusedPoints - idlePoints >= 12,
+    `making recruiting a priority must be worth real points (${idlePoints} to ${focusedPoints})`);
   assert.ok(projectedRecruitingOpenings(investedRecruiting, "program-1") > 0);
 });
 

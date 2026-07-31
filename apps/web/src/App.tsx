@@ -21,7 +21,8 @@ import type {
   StaffCandidate,
   StaffFocus,
   StaffMember,
-  StaffSkill
+  StaffSkill,
+  WeekFocus
 } from "@college-legends/model";
 import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
 import type { BoxScore, BoxScoreTeam, ProgramPreview } from "@college-legends/simulation";
@@ -38,19 +39,20 @@ import {
   stadiumCapacity as capacityForLevel,
   weeklyDecisions,
   weeklyBriefing,
+  weekPriorities,
+  WEEK_FOCUS_LABELS,
+  focusCapacity,
+  activeFocuses,
+  scoutingTargetFor,
   seasonExpectation,
   startingLineup,
-  weekAllocation,
   attributesFor,
   boxScore,
   latestBoxScore,
   MAXIMUM_WEEKLY_ADVERTISING,
   MAXIMUM_TICKET_PRICE,
   MINIMUM_TICKET_PRICE,
-  MAXIMUM_REPS_PER_SIDE,
-  MAXIMUM_PRACTICE_HOURS,
   personnelLabel,
-  repsFatigue,
   planExecution,
   staffModifiers,
   staffCard,
@@ -107,8 +109,8 @@ type Screen = "DASHBOARD" | "THIS_WEEK" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CH
  */
 type WeekTab = "WEEK" | "SCOUTING" | "BUSINESS" | "REPORT";
 const weekTabs: { id: WeekTab; label: string; detail: string }[] = [
-  { id: "WEEK", label: "Your week", detail: "Every hour your staff has, and the four things it can buy" },
-  { id: "SCOUTING", label: "Scouting board", detail: "Which opponent this week's film study is worth spending on" },
+  { id: "WEEK", label: "Your week", detail: "The one to three things your staff is chasing" },
+  { id: "SCOUTING", label: "Scouting board", detail: "Which game your film room is working on" },
   { id: "BUSINESS", label: "Business", detail: "Tickets and marketing — money, not hours" },
   { id: "REPORT", label: "Last Saturday", detail: "What all of it actually got you" }
 ];
@@ -1058,47 +1060,31 @@ function Staff({ game, pending, onQueue }: { game: GameView; pending: GameComman
   const staff = Object.values(game.state.staff).filter((item) => item.programId === programId);
   const [openMarket, setOpenMarket] = useState<string>();
 
-  const allocatableStaff = staff.filter((member) => member.role !== "STRENGTH_COACH");
-  const totalHours = allocatableStaff.reduce((sum, member) => sum + staffCapacity(member.rating, member.trait), 0);
-  const allocationOf = (memberId: string): Record<StaffFocus, number> => {
-    const member = game.state.staff[memberId]!;
-    const queued = pending.find((item): item is Extract<GameCommand, { type: "SET_STAFF_ALLOCATION" }> =>
-      item.type === "SET_STAFF_ALLOCATION" && item.staffId === memberId);
-    return { ...member.allocation, ...(queued?.allocation ?? {}) } as Record<StaffFocus, number>;
-  };
-  const spentHours = allocatableStaff.reduce((sum, member) =>
-    sum + STAFF_FOCUSES.reduce((total, focus) => total + allocationOf(member.id)[focus], 0), 0);
+  const allocatable = staff.filter((member) => member.role !== "STRENGTH_COACH");
+  const totalHours = allocatable.reduce((sum, member) => sum + staffCapacity(member.rating, member.trait), 0);
+  const capacity = focusCapacity(game.state, programId);
+  const chosen = activeFocuses(game.state, programId);
 
   return <section className="screen staff-screen">
     <article className="panel">
       <p className="eyebrow">Coaching staff · {money(staff.reduce((sum, member) => sum + member.salary, 0))} a year</p>
-      <h2>Hours: {totalHours} · Available: {totalHours - spentHours}</h2>
+      <h2>{totalHours} coaching hours a week · {capacity.capacity} priorit{capacity.capacity === 1 ? "y" : "ies"}</h2>
       <p className="muted">
-        Your head coach and coordinators divide these weekly hours. Game prep, scouting, recruiting, and
-        player development pull from the same total. The strength coach works automatically and is not included.
+        You do not divide these hours by hand — they follow from what you tell the staff to chase on your week
+        screen. What a hire changes is how far those hours go, and <strong>how many things you can chase at
+        once</strong>. {capacity.note}
+      </p>
+      <p className="muted">
+        This week: <strong>{chosen.length > 0 ? chosen.map((focus) => WEEK_FOCUS_LABELS[focus]).join(" · ") : "nothing chosen"}</strong>.
+        Coordinators always owe their own side of the ball a third of their week; the rest of the staff's time follows
+        the priorities.
       </p>
     </article>
 
     {staff.map((member) => {
-      const capacity = staffCapacity(member.rating, member.trait);
-      const allocation = allocationOf(member.id);
-      const spent = STAFF_FOCUSES.reduce((total, focus) => total + allocation[focus], 0);
+      const hours = staffCapacity(member.rating, member.trait);
+      const allocation = member.allocation;
       const isStrengthCoach = member.role === "STRENGTH_COACH";
-      const setFocus = (focus: StaffFocus, hours: number): void => {
-        const next = { ...allocation, [focus]: hours };
-        const over = STAFF_FOCUSES.reduce((total, key) => total + next[key], 0) - capacity;
-        // Take the overflow out of the other jobs so a slider is never blocked
-        // by hours the player has forgotten they spent somewhere else.
-        for (let remaining = over; remaining > 0;) {
-          const donor = STAFF_FOCUSES.filter((key) => key !== focus && next[key] > 0)
-            .sort((left, right) => next[right] - next[left])[0];
-          if (!donor) break;
-          const taken = Math.min(remaining, next[donor]);
-          next[donor] -= taken;
-          remaining -= taken;
-        }
-        onQueue({ type: "SET_STAFF_ALLOCATION", programId, staffId: member.id, allocation: next });
-      };
       const queuedReplacement = pending.find((item): item is Extract<GameCommand, { type: "REPLACE_STAFF" }> =>
         item.type === "REPLACE_STAFF" && item.staffId === member.id);
       const candidates = openMarket === member.id ? staffCandidatesFor(game.state, programId, member.id) : [];
@@ -1124,15 +1110,18 @@ function Staff({ game, pending, onQueue }: { game: GameView; pending: GameComman
           <p key={modifier.label}><span>{modifier.label}</span><strong>{modifier.value}</strong></p>)}
         </div>
         {isStrengthCoach
-          ? <p className="eyebrow">Automatic weekly work · no allocation sliders</p>
-          : <p className="eyebrow">His week · {spent} of {capacity} hours allocated</p>}
-        {!isStrengthCoach && STAFF_FOCUSES.map((focus) => <div className="allocation-row" key={focus}>
-          <p className="plan-label">{STAFF_FOCUS_LABELS[focus]}<span className="hours">{allocation[focus]}h</span></p>
-          <input type="range" min={0} max={capacity} value={allocation[focus]}
-            aria-label={`${STAFF_FOCUS_LABELS[focus]} hours for ${member.name}`}
-            onChange={(event) => setFocus(focus, Number(event.target.value))} />
-          <p className="muted">{staffFocusPayoff(member, focus)}</p>
-        </div>)}
+          ? <p className="eyebrow">Automatic weekly work · salary buys health, not hours</p>
+          : <p className="eyebrow">His {hours}-hour week, as the priorities have set it</p>}
+        {!isStrengthCoach && STAFF_FOCUSES.filter((focus) => focus !== "RECOVER").map((focus) =>
+          <div className="allocation-row read-only" key={focus}>
+            <p className="plan-label">
+              {STAFF_FOCUS_LABELS[focus]}<span className="hours">{allocation[focus] ?? 0}h</span>
+            </p>
+            <div className="allocation-bar">
+              <span style={{ width: `${(allocation[focus] ?? 0) / Math.max(1, hours) * 100}%` }} />
+            </div>
+            <p className="muted">{staffFocusPayoff(member, focus)}</p>
+          </div>)}
         {queuedReplacement && <p className="attention">Hire is queued — it goes through when you advance the week.</p>}
         {candidates.length > 0 && <div className="coach-list">{options.map((option) =>
           <CoachOption busy={false} key={option.key} option={option} />)}
@@ -1460,12 +1449,13 @@ function WeekHub({ game, pending, onQueue, initialTab }: {
   const atHome = fixture?.homeProgramId === programId;
   const opponent = fixture ? game.state.programs[atHome ? fixture.awayProgramId : fixture.homeProgramId] ?? null : null;
 
-  const hours = weekAllocation(game.state, programId);
+  const capacity = focusCapacity(game.state, programId);
+  const chosen = activeFocuses(game.state, programId);
+  const scoutTargetId = scoutingTargetFor(game.state, programId);
   const flagged: Record<WeekTab, number> = {
-    // Unspent hours are the single most wasteful thing a player can do, because
-    // hours never bank. That is what the badge is for.
-    WEEK: (hours.available > 0 ? 1 : 0)
-      + ((preparation?.offensiveReps ?? 0) + (preparation?.defensiveReps ?? 0) === 0 ? 1 : 0),
+    // A priority nobody claimed is a week the staff spends on nothing in
+    // particular, and nothing banks. That is what the badge is for.
+    WEEK: chosen.length < capacity.capacity ? 1 : 0,
     SCOUTING: scouting.opponentProgramId && scouting.tiers.length === 0 ? 1 : 0,
     BUSINESS: decisions.filter((decision) => decision.attention).length,
     REPORT: 0
@@ -1473,12 +1463,27 @@ function WeekHub({ game, pending, onQueue, initialTab }: {
 
   return <section className="screen week-hub">
     <article className="panel week-header">
-      <p className="eyebrow">Week {game.state.week} · {preparation?.points ?? 0} practice hours left · {preparation?.scoutingPoints ?? 0} scouting</p>
+      <p className="eyebrow">
+        Week {game.state.week} · chasing {chosen.length} of {capacity.capacity}
+      </p>
       <h2>{opponent ? `${atHome ? "Hosting" : "At"} ${opponent.name}` : "No game this week"}</h2>
-      <ul className="decision-list">{decisions.map((decision) =>
-        <li className={decision.attention ? "attention-row" : ""} key={decision.id}>
-          <span>{decision.label}</span><strong>{decision.current}</strong>
-        </li>)}
+      <ul className="decision-list">
+        <li className={chosen.length < capacity.capacity ? "attention-row" : ""}>
+          <span>This week your staff is chasing</span>
+          <strong>{chosen.length > 0 ? chosen.map((focus) => WEEK_FOCUS_LABELS[focus]).join(" · ") : "nothing"}</strong>
+        </li>
+        <li>
+          <span>Practice reps</span>
+          <strong>{preparation?.offensiveReps ?? 0} offense · {preparation?.defensiveReps ?? 0} defense</strong>
+        </li>
+        <li>
+          <span>The film room is on</span>
+          <strong>{scoutTargetId ? game.state.programs[scoutTargetId]?.name ?? "nobody" : "nobody"}</strong>
+        </li>
+        {decisions.filter((decision) => decision.attention).map((decision) =>
+          <li className="attention-row" key={decision.id}>
+            <span>{decision.label}</span><strong>{decision.current}</strong>
+          </li>)}
       </ul>
     </article>
     <nav className="week-tabs">{weekTabs.map((entry) =>
@@ -1487,7 +1492,7 @@ function WeekHub({ game, pending, onQueue, initialTab }: {
         <span>{entry.detail}</span>
       </button>)}
     </nav>
-    {tab === "WEEK" && <WeekPool game={game} pending={pending} onQueue={onQueue} />}
+    {tab === "WEEK" && <WeekPriorities game={game} pending={pending} onQueue={onQueue} />}
     {tab === "SCOUTING" && <WeekScouting game={game} pending={pending} onQueue={onQueue} />}
     {tab === "BUSINESS" && <WeekDecisions game={game} pending={pending} onQueue={onQueue} />}
     {tab === "REPORT" && <WeekReport game={game} />}
@@ -1495,110 +1500,96 @@ function WeekHub({ game, pending, onQueue, initialTab }: {
 }
 
 /**
- * The week as one screen. Every hour the staff has, and the four things it can
- * buy, competing against each other in one place.
+ * The week as five cards, and you name the priorities.
  *
- * This replaces four screens. Hours were edited per coach on the staff page —
- * roughly twenty sliders — and then spent again as prep points on a practice page
- * and scouting points on a board, so the jobs never visibly competed and each
- * downstream screen looked like a free pool. The honest answer to "why wouldn't I
- * max practice every week" was: you would, because those hours could not buy
- * anything else.
+ * This replaces a pool of hours behind four sliders. Hours are what the engine
+ * spends, but they are not a decision anybody can hold: four sliders over a
+ * 24-hour pool is about two thousand valid weeks, every drag moves three numbers
+ * you did not touch, and the coaches disappear into one anonymous total so
+ * hiring never shows up anywhere. A playtest verdict of "I don't even understand
+ * it" is what that produces.
+ *
+ * So: everything runs at a baseline whether you pick it or not — no chore, no
+ * punishment for not reading a screen — and what you actually do is name the one
+ * to three things the staff is chasing. Each card says who runs it, what happens
+ * if you leave it alone, what happens if you pick it, and why it might matter
+ * this particular week.
  */
-function WeekPool({ game, pending, onQueue }: {
+function WeekPriorities({ game, pending, onQueue }: {
   game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void;
 }): ReactElement {
   const programId = game.playerProgramId;
   const program = game.state.programs[programId]!;
-  const preparation = game.state.preparation?.[programId];
-  const hours = weekAllocation(game.state, programId);
+  const capacity = focusCapacity(game.state, programId);
   const identity = program.schemeIdentity;
 
-  const queuedHours = (focus: StaffFocus): number | null => {
-    const queued = [...pending].reverse().find((command): command is Extract<GameCommand, { type: "SET_WEEK_HOURS" }> =>
-      command.type === "SET_WEEK_HOURS" && command.focus === focus);
-    return queued ? queued.hours : null;
-  };
-  const hoursOn = (focus: StaffFocus): number => queuedHours(focus) ?? hours.byFocus[focus];
-  const spent = (["PREPARE", "SCOUT", "RECRUIT", "DEVELOP"] as const)
-    .reduce((total, focus) => total + hoursOn(focus), 0);
-  const available = Math.max(0, hours.totalHours - spent);
+  // The queued pick wins over what is committed, so the screen answers instantly
+  // rather than after the week is advanced.
+  const queued = [...pending].reverse()
+    .find((command): command is Extract<GameCommand, { type: "SET_WEEK_FOCUS" }> => command.type === "SET_WEEK_FOCUS");
+  const cards = weekPriorities(game.state, programId);
+  const chosen: WeekFocus[] = queued ? queued.focuses : cards.filter((card) => card.chosen).map((card) => card.focus);
+  const isChosen = (focus: WeekFocus) => chosen.includes(focus);
 
-  const JOBS: { focus: StaffFocus; label: string; blurb: string; payoff: (value: number) => string }[] = [
-    {
-      focus: "PREPARE",
-      label: "Practice",
-      blurb: "Installs your game plan. Split between the two sides below.",
-      payoff: (value) => `${Math.min(value, MAXIMUM_PRACTICE_HOURS)} practice hours to spend on the two sides`
-    },
-    {
-      focus: "SCOUT",
-      label: "Scouting",
-      blurb: "Film study on a future opponent. Assign the points on the Scouting board.",
-      payoff: (value) => `about ${Math.round(weeklyScoutingOutput(game.state, programId) * Math.max(0.1, value / Math.max(1, hours.byFocus.SCOUT || 1)))} scouting points this week`
-    },
-    {
-      focus: "DEVELOP",
-      label: "Developing players",
-      blurb: "Coaching a man up. Pick who on the Development screen.",
-      payoff: (value) => value === 0 ? "nobody gets extra work" : `+${(value * 0.9).toFixed(0)}% growth on whoever you spotlight`
-    },
-    {
-      focus: "RECRUIT",
-      label: "Recruiting",
-      blurb: "Next year's roster. Pays off a season from now.",
-      payoff: (value) => value === 0 ? "nobody is on the road" : `+${Math.round(value * 2.6)} on the recruiting trail`
-    }
-  ];
+  const toggle = (focus: WeekFocus): void => {
+    const next = isChosen(focus)
+      ? chosen.filter((entry) => entry !== focus)
+      // Picking past capacity drops the oldest choice, so the control never
+      // silently refuses. A card that does nothing when tapped reads as broken.
+      : [...chosen, focus].slice(-capacity.capacity);
+    onQueue({ type: "SET_WEEK_FOCUS", programId, focuses: next });
+  };
+
+  const ranked = [...cards].sort((left, right) => right.stakes - left.stakes);
+  const suggestion = ranked.find((card) => !isChosen(card.focus) && !card.blocked && card.stakes >= 55);
 
   return <div className="week-tab-body">
-    <article className="panel pool-panel">
-      <p className="eyebrow">Your staff · {hours.totalHours} hours this week</p>
-      <h2>{available === 0 ? "Every hour is spoken for" : `${available} hour${available === 1 ? "" : "s"} unassigned`}</h2>
+    <article className="panel focus-header">
+      <p className="eyebrow">Week {game.state.week} · {capacity.power} staff rating</p>
+      <h2>{chosen.length === capacity.capacity
+        ? `Your staff is chasing ${chosen.length === 1 ? "one thing" : `${chosen.length} things`}`
+        : `Pick ${capacity.capacity - chosen.length} more`}</h2>
       <p className="muted">
-        Your head coach and coordinators have <strong>{hours.totalHours} hours</strong> between them. Hours never bank —
-        whatever you don't assign by Saturday is gone. So the question is never how much to spend, it's{" "}
-        <strong>which of these four</strong> gets it. Practice pays this Saturday, scouting pays a Saturday you choose,
-        developing pays slowly and forever, recruiting pays next year.
+        Everything below happens anyway — your coaches turn up and do their jobs. What you choose here is what they
+        put the week into. <strong>{capacity.note}</strong>
       </p>
-      <div className="pool-bar" aria-label="How the week is allocated">
-        {(["PREPARE", "SCOUT", "DEVELOP", "RECRUIT"] as const).map((focus) =>
-          hoursOn(focus) > 0 && <span className={`pool-slice ${focus.toLowerCase()}`} key={focus}
-            style={{ width: `${hoursOn(focus) / Math.max(1, hours.totalHours) * 100}%` }}
-            title={`${STAFF_FOCUS_LABELS[focus]}: ${hoursOn(focus)}h`} />)}
-        {available > 0 && <span className="pool-slice idle" style={{ width: `${available / Math.max(1, hours.totalHours) * 100}%` }}
-          title={`${available}h unassigned`} />}
+      <div className="focus-pips" aria-label={`${chosen.length} of ${capacity.capacity} priorities chosen`}>
+        {Array.from({ length: capacity.capacity }, (_, index) =>
+          <span className={index < chosen.length ? "focus-pip filled" : "focus-pip"} key={index} />)}
+        <span className="muted">{chosen.length} of {capacity.capacity}</span>
       </div>
-
-      {JOBS.map((job) => {
-        const value = hoursOn(job.focus);
-        return <div className="pool-row" key={job.focus}>
-          <p className="plan-label">{job.label}<span className="hours">{value}h</span></p>
-          <input type="range" min={0} max={hours.totalHours} value={value}
-            aria-label={`Hours on ${job.label}`}
-            // No clamp: raising one job takes hours from the others, which is
-            // the whole point. Clamping to what is spare made the control dead
-            // whenever the week was already fully assigned — which is always.
-            onChange={(event) => onQueue({
-              type: "SET_WEEK_HOURS", programId, focus: job.focus, hours: Number(event.target.value)
-            })} />
-          <p className="pool-payoff"><strong>{job.payoff(value)}</strong></p>
-          <p className="muted">{job.blurb}</p>
-        </div>;
-      })}
+      {suggestion && <p className="focus-suggestion">
+        <strong>Worth a look:</strong> {suggestion.label} — {suggestion.stakesNote}
+      </p>}
     </article>
 
-    <article className="panel">
-      <p className="eyebrow">
-        Practice · {hoursOn("PREPARE") > 0 ? `${Math.min(hoursOn("PREPARE"), MAXIMUM_PRACTICE_HOURS)} hours` : "no hours assigned"}
-      </p>
-      <h2>You cannot drill both sides. Pick one.</h2>
-      <p className="muted">
-        A full week on one side of the ball costs <strong>{MAXIMUM_REPS_PER_SIDE}</strong>, so even a staff that spends
-        every hour on practice cannot install both. Reps also tire the roster, and fatigue does not come off on its own.
-      </p>
-      <PracticeSplit game={game} pending={pending} onQueue={onQueue} />
-    </article>
+    <div className="focus-cards">{cards.map((card) => {
+      const picked = isChosen(card.focus);
+      return <article className={`focus-card${picked ? " picked" : ""}${card.blocked ? " blocked" : ""}`} key={card.focus}>
+        <header>
+          <div>
+            <h3>{card.label}</h3>
+            <p className="muted">{card.blurb}</p>
+          </div>
+          <span className={card.stakes >= 60 ? "stakes high" : card.stakes >= 30 ? "stakes" : "stakes low"}>
+            {card.stakes}
+          </span>
+        </header>
+        <p className="focus-owner">
+          <strong>{card.ownerName}</strong> <span className="muted">{card.ownerNote}</span>
+        </p>
+        <div className="focus-outcomes">
+          <p className={picked ? "muted" : "focus-live"}><span>Leave it alone</span><strong>{card.baseline}</strong></p>
+          <p className={picked ? "focus-live" : "muted"}><span>Make it a priority</span><strong>{card.focused}</strong></p>
+        </div>
+        <p className="focus-why">{card.blocked ?? card.stakesNote}</p>
+        <button className={picked ? "focus-button picked" : "focus-button"}
+          disabled={Boolean(card.blocked)}
+          onClick={() => toggle(card.focus)}>
+          {picked ? "Chasing this" : card.blocked ? "Not available" : "Make it a priority"}
+        </button>
+      </article>;
+    })}</div>
 
     <article className="panel">
       <p className="eyebrow">What you run</p>
@@ -1610,8 +1601,8 @@ function WeekPool({ game, pending, onQueue }: {
         scheme, and that only happens between seasons.
       </p>
       <p className="muted">
-        Practice decides how much of it holds up. Scouting decides how ready your guys are for the opponent in front
-        of them.
+        Practice decides how much of it holds up on Saturday. Scouting decides how ready your guys are for the man
+        across from them. Both come out of the same week, which is why you cannot have all of it.
       </p>
     </article>
   </div>;
@@ -1788,24 +1779,24 @@ function WeekScouting({ game, pending, onQueue }: {
 }): ReactElement {
   const programId = game.playerProgramId;
   const program = game.state.programs[programId]!;
-  const preparation = game.state.preparation?.[programId];
-  const available = preparation?.scoutingPoints ?? 0;
   const board = scoutingBoard(game.state, programId);
   const scouting = scoutingReport(game.state, programId);
   const level = program.facilities.SCOUTING ?? 1;
-  const [stake, setStake] = useState<Record<string, number>>({});
+  const queuedTarget = [...pending].reverse()
+    .find((command): command is Extract<GameCommand, { type: "SET_SCOUTING_TARGET" }> => command.type === "SET_SCOUTING_TARGET");
+  const target = queuedTarget ? queuedTarget.opponentProgramId : scoutingTargetFor(game.state, programId);
+  const scoutFocused = activeFocuses(game.state, programId).includes("SCOUT");
 
   return <div className="week-tab-body">
     <article className="panel">
       <p className="eyebrow">Opponent scouting department · tier {level} of 5</p>
-      <h2>{available} of {preparation?.weeklyScoutingPoints ?? 0} points left this week</h2>
+      <h2>{weeklyScoutingOutput(game.state, programId)} points a week{scoutFocused ? ", with the week behind it" : " at baseline"}</h2>
       <p className="muted">{scoutingDepartmentSummary(level)}</p>
-      <div className="snapshot-list">
-        <p><span>Funding tier</span><strong>{SCOUTING_FUNDING_LABELS[level] ?? "Funded"}</strong></p>
-        <p><span>Weekly output</span><strong>{weeklyScoutingOutput(game.state, programId)} points</strong></p>
-        <p><span>Opens a file at</span><strong>{DOSSIER_THRESHOLDS.TENDENCIES} / {DOSSIER_THRESHOLDS.PERSONNEL} / {DOSSIER_THRESHOLDS.GAME_PLAN}</strong></p>
-      </div>
-      <p className="muted">Points never bank. Whatever is not allocated by Saturday is gone.</p>
+      <p className="muted">
+        You do not assign the points — the department files everything it produces against the game you point it at.
+        The decision is <strong>which game</strong>. Make scouting a priority on your week screen and the same
+        department produces considerably more.
+      </p>
       <p className="eyebrow tier-heading">What a file is worth</p>
       <p className="muted">
         A file makes <strong>your own team better in that game</strong> — your guys have seen the formation on tape
@@ -1826,13 +1817,17 @@ function WeekScouting({ game, pending, onQueue }: {
 
     <article className="panel">
       <p className="eyebrow">The board · {board.length} game{board.length === 1 ? "" : "s"} left</p>
-      <h2>Where the week goes</h2>
-      <p className="muted">A ranked win pays in followers and national attention; a routine one barely moves the program. Spend where the prize is.</p>
+      <h2>Which game is the film room on?</h2>
+      <p className="muted">
+        A ranked win pays in followers and national attention; a routine one barely moves the program. Point the
+        department at a game several weeks out and it arrives with a complete file — point it at this Saturday every
+        week and you never get past the first tier.
+      </p>
       {board.map((dossier) => {
         const opponent = game.state.programs[dossier.opponentProgramId]!;
-        const staked = stake[dossier.opponentProgramId] ?? Math.min(available, 6);
         const nextTier = SCOUTING_TIERS.find((tier) => !dossier.tiers.includes(tier));
-        return <div className={dossier.week === game.state.week ? "dossier-row now" : "dossier-row"} key={dossier.opponentProgramId}>
+        const isTarget = target === dossier.opponentProgramId;
+        return <div className={`dossier-row${dossier.week === game.state.week ? " now" : ""}${isTarget ? " targeted" : ""}`} key={dossier.opponentProgramId}>
           <div className="dossier-head">
             <p className="plan-label">
               Week {dossier.week} · {opponent.abbreviation} · #{opponent.nationalRank} · {opponent.wins}–{opponent.losses}
@@ -1851,19 +1846,10 @@ function WeekScouting({ game, pending, onQueue }: {
             {" "}{dossier.tiers.length > 0 ? dossier.tiers.map((tier) => SCOUTING_TIER_LABELS[tier]).join(", ") : "nothing readable yet"}
             {nextTier ? ` · ${DOSSIER_THRESHOLDS[nextTier] - dossier.points} more opens ${SCOUTING_TIER_LABELS[nextTier].toLowerCase()}` : " · complete"}
           </p>
-          <div className="dossier-controls">
-            <input type="range" min={1} max={Math.max(1, available)} value={Math.min(staked, Math.max(1, available))}
-              aria-label={`Points to put on the ${opponent.abbreviation} file`}
-              onChange={(event) => setStake({ ...stake, [dossier.opponentProgramId]: Number(event.target.value) })} />
-            <button className="replace-button" disabled={available < 1}
-              onClick={() => onQueue({
-                type: "ALLOCATE_SCOUTING", programId,
-                opponentProgramId: dossier.opponentProgramId,
-                points: Math.min(staked, available)
-              })}>
-              Assign {Math.min(staked, Math.max(0, available))}
-            </button>
-          </div>
+          <button className={isTarget ? "focus-button picked" : "focus-button"}
+            onClick={() => onQueue({ type: "SET_SCOUTING_TARGET", programId, opponentProgramId: dossier.opponentProgramId })}>
+            {isTarget ? "The film room is on this one" : `Put the film room on ${opponent.abbreviation}`}
+          </button>
         </div>;
       })}
       {board.length === 0 && <p className="muted">Nothing left on the schedule to scout.</p>}
@@ -1957,9 +1943,42 @@ function WeekReport({ game }: { game: GameView }): ReactElement {
     .find((event): event is Extract<GameEvent, { type: "GAME_PLAN_REPORT" }> =>
       event.type === "GAME_PLAN_REPORT" && event.programId === programId);
   const box = useMemo(() => latestBoxScore(game.state, programId), [game.state, programId]);
+  const payoff = [...game.state.eventHistory]
+    .reverse()
+    .find((event): event is Extract<GameEvent, { type: "WEEK_FOCUS_PAYOFF" }> =>
+      event.type === "WEEK_FOCUS_PAYOFF" && event.programId === programId);
 
   return <div className="week-tab-body">
     {box && <BoxScorePanel box={box} programId={programId} />}
+    {payoff && payoff.focuses.length > 0 && <article className="panel">
+      <p className="eyebrow">What you chased last week</p>
+      <h2>{payoff.focuses.map((focus) => WEEK_FOCUS_LABELS[focus]).join(" · ")}</h2>
+      <div className="snapshot-list">
+        <p>
+          <span>Offense on Saturday</span>
+          <strong>{Math.round(payoff.offensiveExecution * 100)}% of the plan held up</strong>
+        </p>
+        <p>
+          <span>Defense on Saturday</span>
+          <strong>{Math.round(payoff.defensiveExecution * 100)}% of the plan held up</strong>
+        </p>
+        <p>
+          <span>Film on {payoff.scoutedOpponentId ? game.state.programs[payoff.scoutedOpponentId]?.abbreviation ?? "them" : "nobody"}</span>
+          <strong>{payoff.scoutingReadiness > 0
+            ? `+${payoff.scoutingReadiness.toFixed(1)} to every unit`
+            : "your guys went in cold"}</strong>
+        </p>
+        {payoff.developedPlayerId && <p>
+          <span>{game.state.players[payoff.developedPlayerId]?.name ?? "Development"}</span>
+          <strong>+{payoff.developedOverallGain.toFixed(2)} Overall</strong>
+        </p>}
+        <p><span>Recruiting</span><strong>+{payoff.recruitingPointsAdded} points on the trail</strong></p>
+      </div>
+      <p className="muted">
+        These are the numbers your week actually bought. A choice the game never mentions again is a choice that reads
+        as optional.
+      </p>
+    </article>}
     {!lastReport && <article className="panel">
       <p className="eyebrow">Last week</p>
       <h2>Nothing to review yet</h2>
@@ -1991,120 +2010,6 @@ function WeekReport({ game }: { game: GameView }): ReactElement {
       </table>
       <ul className="plan-notes">{lastReport.notes.map((note) => <li key={note}>{note}</li>)}</ul>
     </article>}
-  </div>;
-}
-
-function PracticeSplit({ game, pending, onQueue }: {
-  game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void;
-}): ReactElement {
-  const programId = game.playerProgramId;
-  const preparation = game.state.preparation?.[programId];
-  const remaining = preparation?.points ?? 0;
-  const queuedReps = (["OFFENSE", "DEFENSE"] as const).reduce((total, side) => {
-    const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_PRACTICE_REPS" }> =>
-      command.type === "SET_PRACTICE_REPS" && command.side === side);
-    if (!queued) return total;
-    const saved = side === "OFFENSE" ? preparation?.offensiveReps ?? 0 : preparation?.defensiveReps ?? 0;
-    return total + (queued.reps - saved);
-  }, 0);
-  const remainingPrep = remaining - queuedReps;
-
-  return <>
-    <p className="muted pool-note">
-      {remainingPrep} of {preparation?.weeklyPoints ?? 0} practice hours left. Whatever your coordinators do not spend
-      here is spent somewhere else — or wasted.
-    </p>
-      {(["OFFENSE", "DEFENSE"] as const).map((side) => {
-        const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_PRACTICE_REPS" }> =>
-          command.type === "SET_PRACTICE_REPS" && command.side === side);
-        const saved = side === "OFFENSE" ? preparation?.offensiveReps ?? 0 : preparation?.defensiveReps ?? 0;
-        const reps = queued?.reps ?? saved;
-        const current = planExecution(game.state, programId, side, reps);
-        const without = planExecution(game.state, programId, side, 0);
-        return <div className="install-row" key={side}>
-          <p className="plan-label">
-            {side === "OFFENSE" ? "Offense" : "Defense"} — {current.installerName} runs this practice
-          </p>
-          <div className="execution-bar" aria-label={`${side} execution band`}>
-            <span className="execution-band" style={{ left: `${current.low * 100}%`, width: `${Math.max(2, (current.high - current.low) * 100)}%` }} />
-            <span className="execution-par" style={{ left: "55%" }} />
-          </div>
-          <p className="execution-scale">
-            <span>Nothing works</span>
-            <span className="par-note">average team</span>
-            <span>Flawless</span>
-          </p>
-          <p className="execution-summary">
-            <strong>{Math.round(current.low * 100)}–{Math.round(current.high * 100)}% of it works on Saturday</strong>
-            {reps > 0 && <span className="muted"> — it was {Math.round(without.low * 100)}–{Math.round(without.high * 100)}% before you practised</span>}
-          </p>
-          <input type="range" min={0} max={MAXIMUM_REPS_PER_SIDE} value={reps}
-            onChange={(event) => onQueue({ type: "SET_PRACTICE_REPS", programId, side, reps: Number(event.target.value) })} />
-          <p className="rep-caption">
-            <span className="rep-count">{reps} of {MAXIMUM_REPS_PER_SIDE} reps</span>
-            <span className="muted">{reps === 0
-              ? "You haven’t practised this at all — drag right to start"
-              : `Costs ${reps} coaching hour${reps === 1 ? "" : "s"} · tires the roster by ${repsFatigue(reps).toFixed(1)}`}</span>
-          </p>
-          {current.limits.map((limit) => <p className="attention" key={limit}>{limit}</p>)}
-        </div>;
-      })}
-    <p className="muted">
-      Your offensive coordinator installs the offense and your defensive coordinator the defense. Move either one's
-      hours to scouting or recruiting above and your head coach covers, at a discount.
-    </p>
-  </>;
-}
-
-function WeekPlaybook({ game, pending, onQueue }: {
-  game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void;
-}): ReactElement {
-  const programId = game.playerProgramId;
-  const saved = game.state.gamePlans?.[programId] ?? { ...DEFAULT_GAME_PLAN };
-  const queued = pending.filter((command): command is Extract<GameCommand, { type: "SET_GAME_PLAN" }> => command.type === "SET_GAME_PLAN");
-  const plan: GamePlan = { ...saved, ...Object.assign({}, ...queued.map((command) => command.plan)) };
-  const edges = projectGamePlan(game.state, programId);
-  const opponentScheduled = edges.some((edge) => edge.edge !== null);
-  const scouting = scoutingReport(game.state, programId);
-
-  return <div className="week-tab-body">
-    <article className="panel">
-      <p className="eyebrow">This week's matchups</p>
-      <h2>What the plan is worth</h2>
-      <p className="muted">{opponentScheduled
-        ? "Their side is the scouted estimate, not a certainty. Every call concedes something — the right one depends on what they do."
-        : scouting.opponentProgramId
-          ? "Build the file to the personnel tier to see what you are up against."
-          : "No opponent is scheduled this week, so only your own unit ratings are shown."}</p>
-      <div className="unit-grid">{edges.map((edge) =>
-        <div className={`unit-card ${edge.edge === null ? "" : edge.edge >= 2 ? "good" : edge.edge <= -2 ? "bad" : "even"}`} key={edge.unit}>
-          <p className="unit-name">{unitLabel(edge.unit)}</p>
-          <p className="unit-rating">{edge.rating.toFixed(1)}</p>
-          <p className="muted">{edge.opposingRating === null ? "opponent unscouted" : `vs ${edge.opposingRating.toFixed(1)}`}</p>
-          <p className="unit-verdict">{edge.edge === null ? "—" : `${edge.verdict} (${edge.edge > 0 ? "+" : ""}${edge.edge})`}</p>
-        </div>)}
-      </div>
-    </article>
-    {gamePlanSections.map((section) =>
-      <article className="panel" key={section.title}>
-        <p className="eyebrow">{section.title}</p>
-        <h2>{section.title === "Offense" ? "How you attack" : "How you defend"}</h2>
-        {section.keys.map((key) =>
-          <div className="plan-row" key={key}>
-            <p className="plan-label">{gamePlanLabels[key]}</p>
-            <div className="plan-options">{GAME_PLAN_OPTIONS[key].map((option) =>
-              <button
-                className={plan[key] === option.value ? "plan-option active" : "plan-option"}
-                key={option.value}
-                onClick={() => onQueue({ type: "SET_GAME_PLAN", programId, plan: { [key]: option.value } as Partial<GamePlan> })}
-              >
-                <strong>{option.label}</strong>
-                <span className="effect">{option.effect}</span>
-                <span className="tradeoff">{option.tradeoff}</span>
-              </button>)}
-            </div>
-          </div>)}
-      </article>)}
   </div>;
 }
 

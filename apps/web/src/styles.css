@@ -307,8 +307,6 @@ dd { margin:0; font-weight:700; text-align:right; }
 .dossier-head .plan-label { margin-bottom: 0.2rem; }
 .dossier-value { font-size: 0.78rem; padding: 0.15rem 0.5rem; border-radius: 999px; border: 1px solid var(--line, #2a2f3a); opacity: 0.7; white-space: nowrap; }
 .dossier-value.high { border-color: #e8b552; color: #e8b552; opacity: 1; }
-.dossier-controls { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.35rem; }
-.dossier-controls input[type="range"] { flex: 1; margin: 0; }
 .plan-option.static { cursor: default; }
 
 /* A coach's week, split across the jobs a staff does. */
@@ -457,19 +455,38 @@ dd { margin:0; font-weight:700; text-align:right; }
 .readiness-line { margin: 0 0 0.35rem; font-size: 0.86rem; color: #6ed4a7; }
 .readiness-line .muted { color: #91a8b9; font-weight: 400; }
 
-/* The week as one pool: four jobs competing for the same hours. */
-.pool-panel .pool-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden;
-  background: rgba(255,255,255,.06); margin: .9rem 0 1.2rem; }
-.pool-slice { display: block; height: 100%; }
-.pool-slice.prepare { background: #6ea8fe; }
-.pool-slice.scout { background: #e0b057; }
-.pool-slice.develop { background: #6ed4a7; }
-.pool-slice.recruit { background: #c98be0; }
-.pool-slice.idle { background: repeating-linear-gradient(45deg, rgba(255,255,255,.14) 0 4px, transparent 4px 8px); }
-.pool-row { border-top: 1px solid #294864; padding-top: .85rem; margin-top: .85rem; }
-.pool-row input[type="range"] { width: 100%; margin: .25rem 0 .35rem; }
-.pool-row .plan-label { display: flex; justify-content: space-between; margin: 0 0 .15rem; font-weight: 700; }
-.pool-row .plan-label .hours { color: #e0b057; font-variant-numeric: tabular-nums; }
-.pool-payoff { margin: 0 0 .15rem; font-size: .86rem; color: #6ed4a7; }
-.pool-row .muted { margin: 0; font-size: .8rem; }
-.pool-note { margin: 0 0 .9rem; font-size: .84rem; }
+/* The week as five cards. Pick one to three; everything else still runs. */
+.focus-header .focus-pips { display: flex; align-items: center; gap: .4rem; margin: .8rem 0 0; }
+.focus-pip { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #4a7ba8; }
+.focus-pip.filled { background: #6ea8fe; border-color: #6ea8fe; }
+.focus-header .focus-pips .muted { margin-left: .4rem; font-size: .8rem; }
+.focus-suggestion { margin: .85rem 0 0; padding: .6rem .75rem; border-radius: 8px;
+  background: rgba(110,168,254,.12); border-left: 3px solid #6ea8fe; font-size: .86rem; }
+
+.focus-cards { display: grid; gap: .85rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.focus-card { display: flex; flex-direction: column; gap: .55rem; padding: 1rem;
+  border: 1px solid #294864; border-radius: 12px; background: rgba(255,255,255,.02); }
+.focus-card.picked { border-color: #6ea8fe; background: rgba(110,168,254,.08); }
+.focus-card.blocked { opacity: .55; }
+.focus-card header { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; }
+.focus-card h3 { margin: 0 0 .2rem; font-size: 1rem; }
+.focus-card header .muted { margin: 0; font-size: .78rem; }
+.focus-card .stakes { flex: none; min-width: 2.4rem; text-align: center; padding: .2rem .4rem;
+  border-radius: 6px; font-weight: 700; font-variant-numeric: tabular-nums; font-size: .9rem;
+  background: rgba(255,255,255,.07); color: #91a8b9; }
+.focus-card .stakes.high { background: rgba(224,176,87,.18); color: #e0b057; }
+.focus-card .stakes.low { opacity: .6; }
+.focus-owner { margin: 0; font-size: .84rem; }
+.focus-owner .muted { font-weight: 400; }
+.focus-outcomes { display: flex; flex-direction: column; gap: .3rem; }
+.focus-outcomes p { display: flex; justify-content: space-between; gap: .75rem; margin: 0; font-size: .84rem; }
+.focus-outcomes p span { flex: none; }
+.focus-outcomes p strong { text-align: right; }
+.focus-outcomes .focus-live strong { color: #6ed4a7; }
+.focus-why { margin: 0; font-size: .8rem; color: #91a8b9; }
+.focus-button { margin-top: auto; padding: .55rem .75rem; border-radius: 8px; cursor: pointer;
+  border: 1px solid #4a7ba8; background: transparent; color: inherit; font: inherit; font-weight: 600; }
+.focus-button.picked { background: #6ea8fe; border-color: #6ea8fe; color: #0b1220; }
+.focus-button:disabled { cursor: not-allowed; opacity: .5; }
+.dossier-row.targeted { border-left: 2px solid #e0b057; padding-left: .7rem; }
+.dossier-row .focus-button { margin-top: .5rem; }

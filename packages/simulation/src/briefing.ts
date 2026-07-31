@@ -1,8 +1,8 @@
 import type { GameState, OpponentDossier } from "@college-legends/model";
 import { fairTicketPrice } from "./business.js";
-import { MARQUEE_VALUE, WORTH_SCOUTING } from "./department.js";
+import { DOSSIER_THRESHOLDS, MARQUEE_VALUE, WORTH_SCOUTING } from "./department.js";
+import { activeFocuses, focusCapacity, scoutingTargetFor, weekPriorities } from "./priorities.js";
 import { coachSchemeFit } from "./scheme.js";
-import { planExecution } from "./installation.js";
 
 /**
  * Where a briefing item sends the player. The UI maps these to screens; keeping
@@ -96,41 +96,63 @@ export function weeklyBriefing(
   const thisWeek = board.find((dossier) => dossier.week === state.week);
   const opponent = thisWeek ? state.programs[thisWeek.opponentProgramId] : null;
 
-  // Practice reps. The single biggest thing a coach can waste in a week.
-  const reps = (preparation?.offensiveReps ?? 0) + (preparation?.defensiveReps ?? 0);
-  if (opponent && reps === 0 && (preparation?.points ?? 0) > 0) {
-    const offense = planExecution(state, programId, "OFFENSE");
+  // An unused priority. Hours never bank, so a slot nobody claimed is a week
+  // the staff spent on nothing in particular.
+  const capacity = focusCapacity(state, programId);
+  const chosen = activeFocuses(state, programId);
+  if (chosen.length < capacity.capacity) {
     items.push({
-      id: "PRACTICE",
+      id: "WEEK_FOCUS",
       urgency: "DO_THIS",
-      headline: "Your team hasn't practised the game plan",
-      detail: `${preparation?.points ?? 0} prep points are sitting unused and only ${Math.round(offense.low * 100)}–${Math.round(offense.high * 100)}% of your offense will hold up Saturday. Reps are the cheapest win available.`,
-      action: "Run practice",
+      headline: `Your staff has ${capacity.capacity - chosen.length} priorit${capacity.capacity - chosen.length === 1 ? "y" : "ies"} nobody has claimed`,
+      detail: "A week your coaches don't put behind something is a week they spend on nothing in particular. Nothing banks.",
+      action: "Set the week",
       destination: "WEEK_PRACTICE"
     });
   }
 
-  // A file on this week's opponent, or on the game that actually matters.
-  if (thisWeek && thisWeek.tiers.length === 0 && (preparation?.scoutingPoints ?? 0) > 0) {
+  // The card that is worth the most this week and is not being chased. This is
+  // the whole point of standing priorities: they carry over, and the game tells
+  // you when the situation has moved out from under them.
+  const priorities = weekPriorities(state, programId);
+  const missed = priorities
+    .filter((card) => !card.chosen && !card.blocked && card.stakes >= 65)
+    .sort((left, right) => right.stakes - left.stakes)[0];
+  if (missed && chosen.length >= capacity.capacity) {
     items.push({
-      id: "SCOUT_THIS_WEEK",
-      urgency: "DO_THIS",
-      headline: `You know nothing about ${opponent?.name ?? "Saturday's opponent"}`,
-      detail: `You have ${preparation?.scoutingPoints} scouting points and an empty file. Six of them tells you what they run.`,
-      action: "Open a file",
-      destination: "WEEK_SCOUTING"
+      id: `WEEK_FOCUS:${missed.focus}`,
+      urgency: "WORTH_A_LOOK",
+      headline: `${missed.label} is worth more this week than what you're chasing`,
+      detail: `${missed.stakesNote} Left alone: ${missed.baseline}. Chased: ${missed.focused}.`,
+      action: "Change the week",
+      destination: "WEEK_PRACTICE"
     });
   }
+
+  // A file on the game that actually matters. Points flow onto one opponent
+  // automatically now, so the decision is which one — never how many.
   const bigGame = board.find((dossier) =>
-    dossier.week > state.week && dossier.value >= MARQUEE_VALUE && dossier.points < 18);
-  if (bigGame && (preparation?.scoutingPoints ?? 0) > 0) {
+    dossier.week > state.week && dossier.value >= MARQUEE_VALUE
+    && dossier.points < DOSSIER_THRESHOLDS.PERSONNEL);
+  const target = scoutingTargetFor(state, programId);
+  if (bigGame && target !== bigGame.opponentProgramId) {
     const them = state.programs[bigGame.opponentProgramId];
     items.push({
       id: "SCOUT_AHEAD",
       urgency: "WORTH_A_LOOK",
       headline: `${them?.name ?? "A ranked opponent"} in week ${bigGame.week} is the game of your season`,
-      detail: `${bigGame.valueNote} You can start the file now — a week's points won't cover it on their own.`,
-      action: "Start the file",
+      detail: `${bigGame.valueNote} One week of film won't cover it — point the department at them now or arrive with half a file.`,
+      action: "Move the film room",
+      destination: "WEEK_SCOUTING"
+    });
+  }
+  if (thisWeek && thisWeek.tiers.length === 0 && !bigGame) {
+    items.push({
+      id: "SCOUT_THIS_WEEK",
+      urgency: "DO_THIS",
+      headline: `You know nothing about ${opponent?.name ?? "Saturday's opponent"}`,
+      detail: "Your film room has an empty file on the team you play in five days, and your guys go in cold.",
+      action: "Open a file",
       destination: "WEEK_SCOUTING"
     });
   }

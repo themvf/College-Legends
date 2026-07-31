@@ -20,6 +20,20 @@ export type StaffRole = "HEAD_COACH" | "OFFENSIVE_COORDINATOR" | "DEFENSIVE_COOR
 export type StaffFocus = "PREPARE" | "SCOUT" | "RECRUIT" | "DEVELOP" | "RECOVER";
 
 /**
+ * The five things a staff can chase in a week.
+ *
+ * Hours are what the engine spends, but hours are not a decision a player can
+ * hold: four sliders over a 24-hour pool is roughly two thousand valid weeks,
+ * and nobody explores two thousand of anything fourteen times a season. So the
+ * player names a small number of *priorities* instead and the hours follow.
+ *
+ * Every one of these runs at a baseline whether it is picked or not — there is
+ * no maintenance chore and no punishment for not reading a screen. Picking one
+ * is what buys the surge.
+ */
+export type WeekFocus = "INSTALL_OFFENSE" | "INSTALL_DEFENSE" | "SCOUT" | "DEVELOP" | "RECRUIT";
+
+/**
  * What a coach is known for. Rating says how good he is; the trait says what he
  * is good *at*, which is what makes two coaches of the same calibre a genuine
  * choice rather than a sort.
@@ -184,6 +198,14 @@ export interface PreparationProgramState {
   /** Reps spent installing each side of the plan. Cleared at every new week. */
   offensiveReps: number;
   defensiveReps: number;
+  /**
+   * Where this week's department output was automatically filed, and how much.
+   * The player picks the opponent, not the points — allocating a number by hand
+   * every week is bookkeeping, not a decision. Recorded so that changing the
+   * target mid-week moves the work rather than duplicating it.
+   */
+  autoScoutedOpponentId?: ProgramId | null;
+  autoScoutedPoints?: number;
 }
 
 /**
@@ -222,6 +244,50 @@ export interface OpponentDossier {
   /** What beating them is worth, which is what justifies spending early. */
   value: number;
   valueNote: string;
+}
+
+/**
+ * One of the five cards on the week screen. Everything the player needs to
+ * choose is on it: who runs it, what happens if you leave it alone, what happens
+ * if you pick it, and why it might matter this particular week.
+ */
+export interface WeekPriority {
+  focus: WeekFocus;
+  label: string;
+  /** What this is, in one line, for somebody who has never played one of these. */
+  blurb: string;
+  /** The coach whose week this actually is. An empty chair is a real answer. */
+  ownerStaffId: string | null;
+  ownerName: string;
+  ownerRole: StaffRole | null;
+  /** Why this coach makes this card better or worse than the next program's. */
+  ownerNote: string;
+  /** What you get if you never pick it. Never nothing. */
+  baseline: string;
+  /** What you get if you do. */
+  focused: string;
+  chosen: boolean;
+  /** 0–100, how much picking this is worth *this week*. */
+  stakes: number;
+  /** The reason, in plain language, that the stakes are where they are. */
+  stakesNote: string;
+  /** Set when the card cannot deliver — no opponent to scout, nobody to develop. */
+  blocked: string | null;
+}
+
+/**
+ * How many priorities a staff can chase in a week, and what it would take to
+ * chase one more. This is the progression bar: a thin staff can only chase one
+ * thing, which is what being a bad program feels like, and hiring is what buys
+ * the second and third.
+ */
+export interface FocusCapacity {
+  capacity: number;
+  /** Weighted staff rating behind the capacity, 0–99. */
+  power: number;
+  /** Power needed for one more focus, or null at the ceiling. */
+  nextAt: number | null;
+  note: string;
 }
 
 /** A posted modifier on a staff card, in the spirit of a salaried specialist. */
@@ -552,6 +618,19 @@ export interface GameState {
   /** Standing weekly preparation per program; persists until changed. */
   gamePlans: Record<ProgramId, GamePlan>;
   preparation: Record<ProgramId, PreparationProgramState>;
+  /**
+   * This week's priorities per program. Standing: they carry over, so a player
+   * who has nothing to change advances the week with one button. The engine
+   * derives every coach's hours from these.
+   */
+  weekFocus: Record<ProgramId, WeekFocus[]>;
+  /**
+   * The opponent the scouting department is working on. Held separately from the
+   * focus so choosing *who* to study survives weeks when scouting is not a
+   * priority — the department still produces at baseline and the points need
+   * somewhere to go.
+   */
+  scoutingTarget: Record<ProgramId, ProgramId | null>;
   /** Accumulated scouting points per program, per opponent. Files persist. */
   dossiers: Record<ProgramId, Record<ProgramId, number>>;
   staff: Record<string, StaffMember>;
@@ -596,6 +675,14 @@ export type GameCommand =
    * jobs visibly compete instead of each looking free on its own screen.
    */
   | { type: "SET_WEEK_HOURS"; programId: ProgramId; focus: StaffFocus; hours: number }
+  /**
+   * Names this week's priorities. The control the player actually uses: pick two
+   * of five, and the staff's hours, practice reps, and scouting all follow from
+   * it. Replaces reaching into hours, reps, and points on three separate screens.
+   */
+  | { type: "SET_WEEK_FOCUS"; programId: ProgramId; focuses: WeekFocus[] }
+  /** Which opponent the scouting department is working on. */
+  | { type: "SET_SCOUTING_TARGET"; programId: ProgramId; opponentProgramId: ProgramId | null }
   /** The program's scheme. A takeover and offseason decision, not a weekly one. */
   | { type: "SET_SCHEME"; programId: ProgramId; scheme: Partial<SchemeIdentity> }
   | { type: "ALLOCATE_SCOUTING"; programId: ProgramId; opponentProgramId: ProgramId; points: number }
@@ -752,6 +839,28 @@ export type GameEvent =
   | { type: "TICKET_PRICE_SET"; season: Season; week: number; programId: ProgramId; price: number; fairPrice: number }
   | { type: "ADVERTISING_SET"; season: Season; week: number; programId: ProgramId; spend: number }
   | { type: "PREP_POINTS_ADDED"; season: Season; week: number; programId: ProgramId; pointsAdded: number }
+  | { type: "WEEK_FOCUS_SET"; season: Season; week: number; programId: ProgramId; focuses: WeekFocus[]; capacity: number }
+  | { type: "SCOUTING_TARGET_SET"; season: Season; week: number; programId: ProgramId; opponentProgramId: ProgramId | null }
+  | {
+      /**
+       * What each priority actually produced, captured after the week resolved.
+       * Saturday has to name Monday or the choice reads as optional — a player
+       * repeats what they were thanked for. Structured, as always: the UI writes
+       * the sentence.
+       */
+      type: "WEEK_FOCUS_PAYOFF";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      focuses: WeekFocus[];
+      offensiveExecution: number;
+      defensiveExecution: number;
+      scoutingReadiness: number;
+      scoutedOpponentId: ProgramId | null;
+      developedPlayerId: PlayerId | null;
+      developedOverallGain: number;
+      recruitingPointsAdded: number;
+    }
   | { type: "GAME_PLAN_SET"; season: Season; week: number; programId: ProgramId; plan: GamePlan; changed: (keyof GamePlan)[] }
   | {
       /** What each side called, and what the calls were worth. */

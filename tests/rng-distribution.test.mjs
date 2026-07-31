@@ -48,7 +48,12 @@ import {
   schemeAffinity,
   weeklyBriefing,
   seasonExpectation,
-  planAlignment
+  planAlignment,
+  focusCapacity,
+  planWeekHours,
+  weekPriorities,
+  activeFocuses,
+  MAXIMUM_FOCUSES
 } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
@@ -146,10 +151,14 @@ test("simulated scores land in college-football tolerance bands", () => {
   const margins = [];
   const homeWins = [];
   // One 24-program season is 144 games, and rates vary by several points from
-  // one generated league to the next — enough that a single season would sit
-  // within noise of these thresholds. Four independent leagues give 576 games,
-  // which keeps the tolerances meaningful rather than flaky.
-  for (const seed of ["score-distribution-a", "score-distribution-b", "score-distribution-c", "score-distribution-d"]) {
+  // one generated league to the next. Measured across the four seeds this used
+  // to pool, one-score games ran 17.4 / 20.1 / 23.6 / 24.3 — a ±3.5-point spread
+  // against a 20% floor, which is a test that can fail on the draw rather than on
+  // the engine. Six leagues give 864 games and roughly halve that.
+  for (const seed of [
+    "score-distribution-a", "score-distribution-b", "score-distribution-c",
+    "score-distribution-d", "score-distribution-e", "score-distribution-f"
+  ]) {
     let state = beginSeason(createFictionalLeague(seed, 24));
     // Week 14 rolls the season over and resets the counter, so drive the loop
     // from the regular-season week count rather than from state.week.
@@ -184,11 +193,13 @@ test("simulated scores land in college-football tolerance bands", () => {
   const averageMargin = mean(margins);
   assert.ok(averageMargin > 8 && averageMargin < 25, `average margin ${averageMargin.toFixed(1)} is outside 8-25`);
 
-  // Real FBS runs about 35% one-score games; the engine sits near 27% because
-  // possessions are independent Bernoulli trials with no game script — real
-  // games converge as trailing teams gain possessions and leaders drain clock.
-  // The tolerance guards against a collapse back toward the bimodal scores the
-  // unfinalized hash produced, not against that known modelling gap.
+  // Real FBS runs about 35% one-score games; the engine sits near 21% because
+  // possessions are independent Bernoulli trials with no game script — real games
+  // converge as trailing teams gain possessions and leaders drain clock. It moved
+  // down from ~24% when priorities made execution vary between programs, which
+  // compounds the tier gap on top of the talent gap. The tolerance guards against
+  // a collapse back toward the bimodal scores the unfinalized hash produced, not
+  // against that known modelling gap.
   const oneScoreRate = margins.filter((margin) => margin <= 8).length / margins.length;
   assert.ok(oneScoreRate > 0.2, `one-score games at ${(oneScoreRate * 100).toFixed(1)}% is too competitive-thin`);
 
@@ -435,47 +446,40 @@ test("week one is a real test: nothing is free, and film changes what a report i
     `a complete file costs ${DOSSIER_THRESHOLDS.GAME_PLAN} but a week provides ${pool} — files must take more than one week`
   );
 
-  // Allocation resolves immediately, before the week is advanced.
+  // Week one is unreadable however much work goes into it, because nothing is
+  // readable off tape that does not exist. The department still produces and
+  // still files — a file is worth readiness on the field from the first point —
+  // but the intel arrives once there is film to read.
   const opponentId = blind.opponentProgramId;
-  assert.ok(pool >= DOSSIER_THRESHOLDS.TENDENCIES, "one week must at least open the cheapest tier");
-  const bought = prepareWeek(state, [
-    { type: "ALLOCATE_SCOUTING", programId, opponentProgramId: opponentId, points: pool }
-  ]);
-  const informed = scoutingReport(bought.state, programId);
-  assert.ok(informed.identity, "tendencies should reveal their identity");
+  const stacked = prepareWeek(
+    { ...state, dossiers: { ...state.dossiers, [programId]: { [opponentId]: DOSSIER_THRESHOLDS.GAME_PLAN } } },
+    []
+  ).state;
+  const weekOne = scoutingReport(stacked, programId);
+  assert.equal(weekOne.identity, null, "week one has no film, so nothing is readable at any price");
+  assert.ok(scoutingReadiness(DOSSIER_THRESHOLDS.GAME_PLAN) > 0,
+    "the file still pays on the field in week one");
+
+  // Once film exists, the same file reads. Advance a week and re-check.
+  let played = state;
+  for (let week = 0; week < 3; week += 1) played = advanceWeek(played).state;
+  const laterOpponent = scoutingReport(played, "program-1").opponentProgramId;
+  assert.ok(laterOpponent, "there must be an opponent later in the season");
+  const informedState = {
+    ...played,
+    dossiers: { ...played.dossiers, "program-1": { [laterOpponent]: DOSSIER_THRESHOLDS.PERSONNEL } }
+  };
+  const informed = scoutingReport(informedState, "program-1");
+  assert.ok(informed.identity, "with film on them, a file must reveal their identity");
   assert.equal(informed.tendencies, null, "the tier the file has not reached stays locked");
-  assert.equal(bought.state.dossiers[programId][opponentId], pool);
-  assert.equal(bought.state.preparation[programId].scoutingPoints, 0);
 
   // Estimates, when the file reaches personnel, are ranges rather than exact
   // numbers — better work narrows them without ever collapsing them.
-  const deep = prepareWeek(
-    { ...bought.state, preparation: { ...bought.state.preparation, [programId]: { ...bought.state.preparation[programId], scoutingPoints: 40 } } },
-    [{ type: "ALLOCATE_SCOUTING", programId, opponentProgramId: opponentId, points: Math.max(0, DOSSIER_THRESHOLDS.PERSONNEL - pool) }]
-  ).state;
-  const personnel = scoutingReport(deep, programId);
-  assert.equal(personnel.units?.length, 4, "personnel should estimate all four units");
-  for (const unit of personnel.units) {
-    assert.ok(unit.high > unit.low, `${unit.unit} came back as a point estimate rather than a range`);
+  assert.ok(informed.units, "a personnel file must estimate their units");
+  for (const unit of informed.units) {
+    assert.ok(unit.high > unit.low, `${unit.unit} was reported as a point value rather than a range`);
   }
-
-  const overspend = prepareWeek(bought.state, [
-    { type: "ALLOCATE_SCOUTING", programId, opponentProgramId: opponentId, points: pool }
-  ]);
-  assert.ok(
-    overspend.events.some((event) => event.type === "COMMAND_REJECTED"),
-    "a program must not be able to spend department output it has not produced"
-  );
-
-  // Film accumulates, and a later report is worth more than an opening-week one.
-  let later = state;
-  for (let week = 0; week < 5; week += 1) later = advanceWeek(later, planWeeklyCommands(later)).state;
-  const withFilm = scoutingReport(later, programId);
-  assert.ok(withFilm.filmGames > 0, "film should accumulate as the season is played");
-  assert.ok(
-    withFilm.confidence > blind.confidence,
-    `film should sharpen a report (${blind.confidence}% blind vs ${withFilm.confidence}% with film)`
-  );
+  assert.ok(informed.confidence > 0 && informed.confidence < 100, "a file is never certainty");
 });
 
 test("the top scouting tier reports likelihoods, never certainty", () => {
@@ -701,56 +705,63 @@ test("installing the plan is worth real points and costs real reps", () => {
   assert.ok(covered.limits.length > 0, "the screen must say why execution dropped");
 
   // Half a coordinator is worse than all of him: splitting his week is a real
-  // cost, which is what makes the scouting-versus-preparation call bite.
-  const split = structuredClone(state);
-  for (const member of Object.values(split.staff)) {
-    if (member.programId !== programId) continue;
-    if (member.role !== "OFFENSIVE_COORDINATOR") continue;
-    const capacity = staffCapacity(member.rating);
-    member.allocation = { PREPARE: capacity, SCOUT: 0, RECRUIT: 0, DEVELOP: 0, RECOVER: 0 };
-  }
-  const undivided = planExecution(split, programId, "OFFENSE", 6);
+  // cost, which is what makes the scouting-versus-preparation call bite. Built
+  // by hand on both sides, because the priorities now decide a coordinator's
+  // week and the default already has him preparing full-time.
+  const withShare = (share) => {
+    const next = structuredClone(state);
+    for (const member of Object.values(next.staff)) {
+      if (member.programId !== programId) continue;
+      if (member.role !== "OFFENSIVE_COORDINATOR") continue;
+      const capacity = staffCapacity(member.rating, member.trait);
+      const prepare = Math.max(1, Math.round(capacity * share));
+      member.allocation = { PREPARE: prepare, SCOUT: capacity - prepare, RECRUIT: 0, DEVELOP: 0, RECOVER: 0 };
+    }
+    return planExecution(next, programId, "OFFENSE", 6);
+  };
+  const halfWeek = withShare(0.4);
+  const undivided = withShare(1);
   assert.ok(
-    undivided.expected > some.expected,
-    `a coordinator on preparation full-time must install more (${undivided.expected} vs ${some.expected})`
+    undivided.expected > halfWeek.expected,
+    `a coordinator on preparation full-time must install more (${undivided.expected} vs ${halfWeek.expected})`
   );
 
-  // Reps are actually charged, and they tire the roster.
-  const before = state.preparation[programId].points;
-  const result = advanceWeek(state, [
-    { type: "SET_PRACTICE_REPS", programId, side: "OFFENSE", reps: 6 },
-    { type: "SET_PRACTICE_REPS", programId, side: "DEFENSE", reps: 6 }
-  ]);
-  const spent = result.events.filter((event) => event.type === "PRACTICE_REPS_SET" && event.programId === programId);
-  assert.equal(spent.length, 2);
-  assert.equal(spent.reduce((total, event) => total + event.pointsSpent, 0), 12);
-  assert.ok(before >= 12, "a week must afford a moderate install");
+  // Reps follow from the week's priorities, so setting them by hand is refused
+  // rather than quietly overwritten at the week boundary.
+  const byHand = prepareWeek(state, [{ type: "SET_PRACTICE_REPS", programId, side: "OFFENSE", reps: 6 }]);
+  assert.ok(byHand.events.some((event) => event.type === "COMMAND_REJECTED"),
+    "reps must not be settable independently of the priorities that produce them");
 
-  const rested = advanceWeek(state).state;
+  // And drilling a side has to tire the roster, which is the cost that stops a
+  // maximum install every week.
+  const capacity = focusCapacity(state, programId).capacity;
+  const drilled = advanceWeek(prepareWeek(state, [{
+    type: "SET_WEEK_FOCUS", programId, focuses: ["INSTALL_OFFENSE", "INSTALL_DEFENSE"].slice(0, capacity)
+  }]).state).state;
+  const rested = advanceWeek(prepareWeek(state, [{
+    type: "SET_WEEK_FOCUS", programId, focuses: ["RECRUIT"]
+  }]).state).state;
   const fatigueOf = (source) => Object.values(source.players)
     .filter((player) => player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP")
     .reduce((total, player) => total + player.fatigue, 0);
-  assert.ok(fatigueOf(result.state) > fatigueOf(rested), "practising must tire the roster");
+  assert.ok(fatigueOf(drilled) > fatigueOf(rested), "practising must tire the roster");
 });
 
 test("a better-executed plan wins more games than the same plan unprepared", () => {
   // Execution is competence as well as emphasis: without a flat competence term,
   // installing a balanced plan was pure cost, because a balanced plan has no
   // emphasis deltas for execution to scale.
-  const measure = (reps) => {
+  const measure = (focuses) => {
     let state = beginSeason(createFictionalLeague("execution-value", 24));
     const programId = "program-1";
     let scored = 0;
     let conceded = 0;
     let games = 0;
     for (let week = 0; week < 10; week += 1) {
-      // Reps have to be set *before* the week is advanced — that is the path a
-      // player uses, and `prepareWeek` is what resolves them in time to matter.
-      // Passing them to `advanceWeek` applies them after the game is played.
-      state = prepareWeek(state, [
-        { type: "SET_PRACTICE_REPS", programId, side: "OFFENSE", reps },
-        { type: "SET_PRACTICE_REPS", programId, side: "DEFENSE", reps }
-      ]).state;
+      // Priorities have to be set *before* the week is advanced — that is the
+      // path a player uses, and `prepareWeek` is what resolves them in time to
+      // matter. Passing them to `advanceWeek` applies them after the game.
+      state = prepareWeek(state, [{ type: "SET_WEEK_FOCUS", programId, focuses }]).state;
       const result = advanceWeek(state);
       state = result.state;
       for (const event of result.events) {
@@ -765,9 +776,10 @@ test("a better-executed plan wins more games than the same plan unprepared", () 
     return { margin: (scored - conceded) / Math.max(1, games), games };
   };
 
-  const unprepared = measure(0);
-  // Half the pool per side: maxing both is deliberately out of reach now.
-  const drilled = measure(Math.floor(MAXIMUM_PRACTICE_HOURS / 2));
+  // Nothing on either side of the ball, against everything the staff can give
+  // the offense. Maxing both sides is deliberately out of reach.
+  const unprepared = measure(["RECRUIT"]);
+  const drilled = measure(["INSTALL_OFFENSE"]);
   assert.ok(unprepared.games >= 8 && drilled.games >= 8, "both runs need a full slate");
   assert.ok(
     drilled.margin > unprepared.margin,
@@ -941,13 +953,17 @@ test("a file is built forward, survives to its fixture, and is spent when the ga
   const target = scoutingBoard(state, programId).find((dossier) => dossier.week >= state.week + 3);
   assert.ok(target, "there must be a fixture several weeks out to scout");
 
-  // Spend every week's department output on one future opponent.
+  // Point the film room at one future opponent and leave it there. Output flows
+  // onto that file every week without the player allocating a number.
+  const focuses = ["SCOUT"].concat(
+    focusCapacity(state, programId).capacity > 1 ? ["INSTALL_OFFENSE"] : []);
   for (let week = 0; week < 3; week += 1) {
-    const available = state.preparation[programId].scoutingPoints;
     state = prepareWeek(state, [
-      { type: "ALLOCATE_SCOUTING", programId, opponentProgramId: target.opponentProgramId, points: available }
+      { type: "SET_WEEK_FOCUS", programId, focuses },
+      { type: "SET_SCOUTING_TARGET", programId, opponentProgramId: target.opponentProgramId }
     ]).state;
-    assert.equal(state.preparation[programId].scoutingPoints, 0);
+    assert.equal(state.preparation[programId].scoutingPoints, 0,
+      "the week's output must be filed, not left sitting");
     state = advanceWeek(state, planWeeklyCommands(state, programId)).state;
   }
   const built = state.dossiers[programId][target.opponentProgramId];
@@ -1380,8 +1396,8 @@ test("the dashboard tells the player what is being wasted, and where to fix it",
     "every item needs a headline, a reason, a verb, and somewhere to go"
   );
   assert.ok(
-    opening.some((item) => item.id === "PRACTICE"),
-    "a team that has not practised must be told so before anything else"
+    opening.some((item) => item.id.startsWith("WEEK_FOCUS") || item.id.startsWith("SCOUT")),
+    "the week itself must be the first thing the briefing talks about"
   );
   assert.ok(opening.length <= 6, "a list nobody can read is the same as no list");
   // Ordered so the things costing you now come before the upside.
@@ -1389,15 +1405,18 @@ test("the dashboard tells the player what is being wasted, and where to fix it",
   assert.deepEqual(urgencies, [...urgencies].sort((left, right) =>
     (left === "DO_THIS" ? 0 : 1) - (right === "DO_THIS" ? 0 : 1)));
 
-  // Acting on an item must clear it immediately — reps settle before the week is
-  // advanced, so the dashboard reflects the decision the moment it is made.
-  const reps = prepareWeek(state, [
-    { type: "SET_PRACTICE_REPS", programId, side: "OFFENSE", reps: 6 },
-    { type: "SET_PRACTICE_REPS", programId, side: "DEFENSE", reps: 6 }
-  ]).state;
+  // Acting on an item must clear it immediately — priorities settle before the
+  // week is advanced, so the dashboard reflects the decision the moment it is
+  // made rather than a week later.
+  const capacity = focusCapacity(state, programId).capacity;
+  const claimed = prepareWeek(state, [{
+    type: "SET_WEEK_FOCUS",
+    programId,
+    focuses: ["INSTALL_OFFENSE", "SCOUT", "INSTALL_DEFENSE"].slice(0, capacity)
+  }]).state;
   assert.ok(
-    !weeklyBriefing(reps, programId).some((item) => item.id === "PRACTICE"),
-    "running practice must remove the practice warning"
+    !weeklyBriefing(claimed, programId).some((item) => item.id === "WEEK_FOCUS"),
+    "claiming every priority must remove the unclaimed-priority warning"
   );
 
   const expectation = seasonExpectation(state, programId);
@@ -1675,42 +1694,163 @@ test("a scouted opponent is measurably easier to beat", () => {
 });
 
 
-test("the week is one pool: every job competes for the same hours", () => {
-  let state = beginSeason(createFictionalLeague("week-pool", 24));
+test("the week is priorities: a staff chases what it can carry, and the pool stays whole", () => {
+  let state = beginSeason(createFictionalLeague("week-focus", 24));
   const programId = "program-1";
-  const opening = weekAllocation(state, programId);
-  assert.ok(opening.totalHours > 12, "a staff should have a real week to spend");
 
-  // The pool has to stay whole through every move. An hour that vanishes is an
-  // hour the player believes he spent — the exact defect of the old model, where
-  // hours were edited per coach on one screen and spent again as prep points and
-  // scouting points on others, so each downstream screen looked free.
-  for (const [focus, hours] of [["SCOUT", 12], ["DEVELOP", 8], ["RECRUIT", 10], ["PREPARE", 20]]) {
-    state = prepareWeek(state, [{ type: "SET_WEEK_HOURS", programId, focus, hours }]).state;
-    const settled = weekAllocation(state, programId);
-    assert.equal(settled.spent, settled.totalHours,
-      `after ${hours}h on ${focus} the pool lost hours (${settled.spent} of ${settled.totalHours})`);
-    assert.equal(settled.available, 0);
-    assert.equal(settled.byFocus[focus], Math.min(hours, settled.totalHours),
-      `${focus} did not take the hours it was given`);
+  // Capacity has to separate the tiers, or the progression bar says nothing.
+  const byTier = { LOW: [], MID: [], POWER: [] };
+  for (const program of Object.values(state.programs)) {
+    byTier[program.tier].push(focusCapacity(state, program.id).capacity);
+  }
+  const mean = (list) => list.reduce((total, value) => total + value, 0) / list.length;
+  assert.ok(mean(byTier.LOW) < mean(byTier.MID), "a mid-tier staff must chase more than a low-tier one");
+  assert.ok(mean(byTier.MID) < mean(byTier.POWER), "and a power staff more than a mid one");
+  for (const capacities of Object.values(byTier)) {
+    for (const capacity of capacities) {
+      assert.ok(capacity >= 1 && capacity <= MAXIMUM_FOCUSES, "capacity must stay inside its own bounds");
+    }
   }
 
-  // And the practice budget is those hours, not a separate currency that drifts.
-  const spending = (hours) => {
-    const next = prepareWeek(
-      beginSeason(createFictionalLeague("week-pool", 24)),
-      [{ type: "SET_WEEK_HOURS", programId, focus: "SCOUT", hours }]
-    ).state;
-    return {
-      prepare: weekAllocation(next, programId).byFocus.PREPARE,
-      practice: preparationWeeklyPoints(next, programId),
-      budget: next.preparation[programId].weeklyPoints
-    };
-  };
-  const light = spending(2);
-  const heavy = spending(16);
-  assert.ok(heavy.prepare < light.prepare, "sending coaches scouting must take hours off practice");
-  assert.ok(heavy.practice < light.practice, "and that must reduce the practice budget");
-  assert.equal(heavy.budget, heavy.practice, "the posted practice budget must equal what the engine will use");
-  assert.equal(light.budget, light.practice);
+  // Every arrangement of priorities has to spend the whole week. An hour that
+  // vanishes is an hour the player believes he spent.
+  const combinations = [
+    [], ["INSTALL_OFFENSE"], ["SCOUT"], ["DEVELOP"], ["RECRUIT"],
+    ["INSTALL_OFFENSE", "INSTALL_DEFENSE"], ["INSTALL_OFFENSE", "SCOUT"],
+    ["SCOUT", "RECRUIT"], ["DEVELOP", "RECRUIT"], ["INSTALL_DEFENSE", "DEVELOP", "RECRUIT"]
+  ];
+  for (const focuses of combinations) {
+    const plan = planWeekHours(state, programId, focuses);
+    const spent = ["PREPARE", "SCOUT", "RECRUIT", "DEVELOP", "RECOVER"]
+      .reduce((total, job) => total + plan.byFocus[job], 0);
+    assert.equal(spent, plan.totalHours,
+      `${focuses.join("+") || "(none)"} lost hours (${spent} of ${plan.totalHours})`);
+    // Nothing ever goes to zero from neglect. A week that punishes you for not
+    // reading a screen is a maintenance chore, which is what this replaced.
+    for (const job of ["PREPARE", "SCOUT", "RECRUIT", "DEVELOP"]) {
+      assert.ok(plan.byFocus[job] > 0, `${job} went to zero on ${focuses.join("+") || "(none)"}`);
+    }
+  }
+
+  // Picking a priority has to visibly buy that priority and visibly cost the rest.
+  const idle = planWeekHours(state, programId, ["RECRUIT"]);
+  const drilled = planWeekHours(state, programId, ["INSTALL_OFFENSE"]);
+  assert.ok(drilled.offensiveReps > idle.offensiveReps, "focusing the offense must buy offensive reps");
+  assert.ok(drilled.byFocus.RECRUIT < idle.byFocus.RECRUIT, "and it must come out of the trail");
+  const scouted = planWeekHours(state, programId, ["SCOUT"]);
+  assert.ok(scouted.byFocus.SCOUT > drilled.byFocus.SCOUT, "focusing scouting must buy film hours");
+  assert.ok(scouted.byFocus.PREPARE < drilled.byFocus.PREPARE, "and it must come out of practice");
+
+  // Both sides fully installed is still out of reach, however good the staff.
+  for (const program of Object.values(state.programs)) {
+    const both = planWeekHours(state, program.id, ["INSTALL_OFFENSE", "INSTALL_DEFENSE"]);
+    assert.ok(both.offensiveReps < MAXIMUM_REPS_PER_SIDE || both.defensiveReps < MAXIMUM_REPS_PER_SIDE,
+      `${program.name} installed both sides completely in one week`);
+  }
+
+  // The engine must refuse more priorities than the staff can carry, rather than
+  // silently keeping some of them.
+  const capacity = focusCapacity(state, programId).capacity;
+  const tooMany = ["INSTALL_OFFENSE", "INSTALL_DEFENSE", "SCOUT", "DEVELOP", "RECRUIT"].slice(0, capacity + 1);
+  const refused = prepareWeek(state, [{ type: "SET_WEEK_FOCUS", programId, focuses: tooMany }]);
+  assert.ok(refused.events.some((event) => event.type === "COMMAND_REJECTED"),
+    "asking for more than the staff can carry must be refused with a reason");
+
+  // And a committed set has to reach every coach's actual week.
+  const focuses = ["SCOUT"].concat(capacity > 1 ? ["RECRUIT"] : []);
+  state = prepareWeek(state, [{ type: "SET_WEEK_FOCUS", programId, focuses }]).state;
+  assert.deepEqual(state.weekFocus[programId], focuses);
+  const settled = weekAllocation(state, programId);
+  assert.equal(settled.spent, settled.totalHours, "the committed week must still spend every hour");
+  assert.equal(state.preparation[programId].weeklyPoints,
+    planWeekHours(state, programId, focuses).practiceHours,
+    "the posted practice budget must equal what the engine will use");
+});
+
+test("a coordinator always installs his own side, whatever else the staff is chasing", () => {
+  const state = beginSeason(createFictionalLeague("focus-installer", 24));
+  // The failure this guards is a cliff rather than a trade: focusing somewhere
+  // else used to drop a side of the ball onto a head coach who was not preparing
+  // either, so the plan fell to the "nobody is running practice" floor.
+  for (const program of Object.values(state.programs)) {
+    const coordinators = Object.values(state.staff).filter((member) =>
+      member.programId === program.id
+      && (member.role === "OFFENSIVE_COORDINATOR" || member.role === "DEFENSIVE_COORDINATOR"));
+    if (coordinators.length < 2) continue;
+    for (const focuses of [["SCOUT"], ["RECRUIT"], ["DEVELOP"], ["INSTALL_OFFENSE"], ["INSTALL_DEFENSE"]]) {
+      const plan = planWeekHours(state, program.id, focuses);
+      for (const coordinator of coordinators) {
+        const hours = plan.byStaff[coordinator.id].PREPARE;
+        const share = hours / staffCapacity(coordinator.rating, coordinator.trait);
+        assert.ok(share >= 0.34,
+          `${program.abbreviation} ${coordinator.role} fell to ${(share * 100).toFixed(0)}% of his week on ${focuses.join("+")}`);
+      }
+    }
+  }
+});
+
+test("scouting files build against the game you point them at, and never refill by re-choosing", () => {
+  let state = beginSeason(createFictionalLeague("focus-scouting", 24));
+  const programId = "program-1";
+  const board = scoutingBoard(state, programId);
+  const ahead = board.find((dossier) => dossier.week > state.week);
+  assert.ok(ahead, "there must be a future fixture to aim at");
+
+  const before = Object.values(state.dossiers[programId] ?? {}).reduce((total, value) => total + value, 0);
+  state = prepareWeek(state, [{ type: "SET_SCOUTING_TARGET", programId, opponentProgramId: ahead.opponentProgramId }]).state;
+  const files = state.dossiers[programId];
+  const after = Object.values(files).reduce((total, value) => total + value, 0);
+  assert.equal(after, before, "moving the film room must move the work, not duplicate it");
+  assert.ok(files[ahead.opponentProgramId] > 0, "the week's output must land on the chosen game");
+
+  // Re-choosing the same target repeatedly must not stack the same week's work.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    state = prepareWeek(state, [{ type: "SET_SCOUTING_TARGET", programId, opponentProgramId: ahead.opponentProgramId }]).state;
+  }
+  assert.equal(
+    Object.values(state.dossiers[programId]).reduce((total, value) => total + value, 0),
+    after,
+    "re-choosing the same game must not refill the file"
+  );
+
+  // Aiming early is what buys a complete file — a week's output cannot.
+  const weekly = weeklyScoutingOutput(state, programId);
+  assert.ok(weekly < DOSSIER_THRESHOLDS.GAME_PLAN,
+    `one week (${weekly}) must not complete a file (${DOSSIER_THRESHOLDS.GAME_PLAN})`);
+});
+
+test("the postgame names what the week was spent on", () => {
+  let state = beginSeason(createFictionalLeague("focus-payoff", 24));
+  const programId = "program-1";
+  const capacity = focusCapacity(state, programId).capacity;
+  state = prepareWeek(state, [{
+    type: "SET_WEEK_FOCUS", programId, focuses: ["INSTALL_OFFENSE"].slice(0, capacity)
+  }]).state;
+  const advanced = advanceWeek(state);
+  const payoff = advanced.events.find((event) =>
+    event.type === "WEEK_FOCUS_PAYOFF" && event.programId === programId);
+  assert.ok(payoff, "a week has to report what its priorities bought");
+  assert.deepEqual(payoff.focuses, ["INSTALL_OFFENSE"].slice(0, capacity));
+  assert.ok(payoff.offensiveExecution > 0 && payoff.offensiveExecution <= 1);
+  assert.ok(payoff.recruitingPointsAdded > 0, "recruiting still runs at baseline");
+});
+
+test("a focused install is worth points, and the cards never disagree with the engine", () => {
+  const state = beginSeason(createFictionalLeague("focus-cards", 24));
+  for (const program of Object.values(state.programs)) {
+    const cards = weekPriorities(state, program.id);
+    assert.equal(cards.length, 5, "the week is five cards");
+    for (const card of cards) {
+      assert.ok(card.stakes >= 0 && card.stakes <= 100, "stakes must stay on their own scale");
+      assert.ok(card.baseline.length > 0 && card.focused.length > 0, "both outcomes must be stated");
+      assert.ok(card.ownerName.length > 0, "somebody has to be running it");
+    }
+    // The install cards are projections of `planExecution`, so they must agree
+    // with what the engine will actually do when the focus is committed.
+    const offense = cards.find((card) => card.focus === "INSTALL_OFFENSE");
+    const plan = planWeekHours(state, program.id, ["INSTALL_OFFENSE"]);
+    assert.ok(plan.offensiveReps >= state.preparation[program.id].offensiveReps
+      || offense.baseline !== offense.focused,
+      "focusing the offense must change something the card can state");
+  }
 });

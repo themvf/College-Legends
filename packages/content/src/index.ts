@@ -229,7 +229,14 @@ export function fictionalPersonName(ordinal: number, firstOffset = 0, lastOffset
 
 export const DEFAULT_BALANCE: BalanceConfiguration = {
   version: "0.1.0",
-  weeklyDevelopment: { base: 0.012, workEthicWeight: 0.022, fatigueFloor: 0.62, maximum: 0.09 },
+  // Re-scaled once the spotlight bug was fixed and development became a weekly
+  // priority a player spends against four others. At the old rates a player with
+  // 28 points of headroom gained half a point of Overall in a full season, so no
+  // amount of investment ever realised a prospect and the priority was buying
+  // nothing. Targets: about 1.5 Overall a season for an ordinary player, 3-4 for
+  // one the staff is concentrating on — which is roughly the 70-to-85 arc a real
+  // developing college player follows over four years.
+  weeklyDevelopment: { base: 0.034, workEthicWeight: 0.06, fatigueFloor: 0.62, maximum: 0.26 },
   game: { homeFieldAdvantage: 2.8 }
 };
 

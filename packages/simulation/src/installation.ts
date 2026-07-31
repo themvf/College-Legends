@@ -58,13 +58,26 @@ const INSTALLER_ROLE: Readonly<Record<"OFFENSE" | "DEFENSE", StaffRole>> = {
 export function planInstaller(
   state: Readonly<GameState>,
   programId: string,
-  side: "OFFENSE" | "DEFENSE"
+  side: "OFFENSE" | "DEFENSE",
+  /**
+   * What share of his week a coach would give preparation, for projecting a week
+   * the player has not committed to yet. Without it the only way to post "if you
+   * focus this, your offense installs at 78%" is to clone the whole state, which
+   * is 17 MB at full league size and runs on every render.
+   */
+  shareOverride?: (member: StaffMember) => number
 ): { staff: StaffMember | null; rating: number; name: string; note: string } {
   const staff = Object.values(state.staff).filter((member) => member.programId === programId);
   const identity = state.programs[programId]?.schemeIdentity;
+  const share = (member: StaffMember): number => shareOverride?.(member) ?? focusShare(member, "PREPARE");
   const coordinator = staff.find((member) => member.role === INSTALLER_ROLE[side]);
-  const coordinatorShare = coordinator ? focusShare(coordinator, "PREPARE") : 0;
-  if (coordinator && coordinatorShare >= 0.5) {
+  const coordinatorShare = coordinator ? share(coordinator) : 0;
+  // A third of his week, not half. A coordinator owes his own side of the ball a
+  // floor of his time whatever else the staff is chasing, and that floor has to
+  // sit above the handover threshold — otherwise focusing anywhere else drops a
+  // side of the ball onto a head coach who is not preparing either, which is a
+  // cliff rather than a trade.
+  if (coordinator && coordinatorShare >= 0.34) {
     // A coach installing someone else's scheme installs less of it. The plan is
     // never unavailable, only worse — the emphasis matchup matrix is calibrated
     // on every call staying selectable.
@@ -88,7 +101,7 @@ export function planInstaller(
     };
   }
   const headCoach = staff.find((member) => member.role === "HEAD_COACH");
-  const headCoachShare = headCoach ? focusShare(headCoach, "PREPARE") : 0;
+  const headCoachShare = headCoach ? share(headCoach) : 0;
   if (headCoach && headCoachShare > 0) {
     // A head coach covering a coordinator's job does it worse than the specialist would.
     return {
@@ -110,12 +123,13 @@ export function planExecution(
   state: Readonly<GameState>,
   programId: string,
   side: "OFFENSE" | "DEFENSE",
-  repsOverride?: number
+  repsOverride?: number,
+  shareOverride?: (member: StaffMember) => number
 ): PlanExecution {
   const program = state.programs[programId];
   const preparation = state.preparation?.[programId];
   const reps = repsOverride ?? (side === "OFFENSE" ? preparation?.offensiveReps ?? 0 : preparation?.defensiveReps ?? 0);
-  const installer = planInstaller(state, programId, side);
+  const installer = planInstaller(state, programId, side, shareOverride);
 
   const facility = program ? Math.max(0, program.facilities.TRAINING - 1) * 0.012 : 0;
   // Calling something the program does not run costs execution. A team is not a

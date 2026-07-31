@@ -339,11 +339,34 @@ export function scoutingDepartmentSummary(level: number): string {
  * weeks, a national one nearly the whole schedule. Scouting everybody is never
  * on the table, which is what makes the board a decision.
  */
+/**
+ * Re-priced when the department stopped being allocated by hand. Points now flow
+ * automatically onto the one opponent the program is studying, so a whole week's
+ * output lands on a single file instead of being split across the schedule — at
+ * the old thresholds one baseline week completed the cheapest tier, so
+ * tendencies were free for all 72 programs and the tier sold nothing. Measured
+ * against a focused mid-tier department producing about 19 points a week: one
+ * week opens tendencies, two reach personnel, four complete the file. Pointing
+ * the department at a game several weeks out is the only way to arrive knowing
+ * everything, which is exactly the judgement the board exists to ask for.
+ */
 export const DOSSIER_THRESHOLDS: Readonly<Record<ScoutingTier, number>> = {
-  TENDENCIES: 6,
-  PERSONNEL: 18,
-  GAME_PLAN: 36
+  TENDENCIES: 20,
+  PERSONNEL: 45,
+  GAME_PLAN: 75
 };
+
+/**
+ * Where the on-field benefit of a file tops out, held apart from the tiers that
+ * decide what is *readable*.
+ *
+ * The two were the same number and should not be. Readiness is what a file is
+ * worth to your own team and it saturates fast; the intel tiers are what it
+ * tells you and they keep paying. Tying them together meant re-pricing one to
+ * fix the other — which is how tendencies ended up free for every program in the
+ * league once the department started filing its output automatically.
+ */
+export const READINESS_CAP = 55;
 
 export function dossierTiers(points: number): ScoutingTier[] {
   return (Object.keys(DOSSIER_THRESHOLDS) as ScoutingTier[])
@@ -444,10 +467,10 @@ export function upcomingDossiers(
 export const FULL_FILE_READINESS = 3;
 
 export function scoutingReadiness(dossierPoints: number): number {
-  const capped = clamp(dossierPoints, 0, DOSSIER_THRESHOLDS.GAME_PLAN);
+  const capped = clamp(dossierPoints, 0, READINESS_CAP);
   // Square root, so the first points matter most and a full file is a
   // diminishing-returns purchase rather than a cliff at each tier.
-  return Number((FULL_FILE_READINESS * Math.sqrt(capped / DOSSIER_THRESHOLDS.GAME_PLAN)).toFixed(2));
+  return Number((FULL_FILE_READINESS * Math.sqrt(capped / READINESS_CAP)).toFixed(2));
 }
 
 /** Plain-language version for the board and the week screen. */

@@ -1,5 +1,5 @@
-import type { AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffFocus, StaffMember, StaffRole, OpponentDossier } from "@college-legends/model";
-import { FICTIONAL_PROGRAMS, fictionalPersonName, PROGRAM_CHARACTERS } from "@college-legends/content";
+import type { WeekFocus, AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffFocus, StaffMember, StaffRole, OpponentDossier } from "@college-legends/model";
+import { DEFAULT_BALANCE, FICTIONAL_PROGRAMS, fictionalPersonName, PROGRAM_CHARACTERS } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
 import { attributeByRole, attributesFor, computeOverall, ratingByRole, type AttributeDefinition } from "./attributes.js";
 import { weeklyBriefing as buildBriefing, type BriefingItem } from "./briefing.js";
@@ -19,6 +19,7 @@ import {
   pickStaffTrait,
   weekAllocation,
   scoutingReadiness,
+  READINESS_CAP,
   rebalanceAllocation,
   roleFit,
   scoutingDepartmentSummary,
@@ -33,6 +34,37 @@ import {
 } from "./department.js";
 import { advertisingReach, DEFENSIVE_PRESETS, developmentCandidates, fairTicketPrice, matchingPreset, MAXIMUM_TICKET_PRICE, MAXIMUM_WEEKLY_ADVERTISING, MINIMUM_TICKET_PRICE, OFFENSIVE_PRESETS, pricingGoodwill, projectGate } from "./business.js";
 import { MAXIMUM_REPS_PER_SIDE, planExecution, repsFatigue, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
+import {
+  activeFocuses,
+  defaultFocuses,
+  developmentTarget,
+  focusCapacity,
+  isWeekFocus,
+  planWeekHours,
+  scoutingTargetFor,
+  WEEK_FOCUSES
+} from "./priorities.js";
+
+export {
+  activeFocuses,
+  defaultFocuses,
+  developmentTarget,
+  focusCapacity,
+  focusOwner,
+  FOCUS_CAPACITY_THRESHOLDS,
+  isWeekFocus,
+  MAXIMUM_FOCUSES,
+  planWeekHours,
+  repsSplit,
+  scoutingTargetFor,
+  staffPower,
+  SURGE_SHARE,
+  WEEK_FOCUSES,
+  WEEK_FOCUS_BLURBS,
+  WEEK_FOCUS_LABELS,
+  weekPriorities
+} from "./priorities.js";
+export type { WeekHourPlan } from "./priorities.js";
 
 export { DEFAULT_GAME_PLAN, DEFENSIVE_IDENTITY_LABELS, GAME_PLAN_OPTIONS, IDENTITY_BASE_DEFENSE, IDENTITY_BASE_PLAN, intendedGamePlan, OFFENSIVE_IDENTITY_LABELS, plannedUnitRatings, projectUnitEdges, unitLabel, unitRatingsFromLineup } from "./game.js";
 export {
@@ -100,6 +132,7 @@ export {
   scoutingReadiness,
   readinessNote,
   FULL_FILE_READINESS,
+  READINESS_CAP,
   SCOUTING_FUNDING_LABELS,
   staffCapacity,
   staffContribution,
@@ -310,7 +343,12 @@ export function recruitingEvaluationCost(evaluation: RecruitingEvaluation): numb
 export function recruitingWeeklyPoints(state: Readonly<GameState>, programId: string): number {
   const program = state.programs[programId];
   if (!program) return 0;
-  return Math.round(32 + program.facilities.RECRUITING * 4 + staffContribution(state, programId, "RECRUIT") / 20);
+  // Re-weighted toward the hours. At `32 + facilities * 4 + contribution / 20`
+  // the base dominated so completely that quadrupling the staff on the trail
+  // moved the week by five points — so the recruiting card could not state a
+  // real trade. The weekly average across the league is unchanged; what changed
+  // is that it now responds to whether anybody is actually on the road.
+  return Math.round(14 + program.facilities.RECRUITING * 3 + staffContribution(state, programId, "RECRUIT") / 4.2);
 }
 
 export function projectedRecruitingOpenings(state: Readonly<GameState>, programId: string): number {
@@ -443,7 +481,7 @@ export function projectedDevelopmentPayoff(
   const program = state.programs[player.programId]!;
   const fatigueModifier = clamp(1 - player.fatigue / 180, rules.fatigueFloor, 1);
   const trainingModifier = 1 + Math.max(0, program.facilities.TRAINING - 1) * 0.04;
-  const coachingModifier = 1 + staffContribution(state, program.id, "DEVELOP") / 500;
+  const coachingModifier = 1 + staffContribution(state, program.id, "DEVELOP") / 150;
   const scale = clamp((0.72 + player.workEthic * 0.45) * fatigueModifier * trainingModifier * coachingModifier, 0.5, 1.8);
   const payoff = developmentPayoff(focus, player.position);
   const strengthCoach = programStrengthCoachBenefits(state, program.id);
@@ -723,8 +761,11 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
   const lastNameOffset = Math.floor(nameRng.between("last-offset", 0, 160));
   const nameFor = (ordinal: number): string => fictionalPersonName(ordinal, firstNameOffset, lastNameOffset);
   const state: GameState = {
-    identity: { rootSeed, balanceConfiguration: { version: "0.1.0", weeklyDevelopment: { base: 0.012, workEthicWeight: 0.022, fatigueFloor: 0.62, maximum: 0.09 }, game: { homeFieldAdvantage: 2.8 } }, simulationVersion: "0.1.0" },
-    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, dossiers: {}, staff: {}, depthCharts: {}, playerGameStats: [], schedule: [], seasonHistory: [], eventHistory: []
+    // Read from content rather than inlined. The two copies had already drifted:
+    // content carried one set of development rates and every league ever created
+    // carried another, so tuning the balance file changed nothing at all.
+    identity: { rootSeed, balanceConfiguration: clone(DEFAULT_BALANCE), simulationVersion: "0.1.0" },
+    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, weekFocus: {}, scoutingTarget: {}, dossiers: {}, staff: {}, depthCharts: {}, playerGameStats: [], schedule: [], seasonHistory: [], eventHistory: []
   };
   const rosterPositions = Object.entries(ROSTER_COMPOSITION).flatMap(([position, count]) =>
     Array.from({ length: count }, () => position as Position)
@@ -797,6 +838,8 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
     state.gamePlans[id] = { ...DEFAULT_GAME_PLAN };
     state.preparation[id] = { points: 0, weeklyPoints: 0, scoutingPoints: 0, weeklyScoutingPoints: 0, offensiveReps: 0, defensiveReps: 0 };
     state.dossiers[id] = {};
+    state.weekFocus[id] = [];
+    state.scoutingTarget[id] = null;
     for (const [staffIndex, role] of STAFF_ROLES.entries()) {
       const staffId = `${id}-staff-${staffIndex + 1}`;
       const personOrdinal = index * (STARTING_ROSTER_SIZE + STAFF_ROLES.length) + staffIndex;
@@ -1194,18 +1237,27 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
       player.mediaAction = "FOOTBALL_FOCUS";
     }
   }
+  // Standing priorities survive the reset above. A program chasing development
+  // is chasing it every week until the player says otherwise — clearing the
+  // spotlight here would mean the card named a player the engine then ignored.
+  // An explicit spotlight command still wins, because commands resolve after.
+  for (const programId of Object.keys(state.programs)) applyWeekFocus(state, programId);
   const rng = new AddressableRng(state.identity.rootSeed).fork(String(state.season), String(state.week));
   resolveCommands(state, commands, rng.fork("commands"), events);
   resolveRecruitingMarket(state, rng.fork("recruiting-market"), events);
   recoverPlayers(state, rng.fork("recovery"), events);
   developPlayers(state, rng.fork("development"), events);
   applyPracticeFatigue(state);
+  // Captured before the whistle, because these are what the week's priorities
+  // actually bought. Saturday has to be able to name Monday.
+  const focusInputs = captureFocusInputs(state);
   resolveScheduledGames(state, rng.fork("games"), events);
   const playerBrandImpact = processPlayerBrands(state, rng.fork("player-brands"), events);
   processInjuries(state, rng.fork("injuries"), events);
   processWeeklyRecapsAndFinances(state, playerBrandImpact, events);
   updateNationalRankings(state);
   if (state.week < 14) replenishRecruitingPoints(state, events);
+  recordFocusPayoffs(state, focusInputs, events);
   state.week += 1;
   if (state.week > 14) rolloverSeason(state, events);
   refreshPreparation(state, events);
@@ -1224,18 +1276,31 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
 function refreshPreparation(state: GameState, events: GameEvent[]): void {
   state.preparation ??= {};
   state.dossiers ??= {};
+  state.weekFocus ??= {};
+  state.scoutingTarget ??= {};
   for (const programId of Object.keys(state.programs)) {
-    const weeklyPoints = preparationWeeklyPoints(state, programId);
-    const weeklyScoutingPoints = weeklyScoutingOutput(state, programId);
     state.preparation[programId] = {
-      points: weeklyPoints,
-      weeklyPoints,
-      scoutingPoints: weeklyScoutingPoints,
-      weeklyScoutingPoints,
+      points: 0,
+      weeklyPoints: 0,
+      scoutingPoints: 0,
+      weeklyScoutingPoints: 0,
       offensiveReps: 0,
-      defensiveReps: 0
+      defensiveReps: 0,
+      autoScoutedOpponentId: null,
+      autoScoutedPoints: 0
     };
-    events.push({ type: "PREP_POINTS_ADDED", season: state.season, week: state.week, programId, pointsAdded: weeklyPoints });
+    // Priorities are standing: they carry over, so a player with nothing to
+    // change advances the week with one button. The hours, the reps, and the
+    // department's target are all derived from them rather than re-entered.
+    applyWeekFocus(state, programId);
+    commitScoutingOutput(state, programId, events);
+    events.push({
+      type: "PREP_POINTS_ADDED",
+      season: state.season,
+      week: state.week,
+      programId,
+      pointsAdded: state.preparation[programId]!.weeklyPoints
+    });
   }
   // A file was work done for one fixture. Once that game is played it is spent,
   // which is what stops a program banking scouting into a single blowout.
@@ -1248,6 +1313,189 @@ function refreshPreparation(state: GameState, events: GameEvent[]): void {
       if (!pending) delete files[opponentProgramId];
     }
   }
+}
+
+interface FocusInputs {
+  offensiveExecution: number;
+  defensiveExecution: number;
+  scoutingReadiness: number;
+  scoutedOpponentId: string | null;
+  spotlightPlayerId: string | null;
+}
+
+/** What the week's priorities had bought by the time the game kicked off. */
+function captureFocusInputs(state: Readonly<GameState>): Map<string, FocusInputs> {
+  const captured = new Map<string, FocusInputs>();
+  for (const programId of Object.keys(state.programs)) {
+    const opponentId = scheduledOpponent(state, programId);
+    const points = opponentId ? state.dossiers?.[programId]?.[opponentId] ?? 0 : 0;
+    const spotlight = state.developmentSpotlights?.[programId];
+    captured.set(programId, {
+      offensiveExecution: planExecution(state, programId, "OFFENSE").expected,
+      defensiveExecution: planExecution(state, programId, "DEFENSE").expected,
+      scoutingReadiness: opponentId ? scoutingReadiness(points) : 0,
+      scoutedOpponentId: opponentId,
+      spotlightPlayerId: spotlight?.target.type === "PLAYER" ? spotlight.target.playerId : null
+    });
+  }
+  return captured;
+}
+
+/**
+ * Says what each priority produced, so the postgame can name the choice.
+ *
+ * A player repeats behaviour they were thanked for. The week screen was
+ * previously never mentioned again after it was used, which is a large part of
+ * why it read as optional homework rather than as the decision it is.
+ */
+function recordFocusPayoffs(state: GameState, inputs: Map<string, FocusInputs>, events: GameEvent[]): void {
+  const developedByPlayer = new Map<string, number>();
+  const recruitingByProgram = new Map<string, number>();
+  for (const event of events) {
+    if (event.type === "PLAYER_DEVELOPED") {
+      developedByPlayer.set(event.playerId, Number((event.newOverall - event.previousOverall).toFixed(2)));
+    }
+    if (event.type === "RECRUITING_POINTS_ADDED") {
+      recruitingByProgram.set(event.programId, event.pointsAdded);
+    }
+  }
+  for (const [programId, captured] of inputs) {
+    const focuses = state.weekFocus?.[programId] ?? [];
+    if (focuses.length === 0) continue;
+    // The player whose extra work actually landed, when one was spotlighted.
+    let developedPlayerId: string | null = null;
+    let developedOverallGain = 0;
+    if (captured.spotlightPlayerId && developedByPlayer.has(captured.spotlightPlayerId)) {
+      developedPlayerId = captured.spotlightPlayerId;
+      developedOverallGain = developedByPlayer.get(captured.spotlightPlayerId) ?? 0;
+    }
+    events.push({
+      type: "WEEK_FOCUS_PAYOFF",
+      season: state.season,
+      week: state.week,
+      programId,
+      focuses: [...focuses],
+      offensiveExecution: captured.offensiveExecution,
+      defensiveExecution: captured.defensiveExecution,
+      scoutingReadiness: captured.scoutingReadiness,
+      scoutedOpponentId: captured.scoutedOpponentId,
+      developedPlayerId,
+      developedOverallGain,
+      recruitingPointsAdded: recruitingByProgram.get(programId) ?? 0
+    });
+  }
+}
+
+/**
+ * Turns a program's standing priorities into every coach's week.
+ *
+ * This is the whole architecture in one function. The player names what the
+ * staff is chasing; the engine works out the hours, the practice budget, and
+ * how the reps are split. Nothing here can be set independently of the
+ * priorities, which is what stops the same decision appearing on four screens in
+ * three different units — the defect that made the week unreadable.
+ */
+function applyWeekFocus(state: GameState, programId: string, events?: GameEvent[]): void {
+  if (!state.programs[programId]) return;
+  state.weekFocus ??= {};
+  state.scoutingTarget ??= {};
+  const stored = state.weekFocus[programId];
+  if (!Array.isArray(stored) || stored.length === 0) {
+    state.weekFocus[programId] = defaultFocuses(state, programId);
+  }
+  const focuses = activeFocuses(state, programId);
+  state.weekFocus[programId] = focuses;
+
+  const plan = planWeekHours(state, programId, focuses);
+  for (const [staffId, allocation] of Object.entries(plan.byStaff)) {
+    const member = state.staff[staffId];
+    if (member) member.allocation = allocation;
+  }
+
+  // A card that names a player has to actually coach that player. Making
+  // development a priority buys the hours; without this it bought hours for
+  // nobody, and the card promised work the engine was never going to do.
+  if (focuses.includes("DEVELOP") && !state.developmentSpotlights[programId]) {
+    const target = developmentTarget(state, programId);
+    if (target) {
+      state.developmentSpotlights[programId] = { focus: "TECHNIQUE", target: { type: "PLAYER", playerId: target.id } };
+      target.developmentFocus = "TECHNIQUE";
+    }
+  }
+
+  const preparation = state.preparation[programId];
+  if (preparation) {
+    preparation.weeklyPoints = plan.practiceHours;
+    preparation.offensiveReps = plan.offensiveReps;
+    preparation.defensiveReps = plan.defensiveReps;
+    preparation.points = Math.max(0, plan.practiceHours - plan.offensiveReps - plan.defensiveReps);
+    // The department's output moves with the hours behind it. What has already
+    // been spent by hand stays spent, so changing priorities mid-week can never
+    // refill a pool the program has drawn down.
+    const output = weeklyScoutingOutput(state, programId);
+    const spent = Math.max(0, (preparation.weeklyScoutingPoints ?? 0) - (preparation.scoutingPoints ?? 0)
+      - (preparation.autoScoutedPoints ?? 0));
+    preparation.weeklyScoutingPoints = output;
+    preparation.scoutingPoints = Math.max(0, output - spent - (preparation.autoScoutedPoints ?? 0));
+  }
+  if (events) {
+    events.push({
+      type: "WEEK_FOCUS_SET",
+      season: state.season,
+      week: state.week,
+      programId,
+      focuses: [...focuses],
+      capacity: focusCapacity(state, programId).capacity
+    });
+  }
+}
+
+/**
+ * Files this week's department output against the opponent the program is
+ * studying.
+ *
+ * Allocating a number of points by hand every week was bookkeeping rather than a
+ * decision — the decision is *which game is worth knowing about*, and that is
+ * the target. Work already filed this week is refunded first, so moving the
+ * target moves the work instead of duplicating it.
+ */
+function commitScoutingOutput(state: GameState, programId: string, events?: GameEvent[]): void {
+  const preparation = state.preparation[programId];
+  if (!preparation) return;
+  state.dossiers ??= {};
+  state.dossiers[programId] ??= {};
+  const files = state.dossiers[programId]!;
+
+  const previousId = preparation.autoScoutedOpponentId ?? null;
+  const previousPoints = preparation.autoScoutedPoints ?? 0;
+  if (previousId && previousPoints > 0) {
+    const left = Math.max(0, (files[previousId] ?? 0) - previousPoints);
+    if (left > 0) files[previousId] = left;
+    else delete files[previousId];
+    preparation.scoutingPoints += previousPoints;
+  }
+  preparation.autoScoutedOpponentId = null;
+  preparation.autoScoutedPoints = 0;
+
+  const targetId = scoutingTargetFor(state, programId);
+  const points = preparation.scoutingPoints;
+  if (!targetId || points <= 0) return;
+  const totalPoints = (files[targetId] ?? 0) + points;
+  files[targetId] = totalPoints;
+  preparation.scoutingPoints = 0;
+  preparation.autoScoutedOpponentId = targetId;
+  preparation.autoScoutedPoints = points;
+  state.scoutingTarget[programId] = targetId;
+  events?.push({
+    type: "SCOUTING_ALLOCATED",
+    season: state.season,
+    week: state.week,
+    programId,
+    opponentProgramId: targetId,
+    points,
+    totalPoints,
+    tiers: dossierTiers(totalPoints)
+  });
 }
 
 /**
@@ -1267,7 +1515,8 @@ export function prepareWeek(input: Readonly<GameState>, commands: readonly GameC
   const preparationCommands = commands.filter((command) =>
     command.type === "ALLOCATE_SCOUTING" || command.type === "SET_SCHEME"
     || command.type === "REPLACE_STAFF" || command.type === "SET_PRACTICE_REPS"
-    || command.type === "SET_STAFF_ALLOCATION" || command.type === "SET_WEEK_HOURS");
+    || command.type === "SET_STAFF_ALLOCATION" || command.type === "SET_WEEK_HOURS"
+    || command.type === "SET_WEEK_FOCUS" || command.type === "SET_SCOUTING_TARGET");
   if (preparationCommands.length > 0) {
     resolveCommands(state, preparationCommands, new AddressableRng(state.identity.rootSeed).fork("preparation", String(state.season), String(state.week)), events);
   }
@@ -1385,43 +1634,62 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       events.push({ type: "SCHEME_SET", season: state.season, week: state.week, programId: program.id, scheme: { ...program.schemeIdentity } });
       continue;
     }
-    if (command.type === "SET_WEEK_HOURS") {
-      if (!STAFF_FOCUSES.includes(command.focus) || !Number.isFinite(command.hours) || command.hours < 0) {
-        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Hours must be a number of hours on a real job." });
+    if (command.type === "SET_WEEK_FOCUS") {
+      const requested = Array.isArray(command.focuses) ? command.focuses : [];
+      if (requested.some((focus) => !isWeekFocus(focus))) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That is not something a staff can work on." });
         continue;
       }
-      const plans = distributeWeekHours(state, program.id, command.focus, command.hours);
-      for (const [staffId, allocation] of Object.entries(plans)) {
-        const member = state.staff[staffId];
-        if (member) member.allocation = allocation;
+      const capacity = focusCapacity(state, program.id).capacity;
+      const unique = [...new Set(requested)];
+      if (unique.length > capacity) {
+        events.push({
+          type: "COMMAND_REJECTED",
+          programId: command.programId,
+          command,
+          reason: `This staff can only chase ${capacity} thing${capacity === 1 ? "" : "s"} a week. Hire better coaches to chase more.`
+        });
+        continue;
       }
-      // Practice hours are the coaches' PREPARE hours, so moving the pool has to
-      // move the practice budget in the same breath. Leaving it until the weekly
-      // refresh made the pool say ten hours while the practice panel still said
-      // fifteen — a posted number that disagrees with the engine.
-      const preparation = state.preparation[program.id];
-      if (preparation) {
-        const refreshed = preparationWeeklyPoints(state, program.id);
-        const alreadySpent = preparation.offensiveReps + preparation.defensiveReps;
-        preparation.weeklyPoints = refreshed;
-        preparation.points = Math.max(0, refreshed - alreadySpent);
-        // Reps already bought beyond the new budget have to give way.
-        let over = alreadySpent - refreshed;
-        for (const side of ["defensiveReps", "offensiveReps"] as const) {
-          if (over <= 0) break;
-          const given = Math.min(over, preparation[side]);
-          preparation[side] -= given;
-          over -= given;
+      state.weekFocus[program.id] = unique;
+      applyWeekFocus(state, program.id, events);
+      // Hours moved, so the department's output moved with them.
+      commitScoutingOutput(state, program.id);
+      continue;
+    }
+    if (command.type === "SET_SCOUTING_TARGET") {
+      const targetId = command.opponentProgramId;
+      if (targetId !== null) {
+        const fixture = state.schedule.find((game) =>
+          !game.played && game.week >= state.week
+          && ((game.homeProgramId === program.id && game.awayProgramId === targetId)
+            || (game.awayProgramId === program.id && game.homeProgramId === targetId)));
+        if (!fixture) {
+          events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That opponent is not on the remaining schedule." });
+          continue;
         }
       }
-      const settled = weekAllocation(state, program.id);
+      state.scoutingTarget[program.id] = targetId;
+      commitScoutingOutput(state, program.id);
       events.push({
-        type: "STAFF_ALLOCATION_SET",
+        type: "SCOUTING_TARGET_SET",
         season: state.season,
         week: state.week,
         programId: program.id,
-        staffId: "STAFF",
-        allocation: settled.byFocus
+        opponentProgramId: state.scoutingTarget[program.id] ?? null
+      });
+      continue;
+    }
+    if (command.type === "SET_WEEK_HOURS") {
+      // Hours are derived from the week's priorities now. Leaving a second way to
+      // set them would let the two disagree, which is exactly the defect the
+      // priorities replaced: the same decision on several screens in different
+      // units, none of which agreed with the engine.
+      events.push({
+        type: "COMMAND_REJECTED",
+        programId: command.programId,
+        command,
+        reason: "Hours follow from the week's priorities. Choose what your staff is chasing instead."
       });
       continue;
     }
@@ -1431,26 +1699,14 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That coach does not work for this program." });
         continue;
       }
-      if (staff.role === "STRENGTH_COACH") {
-        events.push({
-          type: "COMMAND_REJECTED",
-          programId: command.programId,
-          command,
-          reason: `${staff.name} works automatically on strength and player health; the strength coach has no weekly hours to allocate.`
-        });
-        continue;
-      }
-      const capacity = staffCapacity(staff.rating, staff.trait);
-      const allocation = emptyAllocation();
-      for (const focus of STAFF_FOCUSES) {
-        allocation[focus] = Math.max(0, Math.trunc(command.allocation[focus] ?? staff.allocation[focus] ?? 0));
-      }
-      if (allocatedTotal(allocation) > capacity) {
-        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: `${staff.name} has ${capacity} hours a week and this plan spends more.` });
-        continue;
-      }
-      staff.allocation = allocation;
-      events.push({ type: "STAFF_ALLOCATION_SET", season: state.season, week: state.week, programId: program.id, staffId: staff.id, allocation: { ...allocation } });
+      events.push({
+        type: "COMMAND_REJECTED",
+        programId: command.programId,
+        command,
+        reason: staff.role === "STRENGTH_COACH"
+          ? `${staff.name} works automatically on strength and player health; the strength coach has no weekly hours to allocate.`
+          : `${staff.name}'s week follows from what the staff is chasing. Set the week's priorities instead of moving one coach's hours.`
+      });
       continue;
     }
     if (command.type === "UPGRADE_FACILITY") {
@@ -1543,30 +1799,14 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       continue;
     }
     if (command.type === "SET_PRACTICE_REPS") {
-      const preparation = state.preparation[program.id];
-      const reps = Math.round(command.reps);
-      if (!preparation || !Number.isFinite(reps) || reps < 0 || reps > MAXIMUM_REPS_PER_SIDE) {
-        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: `Practice reps must be between 0 and ${MAXIMUM_REPS_PER_SIDE}.` });
-        continue;
-      }
-      const current = command.side === "OFFENSE" ? preparation.offensiveReps : preparation.defensiveReps;
-      const cost = reps - current;
-      if (cost > preparation.points) {
-        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Not enough preparation left this week for those reps." });
-        continue;
-      }
-      preparation.points -= cost;
-      if (command.side === "OFFENSE") preparation.offensiveReps = reps;
-      else preparation.defensiveReps = reps;
+      // Reps follow from whether a side of the ball is a priority this week. The
+      // slider that used to set them was the third place the same decision
+      // lived, in a third unit, and none of the three agreed.
       events.push({
-        type: "PRACTICE_REPS_SET",
-        season: state.season,
-        week: state.week,
-        programId: program.id,
-        side: command.side,
-        reps,
-        pointsSpent: cost,
-        expectedExecution: planExecution(state, program.id, command.side).expected
+        type: "COMMAND_REJECTED",
+        programId: command.programId,
+        command,
+        reason: "Practice reps follow from the week's priorities. Make a side of the ball a priority to drill it."
       });
       continue;
     }
@@ -2058,7 +2298,14 @@ function playerDevelopmentIntensity(state: Readonly<GameState>, player: Readonly
   if (!player.programId) return 1;
   const spotlight = state.developmentSpotlights?.[player.programId];
   if (!spotlight) return 1;
-  if (spotlight.target.type === "PLAYER") return 1;
+  // This compared nothing: any individual spotlight returned 1, for the
+  // spotlighted player and everyone else alike. `SPOTLIGHT_INTENSITY.PLAYER` was
+  // raised to 1.6 specifically to make concentrated work worth taking and had
+  // never once been applied, which is why a season of dedicated development
+  // measured 0.05 Overall against doing nothing at all.
+  if (spotlight.target.type === "PLAYER") {
+    return spotlight.target.playerId === player.id ? SPOTLIGHT_INTENSITY.PLAYER : 1;
+  }
   return spotlight.target.position === player.position ? SPOTLIGHT_INTENSITY.POSITION : 1;
 }
 
@@ -2086,7 +2333,7 @@ function developPlayers(state: GameState, rng: AddressableRng, events: GameEvent
     const fatigueModifier = clamp(1 - player.fatigue / 180, rules.fatigueFloor, 1);
     const program = state.programs[player.programId]!;
     const trainingModifier = 1 + Math.max(0, program.facilities.TRAINING - 1) * 0.04;
-    const coachingModifier = 1 + staffContribution(state, program.id, "DEVELOP") / 500;
+    const coachingModifier = 1 + staffContribution(state, program.id, "DEVELOP") / 150;
     const intensity = playerDevelopmentIntensity(state, player);
     const focus = projectedDevelopmentPayoff(state, player, player.developmentFocus, intensity);
     const ratingChanges: Partial<Record<PlayerRating, number>> = {};

@@ -1,13 +1,9 @@
-import type { DevelopmentFocus, GamePlan, GameState, GameCommand, Position, Prospect } from "@college-legends/model";
+import type { DevelopmentFocus, GamePlan, GameState, GameCommand, Position, Prospect, WeekFocus } from "@college-legends/model";
 import {
-  DOSSIER_THRESHOLDS,
-  MARQUEE_VALUE,
-  MAXIMUM_REPS_PER_SIDE,
+  focusCapacity,
   programUnitRatings,
   projectedGamePlan,
-  scheduledOpponent,
   scoutingBoard,
-  staffCapacity,
   WORTH_SCOUTING
 } from "@college-legends/simulation";
 
@@ -23,88 +19,48 @@ function planGamePlan(state: Readonly<GameState>, programId: string, opponentId:
 }
 
 /**
- * Rivals install their plan with the week's preparation, exactly as the player
- * does. Preparation buys reps and nothing else, so this is a single call on how
- * hard to practise.
- */
-function planPractice(state: Readonly<GameState>, programId: string): GameCommand[] {
-  const preparation = state.preparation?.[programId];
-  if (!preparation || !scheduledOpponent(state, programId)) return [];
-  let points = preparation.points;
-  const commands: GameCommand[] = [];
-  for (const side of ["OFFENSE", "DEFENSE"] as const) {
-    const current = side === "OFFENSE" ? preparation.offensiveReps : preparation.defensiveReps;
-    const target = Math.min(MAXIMUM_REPS_PER_SIDE, current + Math.floor(points * 0.45));
-    if (target <= current) continue;
-    commands.push({ type: "SET_PRACTICE_REPS", programId, side, reps: target });
-    points -= target - current;
-  }
-  return commands;
-}
-
-/**
- * How a rival spends its scouting department. Files are opened weeks ahead and
- * the week's output goes where it is worth most: this week's game first, since
- * an unread file is wasted, then the largest prize still on the schedule.
+ * What a rival chases this week, from the same five priorities the player picks
+ * and against the same capacity his staff buys him.
  *
- * Rivals therefore skip the bottom of the league and stack points on the games
- * that pay, which is the same judgement the player is being asked to make.
+ * Rivals used to move hours by hand and allocate scouting points one fixture at
+ * a time, which is a control the player no longer has. Planning on priorities
+ * keeps both sides of the league on one system: a rival with a thin staff also
+ * only gets to chase one thing, and also has to decide whether the game in three
+ * weeks is worth more than this Saturday.
  */
-function planScouting(state: Readonly<GameState>, programId: string): GameCommand[] {
-  const preparation = state.preparation?.[programId];
-  if (!preparation || preparation.scoutingPoints < 1) return [];
+function planFocus(state: Readonly<GameState>, programId: string): GameCommand[] {
+  const capacity = focusCapacity(state, programId).capacity;
   const board = scoutingBoard(state, programId);
-  if (board.length === 0) return [];
-
-  let points = preparation.scoutingPoints;
-  const commands: GameCommand[] = [];
-  const thisWeek = board.find((dossier) => dossier.week === state.week);
-  if (thisWeek) {
-    // Whatever is left unspent when the whistle blows is lost, so the imminent
-    // game always gets enough to open the next tier if that is reachable.
-    const next = DOSSIER_THRESHOLDS.GAME_PLAN > thisWeek.points
-      ? [DOSSIER_THRESHOLDS.TENDENCIES, DOSSIER_THRESHOLDS.PERSONNEL, DOSSIER_THRESHOLDS.GAME_PLAN]
-        .find((threshold) => threshold > thisWeek.points) ?? 0
-      : 0;
-    const spend = Math.min(points, Math.max(0, next - thisWeek.points));
-    if (spend > 0) {
-      commands.push({ type: "ALLOCATE_SCOUTING", programId, opponentProgramId: thisWeek.opponentProgramId, points: spend });
-      points -= spend;
-    }
-  }
-
-  // The rest goes forward, onto the biggest prize still to come — and only if
-  // it is worth more than a routine fixture.
-  const ahead = board
-    .filter((dossier) => dossier.week > state.week && dossier.value >= WORTH_SCOUTING)
+  const prize = board
+    .filter((dossier) => dossier.week <= state.week + 3 && dossier.value >= WORTH_SCOUTING)
     .sort((left, right) => right.value - left.value || left.week - right.week)[0];
-  if (ahead && points > 0) {
-    commands.push({ type: "ALLOCATE_SCOUTING", programId, opponentProgramId: ahead.opponentProgramId, points });
-  }
-  return commands;
-}
+  const units = programUnitRatings(state, programId);
+  const offenseFirst = units.passOffense + units.rushOffense >= units.passDefense + units.rushDefense;
 
-/**
- * Rivals move coordinator hours toward scouting when a game worth scouting is
- * coming, and back to preparation when it is not. Without this the allocation
- * screen is a lever only the player pulls, and a big week costs a rival nothing.
- */
-function planStaffAllocation(state: Readonly<GameState>, programId: string): GameCommand[] {
-  const bigGameComing = scoutingBoard(state, programId)
-    .some((dossier) => dossier.week <= state.week + 2 && dossier.value >= MARQUEE_VALUE);
-  const commands: GameCommand[] = [];
-  for (const member of Object.values(state.staff)) {
-    if (member.programId !== programId) continue;
-    if (member.role !== "OFFENSIVE_COORDINATOR" && member.role !== "DEFENSIVE_COORDINATOR") continue;
-    const capacity = staffCapacity(member.rating);
-    const scout = bigGameComing ? Math.round(capacity * 0.4) : Math.round(capacity * 0.15);
-    if (member.allocation.SCOUT === scout) continue;
-    commands.push({
-      type: "SET_STAFF_ALLOCATION",
-      programId,
-      staffId: member.id,
-      allocation: { PREPARE: capacity - scout, SCOUT: scout, RECRUIT: 0, DEVELOP: 0, RECOVER: 0 }
-    });
+  // Weighted so the season has a shape rather than a fixed ordering. Drilling the
+  // stronger side is the default, a prize fixture outranks drilling the second
+  // side, work with the roster pays early, and the trail takes over late as the
+  // class closes. Flat weights left rivals installing both sides every week from
+  // September to December and never once competing on the systems the game is
+  // actually about.
+  const ranked: { focus: WeekFocus; weight: number }[] = [
+    { focus: offenseFirst ? "INSTALL_OFFENSE" : "INSTALL_DEFENSE", weight: 85 },
+    { focus: "SCOUT", weight: prize ? 35 + prize.value * 0.75 : 18 },
+    { focus: offenseFirst ? "INSTALL_DEFENSE" : "INSTALL_OFFENSE", weight: 52 },
+    { focus: "RECRUIT", weight: 22 + state.week * 5.5 },
+    { focus: "DEVELOP", weight: 62 - state.week * 3.2 }
+  ];
+  const focuses = ranked
+    .sort((left, right) => right.weight - left.weight)
+    .slice(0, capacity)
+    .map((entry) => entry.focus);
+
+  const commands: GameCommand[] = [
+    { type: "SET_WEEK_FOCUS", programId, focuses }
+  ];
+  const target = prize ?? board.find((dossier) => dossier.week === state.week) ?? board[0];
+  if (target && state.scoutingTarget?.[programId] !== target.opponentProgramId) {
+    commands.push({ type: "SET_SCOUTING_TARGET", programId, opponentProgramId: target.opponentProgramId });
   }
   return commands;
 }
@@ -124,9 +80,7 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
     if (program.id === excludedProgramId) return [];
     const commands: GameCommand[] = [];
 
-    commands.push(...planStaffAllocation(state, program.id));
-    commands.push(...planPractice(state, program.id));
-    commands.push(...planScouting(state, program.id));
+    commands.push(...planFocus(state, program.id));
 
     const desired = planGamePlan(state, program.id, upcomingOpponent(state, program.id));
     const current = state.gamePlans?.[program.id];

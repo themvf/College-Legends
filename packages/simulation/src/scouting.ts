@@ -220,8 +220,12 @@ export function opponentScoutingReport(
 
   const opponent = state.programs[opponentId]!;
   const dossierPoints = state.dossiers?.[programId]?.[opponentId] ?? 0;
-  const tiers = dossierTiers(dossierPoints);
   const filmGames = filmGamesAvailable(state, opponentId);
+  // Nothing is readable off tape that does not exist. The department produces at
+  // a baseline every week now and files it automatically, so without this the
+  // opening Saturday would arrive with every program's tendencies already known
+  // — and week one is supposed to be the one genuine unknown of the season.
+  const tiers = filmGames === 0 ? [] : dossierTiers(dossierPoints);
   const confidence = scoutingConfidence(state, programId, filmGames, dossierPoints);
   const rng = new AddressableRng(state.identity.rootSeed).fork("scouting", String(state.season), String(state.week), programId, opponentId);
 

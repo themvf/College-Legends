@@ -1500,14 +1500,232 @@ Settled: offers resolve **immediately** rather than at a signing day, because th
 offseason phase does not exist yet. Money is **per year and charged weekly**,
 which is what finally creates insolvency pressure.
 
+## The week is five cards, not a pool of hours
+
+The one-pool week screen shipped and was rejected on sight: *"I don't even
+understand it and I'm so confused by it."* That was not a copy problem, and it
+was not a balance problem.
+
+**Hours are what the engine spends. They are not a decision anybody can hold.**
+Four sliders over a 24-hour pool is roughly two thousand valid weeks. Nobody
+explores two thousand of anything fourteen times a season, so a player finds one
+arrangement that does not look broken and never touches it again. Four things
+were wrong at once, and none of them are numbers:
+
+| test a weekly decision has to pass | the pool screen |
+|---|---|
+| Does the cost have a name? | "8 hours." Hours of what? Nobody's hours. |
+| Does the prize have a name? | "60–83% installed." A stat, not a prize. |
+| Is there a moment of truth? | No. Saturday never mentioned the choice. |
+| Could you tell a friend what you did? | "I moved sliders to 8/4/10/2." No. |
+
+### Everything runs anyway; you name what gets the surge
+
+`WeekFocus` is one of five: `INSTALL_OFFENSE`, `INSTALL_DEFENSE`, `SCOUT`,
+`DEVELOP`, `RECRUIT`. Each is a card that states **who runs it**, **what happens
+if you leave it alone**, **what happens if you pick it**, and **why it might
+matter this week** (0–100 stakes with the reason in words).
+
+Nothing ever goes to zero from neglect — there is no maintenance chore and no
+punishment for not reading a screen. A test asserts that across every
+combination of priorities, all four underlying jobs still receive hours.
+
+**How many you get to pick is the progression bar.** `focusCapacity` reads a
+weighted staff rating (head coach 0.45, coordinators 0.30 / 0.25, an empty chair
+zero) against thresholds of 70 and 80:
+
+| tier | staff power | priorities a week |
+|---|---|---|
+| LOW | 67–72 | 1, and 4 of 10 already reach 2 |
+| MID | 74–79 | 2 |
+| POWER | 83–87 | 3 |
+
+A low-tier program chasing one thing a week *is* what being a bad program feels
+like, and hiring is what buys the second and third. This is the number that
+finally makes a hire visible on the screen the player opens most.
+
+### One decision, not four in different units
+
+Hours, practice reps, and scouting points were three places the same decision
+lived, in three units, none of which agreed with each other. All three are now
+derived, and the commands that set them independently are **refused with a
+reason** rather than silently overwritten at the week boundary:
+
+```
+SET_WEEK_HOURS         → "Hours follow from the week's priorities."
+SET_STAFF_ALLOCATION   → "…set the week's priorities instead."
+SET_PRACTICE_REPS      → "Make a side of the ball a priority to drill it."
+```
+
+`planWeekHours(state, programId, focuses)` is the whole architecture in one
+function. Measured on a 26-hour mid-tier staff:
+
+```
+(none)                     PREP 7  SCOUT 6  REC 8  DEV 5   reps 4/3
+INSTALL_OFFENSE            PREP 12 SCOUT 4  REC 6  DEV 4   reps 8/3
+INSTALL_OFFENSE + SCOUT    PREP 12 SCOUT 9  REC 3  DEV 2   reps 8/3
+INSTALL_OFFENSE + DEFENSE  PREP 18 SCOUT 3  REC 3  DEV 2   reps 6/6
+SCOUT + RECRUIT            PREP 7  SCOUT 8  REC 8  DEV 3   reps 4/3
+```
+
+**Coordinators own Saturday; the head coach owns everything else.** A coordinator
+owes his own side of the ball a third of his week whatever the staff is chasing,
+and his whole week when you make it a priority. That floor is deliberately just
+above `planInstaller`'s handover threshold (dropped from 0.5 to 0.34 for exactly
+this reason) — without it, focusing anywhere else dropped a side of the ball onto
+a head coach who was not preparing either, which is a cliff rather than a trade.
+A test asserts every coordinator in a 24-program league stays above it under
+every combination of priorities.
+
+### Two constants set by measurement, not by feel
+
+**`PRACTICE_PER_COACHING_HOUR = 0.55`.** Passing raw PREPARE hours into the
+practice budget put the whole league at ~0.78 expected execution — the top of the
+band the install table was calibrated against ("12 reps, 66–87%") — and a league
+where every plan holds up amplifies unit-rating gaps. One-score games fell from
+27% to 19.4%. At 0.55 the league sits mid-band:
+
+| | raw hours | at 0.55 |
+|---|---|---|
+| league average offensive execution | 0.784 | 0.729 |
+| one-score games (pooled, 576 games) | 19.4% | 21.4% |
+
+That is still below the ~24% this engine used to measure, and honestly so: before
+this work nobody in a headless run set reps at all, so every program was equally
+unprepared. Execution now varies *between* programs, which is correct — a better
+staff should win more — and it compounds the existing tier gap. Worth watching.
+
+**`UNFOCUSED_REPS_CAP = 3`.** A side nobody made a priority gets a walkthrough,
+not half a week. Without the cap a focused offense still left four reps for the
+defense and committing bought almost nothing.
+
+### The film room is a target, not an allocation
+
+`ALLOCATE_SCOUTING` asked the player to type a number every week — bookkeeping,
+not a decision. The decision is **which game**. `SET_SCOUTING_TARGET` names an
+opponent and the department's whole weekly output files itself there, refunding
+what it filed before so moving the target moves the work rather than duplicating
+it. A test re-chooses the same target five times and asserts the file does not
+grow.
+
+That concentration broke the old thresholds — a whole week landing on one file
+completed it — so the tiers were re-priced, and **readiness was split from
+intel**, which should never have shared a number:
+
+| | before | after |
+|---|---|---|
+| `TENDENCIES` / `PERSONNEL` / `GAME_PLAN` | 6 / 18 / 36 | 20 / 45 / 75 |
+| readiness saturates at | `GAME_PLAN` | `READINESS_CAP = 55` |
+
+Readiness is what a file is worth to your own team and it saturates fast; the
+intel tiers are what it tells you and they keep paying. Tying them together meant
+re-pricing one to fix the other, which is how tendencies ended up free for all 72
+programs the moment the department started filing automatically.
+
+**Nothing is readable off tape that does not exist.** Tiers are gated on
+`filmGames > 0`, so week one is unreadable at any price — while the file still
+pays in readiness from the first point. Without this the opening Saturday arrived
+with every program's tendencies already known, which is precisely what week one
+is supposed not to be.
+
+### Recruiting hours had to start mattering
+
+`recruitingWeeklyPoints` was `32 + facilities × 4 + contribution / 20`. The base
+dominated so completely that quadrupling the staff on the trail moved the week by
+five points, so the recruiting card could not state a real trade. Re-weighted to
+`14 + facilities × 3 + contribution / 4.2`: the league-wide weekly average is
+unchanged, but it now responds to whether anybody is actually on the road.
+
+### Saturday names Monday
+
+`WEEK_FOCUS_PAYOFF` is emitted after every week with what the priorities actually
+bought — execution on both sides, the readiness the file delivered, the Overall
+the developed player gained, the points added on the trail. The postgame screen
+opens with it.
+
+A player repeats behaviour they were thanked for. The week screen was previously
+never mentioned again after it was used, which is a large part of why it read as
+optional homework rather than as the decision it is.
+
+### Standing, not weekly
+
+Priorities carry over. A player with nothing to change advances the week with one
+button — nobody plays season twelve if the week costs real attention every time.
+The dashboard briefing is what makes that safe: it flags an unclaimed priority,
+and it flags when a card worth ≥65 is not being chased while every slot is full,
+with the reason and both outcomes in the detail line.
+
+Rivals plan on the same five priorities against the same capacity, so a thin
+rival staff also only chases one thing.
+
+### Still open here
+
+- **Competitiveness.** 21.4% one-score games against a real 35%, down from ~24%.
+  The distribution test's floor of 20% now has only 1.4 points of headroom and
+  per-league variance is ±3.5 points on 144 games — it is under-powered and should
+  pool six leagues rather than four.
+- **The stakes numbers are hypotheses.** They are read off the same projections
+  the cards post, so they cannot disagree with the engine, but the coefficients
+  that turn "27 points of headroom" into "83" have not been tuned against play.
+- **Development still needs its popup** (build order step 4). Making it a
+  priority now sets the spotlight on the man with the most headroom so the card
+  is honest, but *which attribute* to grow is still not a choice the player makes.
+
+### Two dead systems the cards exposed
+
+Building the develop card meant asking what it would actually buy, and the answer
+was nothing. Both defects had been shipped for a while and neither was visible
+without measuring the payoff a screen claims.
+
+**The individual development spotlight had never once applied.**
+
+```ts
+if (spotlight.target.type === "PLAYER") return 1;   // compared nothing
+```
+
+Any individual spotlight returned intensity 1 — for the spotlighted player and
+for everybody else alike. `SPOTLIGHT_INTENSITY.PLAYER` was deliberately raised
+from 1.0 to 1.6 to make concentrated work worth taking, and that constant had
+been dead the whole time.
+
+**The balance file was not connected to the game.** `createFictionalLeague`
+inlined its own `balanceConfiguration` instead of reading `DEFAULT_BALANCE` from
+content, and the two had drifted:
+
+| | content | what every league actually ran |
+|---|---|---|
+| `weeklyDevelopment.base` | 0.012 | 0.012 |
+| after re-tuning content | 0.034 | **still 0.012** |
+
+So tuning the balance file changed nothing at all. It reads from content now.
+
+Together those two put development at *0.05 Overall of difference across a full
+season* between a program that spent every week on it and one that never touched
+it. Measured over 12 weeks on a player with 28 points of headroom:
+
+| | target's Overall gain | whole roster |
+|---|---|---|
+| before | 0.49 vs 0.44 | 0.77 vs 0.70 |
+| after | **2.74 vs 1.29** | **1.81 vs 1.37** |
+
+Rates were re-scaled to land an ordinary player near 1.5 Overall a season and a
+concentrated one near 3–4, which is roughly the 70-to-85 arc a real developing
+college player follows over four years. `coachingModifier` went from
+`1 + contribution/500` to `/150` so the priority itself is worth something.
+
 ## Build order
 
 Each step is playable and each depends on the one before it.
 
 1. **Five position attributes, Overall derived.** Everything else needs it.
-2. **The one combined week screen** with the shared pool. Cuts the weekly
-   tactical call as a side effect.
-3. **Scouting as a four-way split** paying in named football outcomes.
+2. ~~**The one combined week screen.**~~ **Done, twice.** The shared-hours pool
+   shipped and was rejected as unreadable; it is now five priority cards. See
+   "The week is five cards, not a pool of hours".
+3. **Scouting as a four-way split** paying in named football outcomes. Partly
+   superseded: scouting is a *target* now rather than an allocation, and it pays
+   in flat readiness. The four-way split would make that allocation a shape as
+   well as an amount — still worth doing, but it is no longer the thing standing
+   between the player and understanding the week.
 4. **Development popup**, wired so the box score reflects the attribute that grew.
 5. **Recruiting** — offer, price, percentage, ranges.
 
