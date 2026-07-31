@@ -1792,6 +1792,69 @@ The engine's determinism invariant is what makes a save trustworthy, and the tes
 uses it: a loaded career must advance to byte-identical programs against one that
 was never saved.
 
+## Somebody at the door, every third week
+
+Four people turn up on weeks 3, 6, 9 and 12; you say yes to exactly one, and it
+does not always come off. A wealthy donor with a cheque, a former offensive
+player who will work with one room, a local business offering to paper the town
+for the next home game, and a defensive great who will spend the week teaching
+your secondary to take the ball away.
+
+Three weeks is deliberate. Often enough that a season holds four of them and the
+player learns the shape, rare enough that each one is an occasion. It does not
+line up with the week screen on purpose — this is something that happens **to**
+the program rather than something the staff is spending, which is why it is a
+modal rather than another panel.
+
+### The odds are on the card, and they belong to the program
+
+A gamble with hidden odds is a slot machine. Every chance is printed before the
+choice and every one is a function of the program rather than a flat roll:
+donor culture carries the cheque, prestige and national press bring the legends
+back, local press and fan support get the free advertising. A bad program still
+meets all four — it just converts fewer, which is the right shape for a game
+that starts you somewhere bad.
+
+The four sit on a deliberate risk ladder, because four options at the same odds
+are a menu rather than a decision. Measured on a mid-tier program:
+
+| | odds | what it pays |
+|---|---|---|
+| local business | 74% | $240K of advertising, and only if the next game is home |
+| defensive legend | 58% | one Saturday |
+| donor | 40–54% | the biggest single number on the table |
+| offensive legend | 44% | **the only permanent one** |
+
+The permanent reward carries the longest odds on purpose: a roster that keeps
+the points is worth more than a cheque you spend once.
+
+### Every reward is a real engine effect, verified
+
+Nothing here is a number on a card that the simulation ignores — the failure
+mode this codebase keeps finding. Measured by forcing each outcome and then
+reading what changed:
+
+| | measured |
+|---|---|
+| donor | budget rises by exactly the amount the card printed |
+| offensive legend | +1.2 Overall across a 7-man room, never past a man's ceiling |
+| local business | $240K credit banked, spent at the next **home** game and only there |
+| defensive legend | takeaways per team-game **1.590 → 1.986** |
+
+That last one is the check worth keeping: the card promises +25% and the drive
+loop delivers +24.9%. The multiplier hangs on `TeamSide`, so it belongs to the
+side actually taking the ball away rather than to the offense being played.
+
+**Rivals answer the same door.** Without that the four offers are a standing buff
+only the human collects and the league drifts apart by a donation and a legend
+every three weeks. They take expected value against their own situation, so a
+program short of money chases the cheque and a good one with a game to win takes
+the defensive week.
+
+**The roll is addressable, so reloading cannot re-roll it.** The path depends
+only on season, week, program and option — a replayed career meets the same four
+people and gets the same answer, which a test asserts.
+
 ## Build order
 
 Each step is playable and each depends on the one before it.

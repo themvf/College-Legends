@@ -99,6 +99,11 @@ export interface TeamSide {
   snapShares?: SnapShares;
   /** How well each side of the plan was installed this week, as a band. */
   execution: { offense: { low: number; high: number }; defense: { low: number; high: number } };
+  /**
+   * Multiplier on this side's forced turnovers for this game only. Defaults to
+   * 1; a returning defensive great who came through raises it for one Saturday.
+   */
+  takeawayMultiplier?: number;
 }
 
 export interface PlayResult {
@@ -604,6 +609,9 @@ function resolvePlay(
 ): PlayResult {
   const balance = RUN_PASS_BALANCE[offense.side.plan.runPassBalance];
   const posture = DEFENSIVE_POSTURE[defense.side.plan.defensivePosture];
+  // The defending side is the one taking the ball away, so a takeaway week
+  // belongs to them rather than to the offense being played.
+  const takeaway = defense.side.takeawayMultiplier ?? 1;
   const pressure = PASS_RUSH_PRESSURE[defense.side.plan.pressure];
   const targets = TARGET_DISTRIBUTION[offense.side.plan.targetDistribution];
 
@@ -641,7 +649,7 @@ function resolvePlay(
     if (rng.at(`${key}:run-explosive`) < explosiveChance) yards += 10 + rng.at(`${key}:run-burst`) * 26;
     play.yards = Math.round(clamp(yards, -8, 99));
     play.ballCarrierId = carrier?.id ?? null;
-    const fumbleChance = clamp(0.014 * posture.fumble, 0.003, 0.06);
+    const fumbleChance = clamp(0.014 * posture.fumble * takeaway, 0.003, 0.08);
     play.turnover = rng.at(`${key}:fumble`) < fumbleChance;
     if (carrier) {
       const line = offense.lines.get(carrier.id)!;
@@ -687,7 +695,7 @@ function resolvePlay(
   play.receiverId = receiver?.id ?? null;
 
   const interceptionChance = clamp(
-    (0.026 + targets.takeawayRisk) * posture.interception - edge * 0.0007,
+    (0.026 + targets.takeawayRisk) * posture.interception * takeaway - edge * 0.0007,
     0.005,
     0.09
   );

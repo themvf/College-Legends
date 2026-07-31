@@ -34,6 +34,21 @@ export type StaffFocus = "PREPARE" | "SCOUT" | "RECRUIT" | "DEVELOP" | "RECOVER"
 export type WeekFocus = "INSTALL_OFFENSE" | "INSTALL_DEFENSE" | "SCOUT" | "DEVELOP" | "RECRUIT";
 
 /**
+ * Somebody outside the building offering to help. Four of them turn up every
+ * third week; you get to say yes to exactly one, and it does not always come
+ * off.
+ */
+export type BoosterKind =
+  /** A wealthy donor writing a cheque. */
+  | "DONOR"
+  /** A former player who comes back and works with one offensive room. */
+  | "POSITION_LEGEND"
+  /** A local business papering the town for the next home game. */
+  | "LOCAL_BUSINESS"
+  /** A former defensive great who teaches this week's team to take the ball away. */
+  | "TURNOVER_LEGEND";
+
+/**
  * What a coach is known for. Rating says how good he is; the trait says what he
  * is good *at*, which is what makes two coaches of the same calibre a genuine
  * choice rather than a sort.
@@ -332,6 +347,53 @@ export interface FocusCapacity {
   /** Power needed for one more focus, or null at the ceiling. */
   nextAt: number | null;
   note: string;
+}
+
+/**
+ * One of the four people on the table this week.
+ *
+ * The odds are stated on the card and are a property of the *program* rather
+ * than a hidden roll — a donor is likelier to come through where donor culture
+ * is strong, a legend where the program has standing. That is what keeps this a
+ * decision rather than a slot machine.
+ */
+export interface BoosterOption {
+  id: string;
+  kind: BoosterKind;
+  /** Who is offering. A person, or a business. */
+  name: string;
+  /** The pitch, in one line. */
+  headline: string;
+  /** Exactly what lands if it comes off. */
+  reward: string;
+  /** Why the odds are what they are. */
+  note: string;
+  /** 0–100, stated before the player chooses. */
+  chance: number;
+  /** The offensive room a POSITION_LEGEND would work with. */
+  position?: Position;
+  /** Money a DONOR would give, in dollars. */
+  amount?: number;
+}
+
+/** The four on the table, and what happened once one was taken. */
+export interface BoosterOffer {
+  season: Season;
+  week: number;
+  options: BoosterOption[];
+  /** Set the moment the player chooses; the offer stays for the record. */
+  chosenOptionId: string | null;
+  /** Null until chosen. "Success!" or "Try again next time!" */
+  succeeded: boolean | null;
+}
+
+/** A program's standing booster state: the open offer and anything still running. */
+export interface BoosterProgramState {
+  offer: BoosterOffer | null;
+  /** Advertising a local business has already paid for, spent at the next home game. */
+  advertisingCredit: number;
+  /** The week a takeaway boost applies to, or null. One game only. */
+  takeawayBoostWeek: number | null;
 }
 
 /** A posted modifier on a staff card, in the spirit of a salaried specialist. */
@@ -677,6 +739,8 @@ export interface GameState {
   scoutingTarget: Record<ProgramId, ProgramId | null>;
   /** Accumulated scouting points per program, per opponent. Files persist. */
   dossiers: Record<ProgramId, Record<ProgramId, number>>;
+  /** Booster offers and anything a successful one left running. */
+  boosters: Record<ProgramId, BoosterProgramState>;
   staff: Record<string, StaffMember>;
   depthCharts: Record<ProgramId, DepthChart>;
   playerGameStats: PlayerGameStatLine[];
@@ -729,6 +793,8 @@ export type GameCommand =
   | { type: "SET_WEEK_FOCUS"; programId: ProgramId; focuses: WeekFocus[] }
   /** Which opponent the scouting department is working on. */
   | { type: "SET_SCOUTING_TARGET"; programId: ProgramId; opponentProgramId: ProgramId | null }
+  /** Takes one of the four people on the table this week. Resolves immediately. */
+  | { type: "CHOOSE_BOOSTER"; programId: ProgramId; optionId: string }
   /** The program's scheme. A takeover and offseason decision, not a weekly one. */
   | { type: "SET_SCHEME"; programId: ProgramId; scheme: Partial<SchemeIdentity> }
   | { type: "ALLOCATE_SCOUTING"; programId: ProgramId; opponentProgramId: ProgramId; points: number }
@@ -886,6 +952,21 @@ export type GameEvent =
   | { type: "ADVERTISING_SET"; season: Season; week: number; programId: ProgramId; spend: number }
   | { type: "PREP_POINTS_ADDED"; season: Season; week: number; programId: ProgramId; pointsAdded: number }
   | { type: "SEASON_STATS_ARCHIVED"; season: Season; week: number; players: number; rowsFolded: number }
+  | { type: "BOOSTER_OFFERED"; season: Season; week: number; programId: ProgramId; options: BoosterOption[] }
+  | {
+      type: "BOOSTER_RESOLVED";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      optionId: string;
+      kind: BoosterKind;
+      name: string;
+      succeeded: boolean;
+      /** What actually landed, for the UI to read back. Empty on a miss. */
+      outcome: string;
+      /** Players improved by a POSITION_LEGEND, when one came off. */
+      playerIds: PlayerId[];
+    }
   | { type: "WEEK_FOCUS_SET"; season: Season; week: number; programId: ProgramId; focuses: WeekFocus[]; capacity: number }
   | { type: "SCOUTING_TARGET_SET"; season: Season; week: number; programId: ProgramId; opponentProgramId: ProgramId | null }
   | {

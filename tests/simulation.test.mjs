@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, computeOverall, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, planWeekHours, encodeSave, decodeSave, foldSeasonStats, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
+import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, computeOverall, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, planWeekHours, encodeSave, decodeSave, foldSeasonStats, boosterDueThisWeek, pendingBoosterOffer, advertisingCredit, takeawayMultiplier, TAKEAWAY_BOOST, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -719,4 +719,90 @@ test("a dynasty saves small, folds finished seasons, and round-trips exactly", a
     JSON.stringify(fromMemory.state.programs),
     "a save must reload into a byte-identical simulation"
   );
+});
+
+test("four people turn up every third week, you take one, and it is not always successful", () => {
+  let state = beginSeason(createFictionalLeague("boosters", 24));
+  const programId = "program-1";
+
+  assert.deepEqual([...Array(15).keys()].filter(boosterDueThisWeek), [3, 6, 9, 12]);
+  assert.equal(pendingBoosterOffer(state, programId), null, "week one has nobody at the door");
+
+  for (let week = 0; week < 2; week += 1) state = advanceWeek(state).state;
+  const offer = pendingBoosterOffer(state, programId);
+  assert.ok(offer, "week three must put somebody on the table");
+  assert.equal(offer.options.length, 4);
+  assert.deepEqual(
+    offer.options.map((option) => option.kind).sort(),
+    ["DONOR", "LOCAL_BUSINESS", "POSITION_LEGEND", "TURNOVER_LEGEND"]
+  );
+  for (const option of offer.options) {
+    // Odds are stated before the choice. A gamble with hidden odds is a slot
+    // machine, which is the one thing this must not be.
+    assert.ok(option.chance > 0 && option.chance < 100, `${option.kind} must state a real chance`);
+    assert.ok(option.reward.length > 0 && option.name.length > 0);
+  }
+  // The offensive legend works with a room the offense actually has.
+  const legend = offer.options.find((option) => option.kind === "POSITION_LEGEND");
+  assert.ok(["QB", "RB", "WR", "TE"].includes(legend.position));
+
+  // Taking one resolves immediately and closes the door on the rest.
+  const taken = prepareWeek(state, [{ type: "CHOOSE_BOOSTER", programId, optionId: offer.options[0].id }]);
+  const resolved = taken.events.find((event) => event.type === "BOOSTER_RESOLVED");
+  assert.ok(resolved, "a choice must resolve there and then");
+  assert.equal(typeof resolved.succeeded, "boolean");
+  const second = prepareWeek(taken.state, [{ type: "CHOOSE_BOOSTER", programId, optionId: offer.options[1].id }]);
+  assert.ok(second.events.some((event) => event.type === "COMMAND_REJECTED"), "only one of the four");
+
+  // Determinism: the same career always meets the same four people and gets the
+  // same answer, so a booster can never be re-rolled by reloading.
+  const replay = prepareWeek(state, [{ type: "CHOOSE_BOOSTER", programId, optionId: offer.options[0].id }]);
+  assert.equal(
+    replay.events.find((event) => event.type === "BOOSTER_RESOLVED").succeeded,
+    resolved.succeeded
+  );
+});
+
+test("each of the four rewards actually lands when it comes off", () => {
+  const forced = (kind) => {
+    let state = beginSeason(createFictionalLeague(`booster-effect-${kind}`, 24));
+    const programId = "program-1";
+    for (let week = 0; week < 2; week += 1) state = advanceWeek(state).state;
+    const offer = pendingBoosterOffer(state, programId);
+    const option = offer.options.find((entry) => entry.kind === kind);
+    // Certainty only so the effect can be asserted; the odds are tested above.
+    state.boosters[programId].offer.options = offer.options.map((entry) =>
+      entry.id === option.id ? { ...entry, chance: 100 } : entry);
+    const room = () => Object.values(state.players).filter((player) =>
+      player.programId === programId && player.position === option.position
+      && player.eligibility.rosterStatus === "SCHOLARSHIP");
+    const before = { budget: state.programs[programId].budget, room: room().map((player) => player.overall) };
+    const result = prepareWeek(state, [{ type: "CHOOSE_BOOSTER", programId, optionId: option.id }]);
+    return { option, before, state: result.state, events: result.events, programId };
+  };
+
+  const donor = forced("DONOR");
+  assert.equal(
+    donor.state.programs[donor.programId].budget - donor.before.budget,
+    donor.option.amount,
+    "a donor's cheque must be exactly what the card promised"
+  );
+
+  const legend = forced("POSITION_LEGEND");
+  const after = Object.values(legend.state.players).filter((player) =>
+    player.programId === legend.programId && player.position === legend.option.position
+    && player.eligibility.rosterStatus === "SCHOLARSHIP");
+  assert.ok(after.length > 0);
+  const gained = after.filter((player, index) => player.overall > legend.before.room[index]).length;
+  assert.ok(gained > 0, "a returning legend must actually improve his room");
+  // Overall is derived, so the gain has to have landed on the attributes.
+  assert.ok(after.every((player) => player.overall <= player.potential), "and never past a man's ceiling");
+
+  const business = forced("LOCAL_BUSINESS");
+  assert.ok(advertisingCredit(business.state, business.programId) > 0, "free advertising must be banked");
+
+  const defense = forced("TURNOVER_LEGEND");
+  assert.equal(takeawayMultiplier(defense.state, defense.programId), TAKEAWAY_BOOST);
+  // And it is one game only.
+  assert.equal(takeawayMultiplier(advanceWeek(defense.state).state, defense.programId), 1);
 });
