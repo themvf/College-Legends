@@ -1713,6 +1713,85 @@ concentrated one near 3–4, which is roughly the 70-to-85 arc a real developing
 college player follows over four years. `coachingModifier` went from
 `1 + contribution/500` to `/150` so the priority itself is worth something.
 
+## Saving a dynasty: measured, not assumed
+
+There was no persistence at all — state lived in the worker and died on refresh —
+so the save format was designed from scratch. Measured on a real two-season
+league at the full 72 programs, 81,297 stat rows:
+
+| | size |
+|---|---|
+| raw JSON, which is what the engine holds | 73.38 MB |
+| gzip alone | 4.19 MB |
+| season aggregation, then gzip | 3.06 MB |
+| columnar typed arrays on top, then gzip | 3.00 MB |
+| trimming the event log too | **2.94 MB** |
+
+**Two findings, both against the intuition.**
+
+**Compression does nearly all the work, and it is free.** `CompressionStream` is
+a web platform API: no dependency, no bundle cost, and it streams so the payload
+never exists twice. One call, seventeen times smaller.
+
+**Columnar encoding is not worth building.** Packing the stat table into typed
+arrays with dictionary-encoded string columns took the *uncompressed* payload
+from 25.3 MB to 22.0 MB — and after gzip that was 3.06 against 3.00. **A 2% win
+for a hand-rolled binary format, a manifest, and a decoder that can silently
+corrupt a career.** gzip already removes exactly the repetition columnar layout
+targets. Prototyped, measured, deliberately not shipped.
+
+Brotli reaches 2.27 MB and zstd 2.37 MB, but browsers expose only gzip and
+deflate for *compression* — either would mean shipping a WASM codec to save half
+a megabyte.
+
+Compression level was picked by measurement too, because it is a pause the
+player feels on every week:
+
+| level | size | compress | decompress |
+|---|---|---|---|
+| 1 | 3.67 MB | 109 ms | 119 ms |
+| 6 (default) | 2.94 MB | 402 ms | 49 ms |
+| 9 | 2.82 MB | 1,569 ms | 44 ms |
+
+### Aggregation earns its place on memory, not on size
+
+Folding a finished season's game logs into one `PlayerSeasonStatLine` per player
+is worth only 27% of the compressed save. It is worth far more than that
+everywhere else: it is the difference between a bounded save and an unbounded
+one, and it takes tens of thousands of rows out of the working set that every
+league-wide scan walks past. Measured across two seasons at 72 programs:
+
+```
+week  season  gameRows  seasonLines  live state    save
+   1    2027      3084            0    13.49 MB   1.58 MB
+  11    2027     27756            0    31.19 MB   2.08 MB
+  16    2028      6100         3123    21.03 MB   2.30 MB   <- rollover folds
+  26    2028     30497         3123    37.83 MB   2.80 MB
+  31    2029      8712         6203    27.37 MB   3.00 MB   <- and again
+```
+
+Extrapolated, a twenty-season dynasty lands near 8 MB rather than the 440 MB the
+unfolded game log was heading for. Still linear in seasons; if that ever matters,
+the next step is paging completed seasons into a cold archive the record book
+loads on demand, so the hot save stops growing at all.
+
+### Storage is OPFS, because `localStorage` cannot hold this
+
+`localStorage` caps around 5 MB, stores *strings* — so a 2.9 MB gzipped save has
+to be base64'd to 3.9 MB before it even arrives — and is synchronous on the main
+thread. The Origin Private File System stores bytes, negotiates against real disk
+quota, and `createSyncAccessHandle()` is synchronous **inside a worker**, which is
+exactly where the simulation already runs. Autosave therefore never touches the
+render thread.
+
+Verified in a real browser rather than asserted: OPFS available, autosave written
+at 1.58 MB after week one, page reloaded, career resumed into the same program,
+no page errors.
+
+The engine's determinism invariant is what makes a save trustworthy, and the test
+uses it: a loaded career must advance to byte-identical programs against one that
+was never saved.
+
 ## Build order
 
 Each step is playable and each depends on the one before it.
@@ -1751,7 +1830,20 @@ Each step is playable and each depends on the one before it.
    16-hour week remain slice 3; injuries, rivals, and caching remain slice 4.
 9. Add an offseason phase — unblocks marquee scheduling every year, signing day,
    the portal as an input, coach hiring, and expectations/firing.
-10. Performance and save size before any iOS work. A week advance measures 6.9
-    seconds in the browser at the full 72-program league; the cost is the
-    recruiting market and the AI planner, not game resolution. Slice 3 above
-    cannot be tuned at full league size until this lands.
+10. Performance and save size before any iOS work. **Save size is done** — see
+    "Saving a dynasty" above; a two-season career is 3.0 MB and a twenty-season
+    one extrapolates to about 8 MB. **Speed is not.** Profiled at 72 programs,
+    a week costs 6.2 s of AI planning plus 3.2 s of simulation, and roughly 75%
+    of that is three functions doing full 6,120-player scans inside loops:
+
+    | | |
+    |---|---|
+    | 45.0% | `prospectValue` — called *inside a sort comparator* |
+    | 15.5% | `projectedRecruitingOpenings` — per prospect, per program |
+    | 10.5% | the filter inside the AI's `projectedOpenings` |
+
+    None of it is algorithmic; they are missing indices. The fix is a
+    players-by-program index built once and threaded through, plus precomputed
+    sort keys so a comparator never scans. Every change there is caching or
+    ordering and must not move a single RNG draw — the guard is a byte-identical
+    replay test.

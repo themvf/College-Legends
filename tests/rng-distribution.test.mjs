@@ -210,7 +210,10 @@ test("simulated scores land in college-football tolerance bands", () => {
 test("box scores reconcile with the scoreboard and with the opposing defense", () => {
   let state = beginSeason(createFictionalLeague("box-score-reconciliation", 24));
   const finals = new Map();
-  for (let week = 0; week < 14; week += 1) {
+  // Thirteen weeks, not fourteen. Week 14 rolls the season over and the rollover
+  // folds a finished season's game logs into one line per player — reconciling a
+  // box score against a scoreboard needs the per-game rows still to be there.
+  for (let week = 0; week < 13; week += 1) {
     const result = advanceWeek(state);
     state = result.state;
     for (const event of result.events) {
@@ -245,7 +248,8 @@ test("box scores reconcile with the scoreboard and with the opposing defense", (
     totals.receptions += line.receptions;
     teams.set(key, totals);
   }
-  // 24 programs playing a 12-game regular season produce 288 team box scores.
+  // 24 programs over thirteen weeks, minus byes, produce well over 250 team box
+  // scores — enough that reconciliation is asserted across a real sample.
   assert.ok(teams.size > 250, `expected a full season of box scores, saw ${teams.size}`);
 
   for (const [key, totals] of teams) {
@@ -269,7 +273,10 @@ test("box scores reconcile with the scoreboard and with the opposing defense", (
 
 test("team production lands in real per-game college-football ranges", () => {
   let state = beginSeason(createFictionalLeague("team-production", 24));
-  for (let week = 0; week < 14; week += 1) state = advanceWeek(state).state;
+  // Thirteen weeks, not fourteen. Week 14 rolls the season over and the rollover
+  // folds a finished season's game logs into one line per player — these are
+  // per-game assertions, so they have to read the log while the season is live.
+  for (let week = 0; week < 13; week += 1) state = advanceWeek(state).state;
 
   const lines = state.playerGameStats.filter((entry) => entry.week <= 14);
   const teamGames = new Set(lines.map((line) => `${line.gameId}:${line.programId}`)).size;

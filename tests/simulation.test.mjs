@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, computeOverall, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, planWeekHours, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
+import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, computeOverall, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, planWeekHours, encodeSave, decodeSave, foldSeasonStats, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -346,7 +346,11 @@ test("a redshirted player does not play and preserves a season of eligibility", 
 test("weekly player statistics use plausible bands with real variance and persist as game logs", () => {
   let state = activeLeague("historical-stat-bands", 12);
   const season = state.season;
-  while (state.season === season) state = advanceWeek(state).state;
+  // Stopping short of the rollover on purpose: these are per-game bands, and the
+  // rollover folds a finished season's game logs into one line per player. Read
+  // them while the season is live.
+  for (let week = 0; week < 13; week += 1) state = advanceWeek(state).state;
+  assert.equal(state.season, season, "the sample must stay inside one season");
   const quarterbackLines = state.playerGameStats.filter((line) => line.season === season && line.position === "QB");
   assert.ok(quarterbackLines.length >= 90);
   assert.ok(quarterbackLines.every((line) => line.passingAttempts >= 8 && line.passingAttempts <= 60));
@@ -667,4 +671,52 @@ test("a preseason guarantee buys a Top-25 home game with asymmetric recognition 
     return;
   }
   assert.fail("Marquee game recap was not generated.");
+});
+
+test("a dynasty saves small, folds finished seasons, and round-trips exactly", async () => {
+  // Measured on a real two-season league at 72 programs before any of this
+  // existed: 73.38 MB of raw JSON, and no persistence at all. gzip alone took
+  // that to 4.19 MB; folding finished seasons and trimming the event log took it
+  // to 2.94 MB. Columnar typed arrays on top were measured at 3.00 vs 3.06 — a
+  // 2% win for a hand-rolled binary format — and are deliberately not built.
+  let state = beginSeason(createFictionalLeague("save-format", 24));
+  for (let week = 0; week < 15; week += 1) state = advanceWeek(state).state;
+
+  // Rolling past week 14 must fold the finished season out of the game log.
+  assert.ok(state.season > 2027, "the season must have rolled over");
+  assert.ok(state.playerSeasonStats.length > 0, "a finished season must be archived");
+  assert.ok(
+    state.playerGameStats.every((row) => row.season === state.season),
+    "per-game rows for finished seasons must not survive the rollover"
+  );
+
+  // Folding is lossless for the totals a record book reads.
+  const archived = state.playerSeasonStats[0];
+  assert.ok(archived.games > 0 && archived.gameRatingTotal > 0);
+  assert.ok(archived.starts <= archived.games && archived.wins <= archived.games);
+
+  const bytes = await encodeSave(state);
+  const raw = new TextEncoder().encode(JSON.stringify(state)).length;
+  assert.ok(bytes.length * 8 < raw, `a save must be far smaller than the state (${bytes.length} vs ${raw})`);
+
+  // Round-trip has to be exact on everything the engine reads, or a loaded
+  // career diverges from the one that was saved — which the determinism
+  // invariant makes immediately visible.
+  const { state: loaded } = await decodeSave(bytes);
+  for (const field of ["season", "week", "phase"]) assert.equal(loaded[field], state[field]);
+  assert.deepEqual(loaded.programs, state.programs);
+  assert.deepEqual(loaded.players, state.players);
+  assert.deepEqual(loaded.staff, state.staff);
+  assert.deepEqual(loaded.schedule, state.schedule);
+  assert.deepEqual(loaded.weekFocus, state.weekFocus);
+  assert.deepEqual(loaded.playerSeasonStats, state.playerSeasonStats);
+
+  // And a loaded career must advance identically to one that was never saved.
+  const fromSave = advanceWeek(loaded);
+  const fromMemory = advanceWeek({ ...state, eventHistory: loaded.eventHistory });
+  assert.equal(
+    JSON.stringify(fromSave.state.programs),
+    JSON.stringify(fromMemory.state.programs),
+    "a save must reload into a byte-identical simulation"
+  );
 });

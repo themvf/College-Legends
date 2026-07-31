@@ -34,6 +34,19 @@ import {
 } from "./department.js";
 import { advertisingReach, DEFENSIVE_PRESETS, developmentCandidates, fairTicketPrice, matchingPreset, MAXIMUM_TICKET_PRICE, MAXIMUM_WEEKLY_ADVERTISING, MINIMUM_TICKET_PRICE, OFFENSIVE_PRESETS, pricingGoodwill, projectGate } from "./business.js";
 import { MAXIMUM_REPS_PER_SIDE, planExecution, repsFatigue, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
+import { foldSeasonStats } from "./persistence.js";
+
+export {
+  compressionAvailable,
+  decodeSave,
+  encodeSave,
+  foldSeasonStats,
+  saveablePayload,
+  saveSize,
+  SAVED_EVENT_LIMIT,
+  SAVE_FORMAT_VERSION
+} from "./persistence.js";
+export type { LoadedSave } from "./persistence.js";
 import {
   activeFocuses,
   defaultFocuses,
@@ -765,7 +778,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
     // content carried one set of development rates and every league ever created
     // carried another, so tuning the balance file changed nothing at all.
     identity: { rootSeed, balanceConfiguration: clone(DEFAULT_BALANCE), simulationVersion: "0.1.0" },
-    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, weekFocus: {}, scoutingTarget: {}, dossiers: {}, staff: {}, depthCharts: {}, playerGameStats: [], schedule: [], seasonHistory: [], eventHistory: []
+    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, weekFocus: {}, scoutingTarget: {}, dossiers: {}, staff: {}, depthCharts: {}, playerGameStats: [], playerSeasonStats: [], schedule: [], seasonHistory: [], eventHistory: []
   };
   const rosterPositions = Object.entries(ROSTER_COMPOSITION).flatMap(([position, count]) =>
     Array.from({ length: count }, () => position as Position)
@@ -3450,6 +3463,23 @@ function updateNationalRankings(state: GameState): void {
 
 function rolloverSeason(state: GameState, events: GameEvent[]): void {
   finalizeSeason(state, events);
+  // Fold the season that just finished. Per-game rows are the growth term in
+  // both memory and the save file — about 2,300 a week at full league size —
+  // and nothing after the season is over reads them individually. Done before
+  // the season counter moves, so `state.season` is still the season being folded.
+  state.playerSeasonStats ??= [];
+  const folded = foldSeasonStats(state.playerGameStats, state.season);
+  if (folded.length > 0) {
+    state.playerSeasonStats.push(...folded);
+    state.playerGameStats = state.playerGameStats.filter((row) => row.season !== state.season);
+    events.push({
+      type: "SEASON_STATS_ARCHIVED",
+      season: state.season,
+      week: state.week,
+      players: folded.length,
+      rowsFolded: folded.reduce((total, line) => total + line.games, 0)
+    });
+  }
   const portalRng = new AddressableRng(state.identity.rootSeed).fork("portal", String(state.season));
   for (const player of Object.values(state.players)) {
     if (player.programId === null || player.eligibility.rosterStatus !== "SCHOLARSHIP") continue;

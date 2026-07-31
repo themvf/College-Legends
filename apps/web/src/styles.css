@@ -490,3 +490,16 @@ dd { margin:0; font-weight:700; text-align:right; }
 .focus-button:disabled { cursor: not-allowed; opacity: .5; }
 .dossier-row.targeted { border-left: 2px solid #e0b057; padding-left: .7rem; }
 .dossier-row .focus-button { margin-top: .5rem; }
+
+/* Continue a saved career. OPFS holds the bytes; this reports what they cost. */
+.resume-card { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;
+  justify-content: space-between; margin: 0 auto 1.5rem; max-width: 62rem;
+  padding: 1.1rem 1.3rem; border: 1px solid #6ea8fe; border-radius: 12px;
+  background: rgba(110,168,254,.1); }
+.resume-card h2 { margin: .2rem 0; font-size: 1.15rem; }
+.resume-card .muted { margin: 0; font-size: .84rem; }
+.resume-actions { display: flex; gap: .6rem; }
+.resume-actions button { padding: .6rem 1.1rem; border-radius: 8px; cursor: pointer;
+  border: none; background: #6ea8fe; color: #0b1220; font: inherit; font-weight: 700; }
+.resume-actions button.ghost { background: transparent; color: inherit; border: 1px solid #4a7ba8; font-weight: 600; }
+.resume-actions button:disabled { opacity: .55; cursor: not-allowed; }

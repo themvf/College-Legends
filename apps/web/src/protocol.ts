@@ -8,10 +8,19 @@ export type WorkerRequest =
   | { type: "BEGIN_SEASON"; requestId: string; playerProgramId: ProgramId; commands: GameCommand[] }
   | { type: "ADVANCE_WEEK"; requestId: string; playerProgramId: ProgramId; commands: GameCommand[] }
   /** Scouting resolves before the week is advanced, so the report can inform the plan. */
-  | { type: "PREPARE"; requestId: string; playerProgramId: ProgramId; commands: GameCommand[] };
+  | { type: "PREPARE"; requestId: string; playerProgramId: ProgramId; commands: GameCommand[] }
+  /** Asks whether a career exists on this device, without loading it. */
+  | { type: "HAS_SAVE"; requestId: string }
+  /** Reads the autosave out of the origin private file system, if there is one. */
+  | { type: "LOAD_SAVE"; requestId: string }
+  | { type: "DELETE_SAVE"; requestId: string };
 
 export type WorkerResponse =
   | { type: "CANDIDATES"; requestId: string; state: GameState; previews: ProgramPreview[] }
-  | { type: "READY"; requestId: string; state: GameState; playerProgramId: ProgramId; events: GameEvent[] }
+  | { type: "READY"; requestId: string; state: GameState; playerProgramId: ProgramId; events: GameEvent[]; savedBytes?: number }
+  | { type: "NO_SAVE"; requestId: string }
+  | { type: "SAVE_FOUND"; requestId: string; bytes: number }
+  /** Unsolicited: autosave finished, and this is what the career costs on disk. */
+  | { type: "SAVED"; bytes: number; savedAt: string }
   | { type: "COMPLETE"; requestId: string; state: GameState; events: GameEvent[] }
   | { type: "ERROR"; requestId: string; message: string };

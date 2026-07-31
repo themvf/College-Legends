@@ -145,10 +145,17 @@ export function App(): ReactElement {
   const [offers, setOffers] = useState<{ careerPath: CareerPath; previews: ProgramPreview[] }>();
   /** Scheme and staff are settled once, at takeover, before the first season. */
   const [setupDone, setSetupDone] = useState(false);
+  /** What the career costs on disk, reported by the worker after each autosave. */
+  const [saved, setSaved] = useState<{ bytes: number; at: string }>();
+  /** Whether there is a career on this device to pick back up. */
+  const [resumable, setResumable] = useState(false);
 
   useEffect(() => {
     const worker = new Worker(new URL("./simulation.worker.ts", import.meta.url), { type: "module" });
     workerRef.current = worker;
+    // Ask on boot rather than on a button, so the new-game screen already knows
+    // whether it should offer to continue.
+    worker.postMessage({ type: "HAS_SAVE", requestId: nextRequestId() });
     worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
       const response = event.data;
       setBusy(false);
@@ -157,8 +164,21 @@ export function App(): ReactElement {
         setOffers((previous) => ({ careerPath: previous?.careerPath ?? "DYNASTY_BUILDER", previews: response.previews }));
         return;
       }
+      // Autosave finishing is unsolicited and must never disturb the screen.
+      if (response.type === "SAVED") { setSaved({ bytes: response.bytes, at: response.savedAt }); return; }
+      if (response.type === "SAVE_FOUND") {
+        setResumable(true);
+        setSaved({ bytes: response.bytes, at: new Date().toISOString() });
+        setBusy(false);
+        return;
+      }
+      if (response.type === "NO_SAVE") { setResumable(false); setBusy(false); return; }
       setOffers(undefined);
-      if (response.type === "READY") playerProgramIdRef.current = response.playerProgramId;
+      if (response.type === "READY") {
+        playerProgramIdRef.current = response.playerProgramId;
+        setResumable(false);
+        if (response.savedBytes) setSaved({ bytes: response.savedBytes, at: new Date().toISOString() });
+      }
       setGame((previous) => ({
         state: response.state,
         playerProgramId: response.type === "READY" ? response.playerProgramId : previous!.playerProgramId,
@@ -193,6 +213,14 @@ export function App(): ReactElement {
     // The seed carries the reroll, so "look at another league" is a real reroll
     // rather than the same 72 programs shuffled.
     send({ type: "CREATE_GAME", requestId: nextRequestId(), careerPath, seed: `web-alpha-${careerPath.toLowerCase()}-${reroll}` });
+  };
+  const resume = (): void => {
+    setScreen("DASHBOARD");
+    setSetupDone(true);
+    send({ type: "LOAD_SAVE", requestId: nextRequestId() });
+  };
+  const abandon = (): void => {
+    send({ type: "DELETE_SAVE", requestId: nextRequestId() });
   };
   const takeJob = (programId: ProgramId): void => {
     if (!offers) return;
@@ -258,7 +286,7 @@ export function App(): ReactElement {
   if (offers) return <ChooseJob busy={busy} careerPath={offers.careerPath} previews={offers.previews}
     onTake={takeJob} onReroll={() => startGame(offers.careerPath, Math.floor(Math.random() * 100_000))}
     onBack={() => setOffers(undefined)} />;
-  if (!game) return <NewGame busy={busy} onStart={(path) => startGame(path)} />;
+  if (!game) return <NewGame busy={busy} onStart={(path) => startGame(path)} resumable={resumable} saved={saved} onResume={resume} onAbandon={abandon} />;
   return <Dashboard game={game} screen={screen} busy={busy} error={error} pendingCommands={pendingCommands}
     onNavigate={(next, tab) => { setWeekTab(tab); setScreen(next); }}
     weekTab={weekTab} onQueue={queue} onBegin={begin} onAdvance={advance} />;
@@ -594,9 +622,24 @@ function SetUpProgram({ busy, game, onPrepare, onDone }: {
   </main>;
 }
 
-function NewGame({ busy, onStart }: { busy: boolean; onStart: (path: CareerPath) => void }): ReactElement {
+function NewGame({ busy, onStart, resumable, saved, onResume, onAbandon }: {
+  busy: boolean; onStart: (path: CareerPath) => void; resumable: boolean;
+  saved: { bytes: number; at: string } | undefined;
+  onResume: () => void; onAbandon: () => void;
+}): ReactElement {
   return <main className="new-game">
     <header className="masthead"><p className="eyebrow">College football management</p><h1>College Legends</h1><p>Choose the job that defines your career.</p></header>
+    {resumable && <section className="resume-card">
+      <div>
+        <p className="eyebrow">Saved on this device{saved ? ` · ${(saved.bytes / 1e6).toFixed(2)} MB` : ""}</p>
+        <h2>Pick your career back up</h2>
+        <p className="muted">Your dynasty saves itself after every week.</p>
+      </div>
+      <div className="resume-actions">
+        <button disabled={busy} onClick={onResume}>{busy ? "Loading…" : "Continue career"}</button>
+        <button className="ghost" disabled={busy} onClick={onAbandon}>Start over</button>
+      </div>
+    </section>}
     <section className="career-grid">{careerOrder.map((path) => {
       const profile = CAREER_PATHS[path];
       return <article className={`career-card ${profile.tier.toLowerCase()}`} key={path}>

@@ -155,6 +155,50 @@ export interface PlayerGameStatLine {
 }
 
 /**
+ * A finished season's production for one player, folded down from his game logs.
+ *
+ * Per-game rows are the growth term in the save file: about 2,300 a week at full
+ * league size, which is 730 MB of raw JSON over a twenty-year dynasty. A season
+ * line is one row per player per season and carries everything the record book,
+ * the award race, and a career page actually read.
+ */
+export interface PlayerSeasonStatLine {
+  playerId: PlayerId;
+  season: Season;
+  programId: ProgramId;
+  position: Position;
+  games: number;
+  starts: number;
+  wins: number;
+  /** Sum of the 0–99 per-game ratings; divide by games for the average. */
+  gameRatingTotal: number;
+  blockingGradeTotal: number;
+  snaps: number;
+  passingAttempts: number;
+  passingCompletions: number;
+  passingYards: number;
+  passingTouchdowns: number;
+  interceptionsThrown: number;
+  sacksTaken: number;
+  rushingAttempts: number;
+  rushingYards: number;
+  rushingTouchdowns: number;
+  targets: number;
+  receptions: number;
+  receivingYards: number;
+  receivingTouchdowns: number;
+  tackles: number;
+  tacklesForLoss: number;
+  sacks: number;
+  defensiveInterceptions: number;
+  passBreakups: number;
+  fieldGoalsAttempted: number;
+  fieldGoalsMade: number;
+  punts: number;
+  puntYards: number;
+}
+
+/**
  * The four ratings a game is actually resolved against. Each is produced by the
  * position groups responsible for it, so a call like "stop the run" has a
  * specific number to move rather than a team-wide average.
@@ -636,6 +680,8 @@ export interface GameState {
   staff: Record<string, StaffMember>;
   depthCharts: Record<ProgramId, DepthChart>;
   playerGameStats: PlayerGameStatLine[];
+  /** Completed seasons, folded down. Per-game rows are kept for the live season only. */
+  playerSeasonStats: PlayerSeasonStatLine[];
   schedule: ScheduledGame[];
   seasonHistory: SeasonHistory[];
   eventHistory: GameEvent[];
@@ -839,6 +885,7 @@ export type GameEvent =
   | { type: "TICKET_PRICE_SET"; season: Season; week: number; programId: ProgramId; price: number; fairPrice: number }
   | { type: "ADVERTISING_SET"; season: Season; week: number; programId: ProgramId; spend: number }
   | { type: "PREP_POINTS_ADDED"; season: Season; week: number; programId: ProgramId; pointsAdded: number }
+  | { type: "SEASON_STATS_ARCHIVED"; season: Season; week: number; players: number; rowsFolded: number }
   | { type: "WEEK_FOCUS_SET"; season: Season; week: number; programId: ProgramId; focuses: WeekFocus[]; capacity: number }
   | { type: "SCOUTING_TARGET_SET"; season: Season; week: number; programId: ProgramId; opponentProgramId: ProgramId | null }
   | {
