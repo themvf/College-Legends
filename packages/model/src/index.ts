@@ -417,6 +417,11 @@ export interface PlayerInjury {
   /** Games the player is still expected to miss. */
   weeksRemaining: number;
   originalWeeks: number;
+  /**
+   * Unavailable for every remaining game this season. The player still returns
+   * healthy at season rollover; this is not a real-world rehab calendar.
+   */
+  seasonEnding: boolean;
   occurredSeason: Season;
   occurredWeek: number;
 }
@@ -674,6 +679,14 @@ export type GameEvent =
       /** Percentage risk before the strength coach's reduction. */
       riskWithoutCoach: number;
       coachReductionPercent: number;
+      seasonEnding: boolean;
+      wasStarter: boolean;
+      replacementPlayerId: PlayerId | null;
+      emergencyQuarterback: boolean;
+      affectedUnit: TeamUnit | null;
+      unitRatingBefore: number | null;
+      unitRatingAfter: number | null;
+      unitRatingChangePercent: number | null;
     }
   | {
       type: "INJURY_RECOVERY_ACCELERATED";
@@ -684,7 +697,15 @@ export type GameEvent =
       weeksRemaining: number;
       coachId: string;
     }
-  | { type: "PLAYER_RECOVERED"; season: Season; week: number; playerId: PlayerId; injuryName: string }
+  | {
+      type: "PLAYER_RECOVERED";
+      season: Season;
+      week: number;
+      playerId: PlayerId;
+      injuryName: string;
+      severity: InjurySeverity;
+      returnedToStartingLineup: boolean;
+    }
   | { type: "GAME_COMPLETED"; season: Season; week: number; gameId: string; homeProgramId: ProgramId; awayProgramId: ProgramId; homeScore: number; awayScore: number }
   | {
       type: "SEASON_AWARD_FINALIZED";

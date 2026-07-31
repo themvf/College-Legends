@@ -424,9 +424,9 @@ const DEVELOPMENT_PAYOFFS: Readonly<Record<DevelopmentFocus, DevelopmentPayoff>>
     tradeoff: "Highest fatigue and injury exposure"
   },
   CONDITIONING: {
-    ratingChanges: { technique: 0.05, strength: 0.05, conditioning: 0.5, injuryPrevention: 0.35 },
+    ratingChanges: { technique: 0.05, strength: 0.05, conditioning: 0.5 },
     fatigueChange: -2,
-    gameEffect: "Endurance sustains game performance and injury prevention lowers risk",
+    gameEffect: "Endurance sustains game performance and lowers this week's injury risk by 15%",
     tradeoff: "Slowest direct overall-rating growth"
   }
 };
@@ -906,6 +906,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       defensiveReps: 0
     };
   }
+  ensureEmergencyQuarterbacks(state);
   updateNationalRankings(state);
   const actualProgramCount = selectedPrograms.length;
   generateProspects(state, rng.fork("prospects"), actualProgramCount * 30, "initial", actualProgramCount * (STARTING_ROSTER_SIZE + STAFF_ROLES.length), firstNameOffset, lastNameOffset);
@@ -2405,6 +2406,9 @@ interface InjuryDiagnosis {
   name: string;
   minimumWeeks: number;
   maximumWeeks: number;
+  /** Empty means the diagnosis is plausible for every position. */
+  positions?: readonly Position[];
+  seasonEnding?: boolean;
 }
 
 /**
@@ -2414,24 +2418,27 @@ interface InjuryDiagnosis {
 const INJURY_DIAGNOSES: Readonly<Record<InjurySeverity, readonly InjuryDiagnosis[]>> = {
   MINOR: [
     { name: "Grade 1 ankle sprain", minimumWeeks: 1, maximumWeeks: 2 },
-    { name: "Shoulder contusion", minimumWeeks: 1, maximumWeeks: 2 },
-    { name: "Grade 1 hamstring strain", minimumWeeks: 1, maximumWeeks: 2 },
+    { name: "Shoulder contusion", minimumWeeks: 1, maximumWeeks: 2, positions: ["QB", "RB", "WR", "TE", "OL", "DL", "LB"] },
+    { name: "Grade 1 hamstring strain", minimumWeeks: 1, maximumWeeks: 2, positions: ["QB", "RB", "WR", "TE", "LB", "DB", "K", "P"] },
     { name: "Sprained wrist", minimumWeeks: 1, maximumWeeks: 2 }
   ],
   MODERATE: [
     { name: "High ankle sprain", minimumWeeks: 3, maximumWeeks: 5 },
     { name: "MCL sprain", minimumWeeks: 3, maximumWeeks: 6 },
-    { name: "Separated shoulder", minimumWeeks: 3, maximumWeeks: 6 },
-    { name: "Grade 2 hamstring strain", minimumWeeks: 3, maximumWeeks: 5 },
-    { name: "Torn meniscus", minimumWeeks: 4, maximumWeeks: 7 }
+    { name: "Separated shoulder", minimumWeeks: 3, maximumWeeks: 6, positions: ["QB", "RB", "WR", "TE", "OL", "DL", "LB"] },
+    { name: "Grade 2 hamstring strain", minimumWeeks: 3, maximumWeeks: 5, positions: ["QB", "RB", "WR", "TE", "LB", "DB", "K", "P"] },
+    { name: "Torn meniscus", minimumWeeks: 4, maximumWeeks: 7 },
+    { name: "Concussion", minimumWeeks: 1, maximumWeeks: 3, positions: ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB"] }
   ],
   MAJOR: [
-    { name: "Torn ACL", minimumWeeks: 10, maximumWeeks: 14 },
-    { name: "Torn Achilles tendon", minimumWeeks: 12, maximumWeeks: 14 },
-    { name: "Torn labrum", minimumWeeks: 7, maximumWeeks: 11 },
-    { name: "Broken collarbone", minimumWeeks: 6, maximumWeeks: 10 },
-    { name: "Lisfranc foot injury", minimumWeeks: 8, maximumWeeks: 12 },
-    { name: "Torn pectoral tendon", minimumWeeks: 8, maximumWeeks: 12 }
+    { name: "Torn ACL", minimumWeeks: 10, maximumWeeks: 14, positions: ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB"], seasonEnding: true },
+    { name: "Torn Achilles tendon", minimumWeeks: 12, maximumWeeks: 14, positions: ["RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"], seasonEnding: true },
+    { name: "Torn labrum", minimumWeeks: 7, maximumWeeks: 11, positions: ["QB", "RB", "WR", "TE", "OL", "DL", "LB"], seasonEnding: true },
+    { name: "Broken collarbone", minimumWeeks: 6, maximumWeeks: 10, positions: ["QB", "RB", "WR", "TE", "LB", "DB"], seasonEnding: true },
+    { name: "Lisfranc foot injury", minimumWeeks: 8, maximumWeeks: 12, positions: ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"], seasonEnding: true },
+    { name: "Torn pectoral tendon", minimumWeeks: 8, maximumWeeks: 12, positions: ["TE", "OL", "DL", "LB"], seasonEnding: true },
+    { name: "Spinal fracture", minimumWeeks: 12, maximumWeeks: 14, positions: ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB"], seasonEnding: true },
+    { name: "Major leg fracture", minimumWeeks: 10, maximumWeeks: 14, seasonEnding: true }
   ]
 };
 
@@ -2459,23 +2466,81 @@ export interface InjuryRiskProjection {
  * saves that only stored a week counter.
  */
 export function currentInjury(player: Readonly<Player>): PlayerInjury | null {
-  if (player.injury && player.injury.weeksRemaining > 0) return player.injury;
+  if (player.injury && (player.injury.seasonEnding || player.injury.weeksRemaining > 0)) {
+    return { ...player.injury, seasonEnding: player.injury.seasonEnding === true };
+  }
   if (player.injuryWeeksRemaining <= 0) return null;
   return {
     name: "Undisclosed injury",
     severity: player.injuryWeeksRemaining >= 6 ? "MAJOR" : player.injuryWeeksRemaining >= 3 ? "MODERATE" : "MINOR",
     weeksRemaining: player.injuryWeeksRemaining,
     originalWeeks: player.injuryWeeksRemaining,
+    seasonEnding: false,
     occurredSeason: 0,
     occurredWeek: 0
   };
 }
 
 function normalizePlayerHealthState(state: GameState): void {
+  ensureEmergencyQuarterbacks(state);
   for (const player of Object.values(state.players)) {
     const injury = currentInjury(player);
     player.injury = injury;
     player.injuryWeeksRemaining = injury?.weeksRemaining ?? 0;
+  }
+}
+
+const emergencyQuarterbackId = (programId: string): string => `${programId}-emergency-qb`;
+
+/**
+ * Every program owns one hidden replacement-level walk-on. He enters the active
+ * depth chart only when no scholarship quarterback is available, cannot be
+ * developed or injured, and costs no scholarship or recruiting slot.
+ */
+function ensureEmergencyQuarterbacks(state: GameState): void {
+  const rng = new AddressableRng(state.identity.rootSeed).fork("emergency-quarterbacks");
+  const orderedPrograms = Object.values(state.programs).sort((left, right) => left.id.localeCompare(right.id));
+  for (const [index, program] of orderedPrograms.entries()) {
+    const id = emergencyQuarterbackId(program.id);
+    if (state.players[id]) continue;
+    const overall = program.tier === "POWER" ? 55 : program.tier === "MID" ? 50 : 45;
+    const shaped = attributesFor("QB").map((attribute) =>
+      clamp(overall + Math.round(rng.between(`${id}:${attribute.key}`, -2, 2)), 32, 99));
+    const shapedOverall = computeOverall("QB", Object.fromEntries(attributesFor("QB").map((attribute, attributeIndex) => [
+      attribute.key, shaped[attributeIndex]!
+    ])));
+    const ratings = Object.fromEntries(attributesFor("QB").map((attribute, attributeIndex) => [
+      attribute.key,
+      clamp(shaped[attributeIndex]! + overall - shapedOverall, 32, 99)
+    ]));
+    state.players[id] = {
+      id,
+      name: fictionalPersonName(12_000 + index),
+      programId: program.id,
+      position: "QB",
+      overall: computeOverall("QB", ratings),
+      potential: computeOverall("QB", ratings),
+      workEthic: 0,
+      fatigue: 0,
+      ratings,
+      injury: null,
+      injuryWeeksRemaining: 0,
+      stardom: 0,
+      personalFans: 0,
+      mediaAction: "FOOTBALL_FOCUS",
+      lastGameRating: null,
+      lastGameSummary: null,
+      developmentFocus: "BALANCED",
+      eligibility: {
+        cohortYear: state.season,
+        seasonsEnrolled: 0,
+        seasonsParticipated: 0,
+        seasonsRemaining: 4,
+        redshirtStatus: "AVAILABLE",
+        gamesPlayedThisSeason: 0,
+        rosterStatus: "WALK_ON"
+      }
+    };
   }
 }
 
@@ -2491,14 +2556,17 @@ function setPlayerInjury(player: Player, injury: PlayerInjury | null): void {
 export function playerInjuryRisk(
   state: Readonly<GameState>,
   player: Readonly<Player>,
-  snaps = 55
+  snaps = 55,
+  developmentFocus: DevelopmentFocus = player.developmentFocus
 ): InjuryRiskProjection {
   const durabilityModifier = clamp(1 - (ratingByRole(player.position, player.ratings, "DURABILITY") - 50) / 160, 0.55, 1.15);
   const fatigueModifier = 1 + player.fatigue / 80;
   const workloadModifier = clamp(snaps / 55, 0.35, 1.15);
-  const strengthTrainingModifier = player.developmentFocus === "STRENGTH" ? 1.15 : 1;
+  const trainingModifier = developmentFocus === "STRENGTH" ? 1.15
+    : developmentFocus === "CONDITIONING" ? 0.85
+      : 1;
   const riskWithoutCoach = clamp(
-    0.018 * POSITION_INJURY_MULTIPLIER[player.position] * durabilityModifier * fatigueModifier * workloadModifier * strengthTrainingModifier,
+    0.018 * POSITION_INJURY_MULTIPLIER[player.position] * durabilityModifier * fatigueModifier * workloadModifier * trainingModifier,
     0.002,
     0.055
   );
@@ -2527,6 +2595,9 @@ function recoverInjuries(
   for (const player of Object.values(state.players)) {
     const injury = currentInjury(player);
     if (!injury || !player.programId || player.eligibility.rosterStatus !== "SCHOLARSHIP") continue;
+    // "Season-ending" means unavailable for the rest of this season. It is not
+    // a long counter the strength coach can erase, and rollover still clears it.
+    if (injury.seasonEnding) continue;
     const coach = Object.values(state.staff)
       .find((member) => member.programId === player.programId && member.role === "STRENGTH_COACH");
     const benefits = programStrengthCoachBenefits(state, player.programId);
@@ -2551,7 +2622,9 @@ function recoverInjuries(
         season: state.season,
         week: eventWeek,
         playerId: player.id,
-        injuryName: injury.name
+        injuryName: injury.name,
+        severity: injury.severity,
+        returnedToStartingLineup: startingLineup(state, player.programId).some((candidate) => candidate.id === player.id)
       });
     } else {
       setPlayerInjury(player, { ...injury, weeksRemaining });
@@ -2576,8 +2649,12 @@ function processInjuries(
     const projection = playerInjuryRisk(state, player, snaps);
     if (rng.at(`${player.id}:injury`) >= projection.riskPercent / 100) continue;
     const severityRoll = rng.at(`${player.id}:injury-severity`);
-    const severity: InjurySeverity = severityRoll < 0.6 ? "MINOR" : severityRoll < 0.92 ? "MODERATE" : "MAJOR";
-    const diagnoses = INJURY_DIAGNOSES[severity];
+    // Most injuries cost a game or two; a true season-ending loss should be a
+    // headline, not routine roster churn.
+    const severity: InjurySeverity = severityRoll < 0.78 ? "MINOR" : severityRoll < 0.97 ? "MODERATE" : "MAJOR";
+    const positionDiagnoses = INJURY_DIAGNOSES[severity]
+      .filter((candidate) => !candidate.positions || candidate.positions.includes(player.position));
+    const diagnoses = positionDiagnoses.length > 0 ? positionDiagnoses : INJURY_DIAGNOSES[severity];
     const diagnosis = diagnoses[Math.floor(rng.at(`${player.id}:injury-name`) * diagnoses.length)]!;
     const weeks = diagnosis.minimumWeeks + Math.floor(rng.between(
       `${player.id}:injury-length`,
@@ -2589,10 +2666,20 @@ function processInjuries(
       severity,
       weeksRemaining: weeks,
       originalWeeks: weeks,
+      seasonEnding: diagnosis.seasonEnding === true,
       occurredSeason: state.season,
       occurredWeek: injuryWeek
     };
+    const impact = projectedInjuryImpact(state, player.id);
     setPlayerInjury(player, injury);
+    const replacement = replacementAfterInjury(state, player.id, impact.activeDepthIndex);
+    const afterUnits = programUnitRatings(state, player.programId);
+    const affectedUnit = mostAffectedUnit(player.position, impact.unitsBefore, afterUnits);
+    const unitRatingBefore = affectedUnit ? impact.unitsBefore[affectedUnit] : null;
+    const unitRatingAfter = affectedUnit ? afterUnits[affectedUnit] : null;
+    const unitRatingChangePercent = unitRatingBefore && unitRatingAfter !== null
+      ? Number(((unitRatingAfter - unitRatingBefore) / Math.max(1, unitRatingBefore) * 100).toFixed(1))
+      : null;
     events.push({
       type: "PLAYER_INJURED",
       season: state.season,
@@ -2603,7 +2690,15 @@ function processInjuries(
       weeks,
       risk: projection.riskPercent,
       riskWithoutCoach: projection.riskWithoutCoachPercent,
-      coachReductionPercent: projection.coachReductionPercent
+      coachReductionPercent: projection.coachReductionPercent,
+      seasonEnding: injury.seasonEnding,
+      wasStarter: impact.wasStarter,
+      replacementPlayerId: replacement?.id ?? null,
+      emergencyQuarterback: replacement?.eligibility.rosterStatus === "WALK_ON",
+      affectedUnit,
+      unitRatingBefore: unitRatingBefore === null ? null : Number(unitRatingBefore.toFixed(1)),
+      unitRatingAfter: unitRatingAfter === null ? null : Number(unitRatingAfter.toFixed(1)),
+      unitRatingChangePercent
     });
   }
 }
@@ -2890,8 +2985,8 @@ function repairDepthChart(state: GameState, programId: string): void {
 export function activeDepthChart(state: Readonly<GameState>, programId: string): DepthChart {
   const chart = state.depthCharts[programId] ?? buildDefaultDepthChart(state, programId);
   return Object.fromEntries((Object.keys(chart) as Position[]).map((position) => [
-    position,
-    chart[position].filter((playerId) => {
+    position, (() => {
+      const active = chart[position].filter((playerId) => {
       const player = state.players[playerId];
       return Boolean(
         player
@@ -2901,8 +2996,89 @@ export function activeDepthChart(state: Readonly<GameState>, programId: string):
         && player.eligibility.redshirtStatus !== "REDSHIRTING"
         && !currentInjury(player)
       );
-    })
+      });
+      if (position !== "QB" || active.length > 0) return active;
+      const emergency = state.players[emergencyQuarterbackId(programId)];
+      return emergency?.programId === programId && emergency.eligibility.rosterStatus === "WALK_ON"
+        ? [emergency.id]
+        : active;
+    })()
   ])) as DepthChart;
+}
+
+/** The emergency walk-on currently active because every scholarship QB is out. */
+export function activeEmergencyQuarterback(
+  state: Readonly<GameState>,
+  programId: string
+): Player | null {
+  const scholarshipAvailable = Object.values(state.players).some((player) =>
+    player.programId === programId
+    && player.position === "QB"
+    && player.eligibility.rosterStatus === "SCHOLARSHIP"
+    && player.eligibility.redshirtStatus !== "REDSHIRTING"
+    && !currentInjury(player));
+  if (scholarshipAvailable) return null;
+  const emergency = state.players[emergencyQuarterbackId(programId)];
+  return emergency?.eligibility.rosterStatus === "WALK_ON" ? emergency : null;
+}
+
+function projectedInjuryImpact(
+  state: Readonly<GameState>,
+  playerId: string
+): { unitsBefore: TeamUnitRatings; activeDepthIndex: number; wasStarter: boolean } {
+  const player = state.players[playerId];
+  if (!player?.programId) {
+    return {
+      unitsBefore: { rushOffense: 0, passOffense: 0, rushDefense: 0, passDefense: 0 },
+      activeDepthIndex: -1,
+      wasStarter: false
+    };
+  }
+  const chart = state.depthCharts[player.programId] ?? buildDefaultDepthChart(state, player.programId);
+  const activeIds = chart[player.position].filter((candidateId) => {
+    const candidate = state.players[candidateId];
+    return Boolean(
+      candidate
+      && candidate.programId === player.programId
+      && candidate.eligibility.rosterStatus === "SCHOLARSHIP"
+      && candidate.eligibility.redshirtStatus !== "REDSHIRTING"
+      && !currentInjury(candidate)
+    );
+  });
+  const activeDepthIndex = activeIds.indexOf(playerId);
+  return {
+    unitsBefore: programUnitRatings(state, player.programId),
+    activeDepthIndex,
+    wasStarter: activeDepthIndex >= 0
+      && activeDepthIndex < startersForRoom(state.programs[player.programId]?.schemeIdentity, player.position)
+  };
+}
+
+function replacementAfterInjury(
+  state: Readonly<GameState>,
+  playerId: string,
+  activeDepthIndex: number
+): Player | null {
+  const player = state.players[playerId];
+  if (!player?.programId || activeDepthIndex < 0) return null;
+  const replacementId = activeDepthChart(state, player.programId)[player.position][activeDepthIndex];
+  return replacementId ? state.players[replacementId] ?? null : null;
+}
+
+function mostAffectedUnit(
+  position: Position,
+  before: Readonly<TeamUnitRatings>,
+  after: Readonly<TeamUnitRatings>
+): TeamUnit | null {
+  const candidates: readonly TeamUnit[] = position === "QB" ? ["passOffense", "rushOffense"]
+    : position === "RB" ? ["rushOffense"]
+      : position === "WR" ? ["passOffense"]
+        : position === "TE" || position === "OL" ? ["passOffense", "rushOffense"]
+          : position === "DL" || position === "LB" ? ["rushDefense", "passDefense"]
+            : position === "DB" ? ["passDefense", "rushDefense"]
+              : [];
+  return [...candidates].sort((left, right) =>
+    Math.abs(before[right] - after[right]) - Math.abs(before[left] - after[left]))[0] ?? null;
 }
 
 /**

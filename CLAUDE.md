@@ -909,6 +909,30 @@ share an interchangeable generic "major injury" timeline. For the current MVP,
 all remaining injuries clear at season rollover; offseason injury carryover is
 explicitly deferred.
 
+**The completed health rules.** Minor/moderate/season-ending outcomes target
+roughly 78% / 19% / 3% of diagnosed injuries. A season-ending injury is a
+first-class flag: it never ticks down, never receives accelerated recovery, and
+means unavailable for every remaining game in the current season. It still
+clears at rollover — no injury ever enters the next season. Postseason wording
+therefore says "out for the remainder of the season", never that a player will
+miss next year.
+
+Diagnosis pools are position-aware and include concussions. Conditioning work
+lowers this week's risk by 15%; strength work raises it by 15%; Durability,
+fatigue, actual snaps, position, and the strength coach remain inputs to the
+exact posted percentage. The roster shows Durability and normal-workload risk
+before and after the coach. Injury events store the actual promoted player and
+the before/after unit rating, so the dashboard and weekly story can state the
+football cost rather than merely saying "out".
+
+Every program owns one hidden, replacement-level walk-on quarterback (45 LOW /
+50 MID / 55 POWER, before small attribute shape). He enters the real rotation
+only when every scholarship quarterback is injured or redshirting, appears in
+the depth chart and box score, costs no scholarship/recruiting slot, cannot be
+developed or injured, and leaves the active rotation as soon as a scholarship
+quarterback returns. This is a simulation safety valve, not roster depth the
+player can exploit.
+
 **Only a coordinator's prep hours install his own side.** The head coach's are
 general team quality and cover at a discount. That is what keeps "who runs my
 offense" a different question from "who works the trail".

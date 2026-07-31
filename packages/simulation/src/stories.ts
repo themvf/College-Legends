@@ -70,6 +70,25 @@ export type WeeklyStory =
       capacity: number;
       fanChange: number;
       weeklyNet: number;
+    }
+  | {
+      id: string;
+      kind: "PROGRAM_HEALTH";
+      season: number;
+      week: number;
+      importance: number;
+      angle: "EMERGENCY_QB" | "MAJOR_INJURY" | "STARTER_INJURY" | "KEY_RETURN";
+      programId: ProgramId;
+      playerId: PlayerId;
+      injuryName: string;
+      severity: "MINOR" | "MODERATE" | "MAJOR";
+      weeks: number;
+      seasonEnding: boolean;
+      replacementPlayerId: PlayerId | null;
+      affectedUnit: "rushOffense" | "passOffense" | "rushDefense" | "passDefense" | null;
+      unitRatingBefore: number | null;
+      unitRatingAfter: number | null;
+      unitRatingChangePercent: number | null;
     };
 
 function storyWeek(
@@ -263,6 +282,65 @@ function programMomentumStory(
   };
 }
 
+function programHealthStory(
+  state: Readonly<GameState>,
+  playerProgramId: ProgramId,
+  events: readonly GameEvent[]
+): WeeklyStory | null {
+  const injuries = events
+    .filter((event): event is Extract<GameEvent, { type: "PLAYER_INJURED" }> =>
+      event.type === "PLAYER_INJURED"
+      && state.players[event.playerId]?.programId === playerProgramId
+      && (event.wasStarter || event.seasonEnding || event.emergencyQuarterback))
+    .map((event) => ({
+      id: `${event.season}-${event.week}-health-${event.playerId}`,
+      kind: "PROGRAM_HEALTH" as const,
+      season: event.season,
+      week: event.week,
+      importance: event.emergencyQuarterback ? 120 : event.seasonEnding ? 110 : event.wasStarter ? 90 : 70,
+      angle: (event.emergencyQuarterback ? "EMERGENCY_QB"
+        : event.seasonEnding || event.severity === "MAJOR" ? "MAJOR_INJURY"
+          : "STARTER_INJURY") as Extract<WeeklyStory, { kind: "PROGRAM_HEALTH" }>["angle"],
+      programId: playerProgramId,
+      playerId: event.playerId,
+      injuryName: event.injuryName,
+      severity: event.severity,
+      weeks: event.weeks,
+      seasonEnding: event.seasonEnding,
+      replacementPlayerId: event.replacementPlayerId,
+      affectedUnit: event.affectedUnit,
+      unitRatingBefore: event.unitRatingBefore,
+      unitRatingAfter: event.unitRatingAfter,
+      unitRatingChangePercent: event.unitRatingChangePercent
+    }));
+  const recoveries = events
+    .filter((event): event is Extract<GameEvent, { type: "PLAYER_RECOVERED" }> =>
+      event.type === "PLAYER_RECOVERED"
+      && state.players[event.playerId]?.programId === playerProgramId
+      && event.returnedToStartingLineup)
+    .map((event) => ({
+      id: `${event.season}-${event.week}-return-${event.playerId}`,
+      kind: "PROGRAM_HEALTH" as const,
+      season: event.season,
+      week: event.week,
+      importance: event.severity === "MAJOR" ? 88 : 78,
+      angle: "KEY_RETURN" as const,
+      programId: playerProgramId,
+      playerId: event.playerId,
+      injuryName: event.injuryName,
+      severity: event.severity,
+      weeks: 0,
+      seasonEnding: false,
+      replacementPlayerId: null,
+      affectedUnit: null,
+      unitRatingBefore: null,
+      unitRatingAfter: null,
+      unitRatingChangePercent: null
+    }));
+  return [...injuries, ...recoveries]
+    .sort((left, right) => right.importance - left.importance || left.id.localeCompare(right.id))[0] ?? null;
+}
+
 /**
  * Selects a small, deterministic editorial package from structured weekly
  * events. It stores no prose and mutates no state; the UI remains responsible
@@ -283,11 +361,12 @@ export function weeklyStories(
   const recaps = events.filter((event): event is WeeklyRecap => event.type === "WEEKLY_RECAP");
   const games = events.filter((event): event is CompletedGame => event.type === "GAME_COMPLETED");
   const brandUpdates = events.filter((event): event is PlayerBrandUpdate => event.type === "PLAYER_BRAND_UPDATED");
+  const health = programHealthStory(state, playerProgramId, events);
   const selected = [
     programResultStory(state, playerProgramId, recaps, brandUpdates),
     nationalResultStory(state, playerProgramId, games, recaps),
     playerSpotlightStory(state, brandUpdates, recaps),
-    programMomentumStory(playerProgramId, recaps, events)
+    health ?? programMomentumStory(playerProgramId, recaps, events)
   ].filter((story): story is WeeklyStory => story !== null);
   return selected.slice(0, 4);
 }
