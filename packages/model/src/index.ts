@@ -72,6 +72,7 @@ export type DivisionId = "ATLANTIC" | "GREAT_LAKES" | "HEARTLAND" | "GULF" | "MO
 /** An attribute key. Which keys a player has depends on his position. */
 export type PlayerRating = string;
 export type PlayerMediaAction = "FOOTBALL_FOCUS" | "MEDIA_DAY" | "SOCIAL_MEDIA" | "COMMUNITY_APPEARANCE";
+export type InjurySeverity = "MINOR" | "MODERATE" | "MAJOR";
 export type RecruitingEvaluation = "BASIC" | "ATHLETIC" | "POSITION" | "CHARACTER" | "MEDICAL" | "PROJECTION";
 export type RecruitingSearchType = "LOCAL_REGION" | "POSITION" | "SLEEPERS" | "NATIONAL_SHOWCASE";
 export type RedshirtStatus = "AVAILABLE" | "REDSHIRTING" | "USED" | "INELIGIBLE";
@@ -564,6 +565,12 @@ export interface Player {
   workEthic: number;
   fatigue: number;
   ratings: PlayerRatings;
+  /** The player's current diagnosed injury. Null means fully available. */
+  injury: PlayerInjury | null;
+  /**
+   * Compatibility mirror for early prototype saves. New code reads `injury`;
+   * this stays synchronized until save migration exists.
+   */
   injuryWeeksRemaining: number;
   /** A persistent 0-100 measure of how recognizable the player is nationally. */
   stardom: number;
@@ -574,6 +581,21 @@ export interface Player {
   lastGameSummary: string | null;
   developmentFocus: DevelopmentFocus;
   eligibility: Eligibility;
+}
+
+export interface PlayerInjury {
+  name: string;
+  severity: InjurySeverity;
+  /** Games the player is still expected to miss. */
+  weeksRemaining: number;
+  originalWeeks: number;
+  /**
+   * Unavailable for every remaining game this season. The player still returns
+   * healthy at season rollover; this is not a real-world rehab calendar.
+   */
+  seasonEnding: boolean;
+  occurredSeason: Season;
+  occurredWeek: number;
 }
 
 /** A recruit is intentionally not a Player until a program signs them. */
@@ -619,6 +641,30 @@ export interface RecruitingProgramState {
 export interface DevelopmentSpotlight {
   focus: Exclude<DevelopmentFocus, "BALANCED">;
   target: DevelopmentSpotlightTarget;
+}
+
+/**
+ * A sponsor is a season-long business choice. All three contracts convert the
+ * same program reach into money, but put a different share of the value at
+ * risk: none, a home-crowd trigger, or results on the field.
+ */
+export type SponsorshipStrategy = "GUARANTEED" | "HOME_CROWD" | "WINNING";
+
+export interface SponsorshipOffer {
+  id: string;
+  sponsorName: string;
+  strategy: SponsorshipStrategy;
+  weeklyPayment: number;
+  homeAttendanceTarget: number | null;
+  homeAttendanceBonus: number;
+  winBonus: number;
+  rankedWinBonus: number;
+}
+
+export interface SponsorshipProgramState {
+  season: Season;
+  offers: SponsorshipOffer[];
+  activeContractId: string | null;
 }
 
 export interface Program {
@@ -719,6 +765,8 @@ export interface GameState {
   players: Record<PlayerId, Player>;
   prospects: Record<ProspectId, Prospect>;
   recruiting: Record<ProgramId, RecruitingProgramState>;
+  /** One sponsor contract per program and season. */
+  sponsorships: Record<ProgramId, SponsorshipProgramState>;
   /** One optional development investment per program and week. Position groups trade intensity for breadth. */
   developmentSpotlights: Record<ProgramId, DevelopmentSpotlight | null>;
   /** Standing weekly preparation per program; persists until changed. */
@@ -777,6 +825,7 @@ export type GameCommand =
   | { type: "SET_GAME_PLAN"; programId: ProgramId; plan: Partial<GamePlan> }
   | { type: "SET_TICKET_PRICE"; programId: ProgramId; price: number }
   | { type: "SET_ADVERTISING"; programId: ProgramId; spend: number }
+  | { type: "ACCEPT_SPONSORSHIP"; programId: ProgramId; offerId: string }
   | { type: "SET_PRACTICE_REPS"; programId: ProgramId; side: "OFFENSE" | "DEFENSE"; reps: number }
   | { type: "SET_STAFF_ALLOCATION"; programId: ProgramId; staffId: string; allocation: Partial<StaffAllocation> }
   /**
@@ -816,8 +865,46 @@ export type GameEvent =
         ratingChanges: Partial<Record<PlayerRating, number>>;
       };
     }
-  | { type: "PLAYER_INJURED"; season: Season; week: number; playerId: PlayerId; weeks: number; risk: number }
-  | { type: "PLAYER_RECOVERED"; season: Season; week: number; playerId: PlayerId }
+  | {
+      type: "PLAYER_INJURED";
+      season: Season;
+      week: number;
+      playerId: PlayerId;
+      injuryName: string;
+      severity: InjurySeverity;
+      weeks: number;
+      /** Final percentage risk after player health, workload, fatigue, and staff. */
+      risk: number;
+      /** Percentage risk before the strength coach's reduction. */
+      riskWithoutCoach: number;
+      coachReductionPercent: number;
+      seasonEnding: boolean;
+      wasStarter: boolean;
+      replacementPlayerId: PlayerId | null;
+      emergencyQuarterback: boolean;
+      affectedUnit: TeamUnit | null;
+      unitRatingBefore: number | null;
+      unitRatingAfter: number | null;
+      unitRatingChangePercent: number | null;
+    }
+  | {
+      type: "INJURY_RECOVERY_ACCELERATED";
+      season: Season;
+      week: number;
+      playerId: PlayerId;
+      injuryName: string;
+      weeksRemaining: number;
+      coachId: string;
+    }
+  | {
+      type: "PLAYER_RECOVERED";
+      season: Season;
+      week: number;
+      playerId: PlayerId;
+      injuryName: string;
+      severity: InjurySeverity;
+      returnedToStartingLineup: boolean;
+    }
   | { type: "GAME_COMPLETED"; season: Season; week: number; gameId: string; homeProgramId: ProgramId; awayProgramId: ProgramId; homeScore: number; awayScore: number }
   | {
       type: "SEASON_AWARD_FINALIZED";
@@ -950,6 +1037,28 @@ export type GameEvent =
   | { type: "STAFF_REPLACED"; season: Season; week: number; programId: ProgramId; departingStaffId: string; arrivingStaffId: string; name: string; role: StaffRole; rating: number; salary: number; signingCost: number }
   | { type: "TICKET_PRICE_SET"; season: Season; week: number; programId: ProgramId; price: number; fairPrice: number }
   | { type: "ADVERTISING_SET"; season: Season; week: number; programId: ProgramId; spend: number }
+  | {
+      type: "SPONSORSHIP_ACCEPTED";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      offerId: string;
+      sponsorName: string;
+      strategy: SponsorshipStrategy;
+      weeklyPayment: number;
+    }
+  | {
+      type: "SPONSORSHIP_PAYMENT";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      sponsorName: string;
+      basePayment: number;
+      homeAttendanceBonus: number;
+      winBonus: number;
+      rankedWinBonus: number;
+      total: number;
+    }
   | { type: "PREP_POINTS_ADDED"; season: Season; week: number; programId: ProgramId; pointsAdded: number }
   | { type: "SEASON_STATS_ARCHIVED"; season: Season; week: number; players: number; rowsFolded: number }
   | { type: "BOOSTER_OFFERED"; season: Season; week: number; programId: ProgramId; options: BoosterOption[] }
@@ -1015,7 +1124,7 @@ export type GameEvent =
       defensiveExecution: number;
       notes: string[];
     }
-  | { type: "WEEKLY_FINANCES"; season: Season; week: number; programId: ProgramId; revenue: number; expenses: number; net: number }
+  | { type: "WEEKLY_FINANCES"; season: Season; week: number; programId: ProgramId; revenue: number; sponsorshipRevenue: number; expenses: number; net: number }
   | {
       type: "WEEKLY_RECAP";
       season: Season;
@@ -1043,6 +1152,7 @@ export type GameEvent =
       advertisingFans: number;
       ticketRevenue: number;
       concessionRevenue: number;
+      sponsorshipRevenue: number;
       localPressChange: number;
       nationalPressChange: number;
       guaranteePaid: number;

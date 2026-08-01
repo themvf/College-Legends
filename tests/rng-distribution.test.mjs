@@ -1406,6 +1406,10 @@ test("the dashboard tells the player what is being wasted, and where to fix it",
     opening.some((item) => item.id.startsWith("WEEK_FOCUS") || item.id.startsWith("SCOUT")),
     "the week itself must be the first thing the briefing talks about"
   );
+  assert.ok(
+    opening.some((item) => item.id === "SPONSORSHIP" && item.destination === "FINANCES"),
+    "a program leaving guaranteed sponsor money unclaimed must be sent to the contracts"
+  );
   assert.ok(opening.length <= 6, "a list nobody can read is the same as no list");
   // Ordered so the things costing you now come before the upside.
   const urgencies = opening.map((item) => item.urgency);

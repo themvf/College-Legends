@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceWeek, AddressableRng, beginSeason, createFictionalLeague, marqueeGameOptions, prepareWeek, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, staffCapacity, computeOverall, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, planWeekHours, encodeSave, decodeSave, foldSeasonStats, boosterDueThisWeek, pendingBoosterOffer, advertisingCredit, takeawayMultiplier, TAKEAWAY_BOOST, STARTING_ROSTER_SIZE } from "../packages/simulation/dist/index.js";
+import { advanceWeek, activeEmergencyQuarterback, activeSponsorship, AddressableRng, beginSeason, createFictionalLeague, currentInjury, marqueeGameOptions, playerInjuryRisk, prepareWeek, projectSponsorshipOffer, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, sponsorshipMarketValue, sponsorshipPayment, staffCapacity, computeOverall, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, planWeekHours, encodeSave, decodeSave, foldSeasonStats, boosterDueThisWeek, pendingBoosterOffer, advertisingCredit, takeawayMultiplier, TAKEAWAY_BOOST, STARTING_ROSTER_SIZE, weeklyStories } from "../packages/simulation/dist/index.js";
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
@@ -295,6 +295,88 @@ test("facility upgrades spend budget and weekly finances are recorded", () => {
   assert.ok(result.state.eventHistory.some((event) => event.type === "FACILITY_UPGRADED"));
 });
 
+test("sponsorship offers turn reach into three exact risk-reward contracts", () => {
+  const state = createFictionalLeague("sponsorship-market", 12);
+  const programId = "program-1";
+  const program = state.programs[programId];
+  const sponsorship = state.sponsorships[programId];
+  assert.ok(program && sponsorship);
+  assert.deepEqual(
+    sponsorship.offers.map((offer) => offer.strategy).sort(),
+    ["GUARANTEED", "HOME_CROWD", "WINNING"]
+  );
+  const guaranteed = sponsorship.offers.find((offer) => offer.strategy === "GUARANTEED");
+  const crowd = sponsorship.offers.find((offer) => offer.strategy === "HOME_CROWD");
+  const winning = sponsorship.offers.find((offer) => offer.strategy === "WINNING");
+  assert.ok(guaranteed && crowd && winning);
+  assert.equal(guaranteed.weeklyPayment, sponsorshipMarketValue(program));
+  assert.equal(guaranteed.homeAttendanceBonus + guaranteed.winBonus + guaranteed.rankedWinBonus, 0);
+  assert.ok(crowd.weeklyPayment < guaranteed.weeklyPayment && crowd.homeAttendanceBonus > 0);
+  assert.ok(winning.weeklyPayment < guaranteed.weeklyPayment && winning.winBonus > 0 && winning.rankedWinBonus > 0);
+
+  const projection = projectSponsorshipOffer(state, programId, crowd);
+  const remainingGames = state.schedule.filter((game) =>
+    !game.played && (game.homeProgramId === programId || game.awayProgramId === programId));
+  const remainingHomeGames = remainingGames.filter((game) => game.homeProgramId === programId);
+  assert.equal(projection.remainingWeeks, 14);
+  assert.equal(projection.remainingGames, remainingGames.length);
+  assert.equal(projection.remainingHomeGames, remainingHomeGames.length);
+  assert.equal(projection.guaranteedRemaining, crowd.weeklyPayment * 14);
+  assert.equal(projection.maximumBonusRemaining, crowd.homeAttendanceBonus * projection.remainingHomeGames);
+  assert.equal(projection.maximumRemaining, projection.guaranteedRemaining + projection.maximumBonusRemaining);
+});
+
+test("sponsorship bonuses pay only when their stated trigger happens", () => {
+  const state = createFictionalLeague("sponsorship-triggers", 4);
+  const offers = state.sponsorships["program-1"].offers;
+  const crowd = offers.find((offer) => offer.strategy === "HOME_CROWD");
+  const winning = offers.find((offer) => offer.strategy === "WINNING");
+  assert.ok(crowd && winning);
+
+  const almostFull = sponsorshipPayment(crowd, "WIN", true, 89_999, 100_000, 5);
+  assert.equal(almostFull.total, crowd.weeklyPayment);
+  const full = sponsorshipPayment(crowd, "LOSS", true, 90_000, 100_000, null);
+  assert.equal(full.homeAttendanceBonus, crowd.homeAttendanceBonus);
+  assert.equal(full.total, crowd.weeklyPayment + crowd.homeAttendanceBonus);
+
+  const rankedWin = sponsorshipPayment(winning, "WIN", false, 0, 100_000, 12);
+  assert.equal(rankedWin.winBonus, winning.winBonus);
+  assert.equal(rankedWin.rankedWinBonus, winning.rankedWinBonus);
+  assert.equal(rankedWin.total, winning.weeklyPayment + winning.winBonus + winning.rankedWinBonus);
+  const loss = sponsorshipPayment(winning, "LOSS", false, 0, 100_000, 12);
+  assert.equal(loss.total, winning.weeklyPayment);
+});
+
+test("a signed sponsor pays into the budget and cannot be replaced mid-season", () => {
+  const preseason = createFictionalLeague("preseason-sponsorship", 4);
+  const preseasonOffer = preseason.sponsorships["program-1"].offers[0];
+  const started = beginSeason(preseason, [{ type: "ACCEPT_SPONSORSHIP", programId: "program-1", offerId: preseasonOffer.id }]);
+  assert.equal(activeSponsorship(started, "program-1")?.id, preseasonOffer.id);
+  assert.ok(started.eventHistory.some((event) => event.type === "SPONSORSHIP_ACCEPTED" && event.programId === "program-1"));
+
+  const state = activeLeague("sponsorship-finances", 4);
+  const programId = "program-1";
+  const offer = state.sponsorships[programId].offers.find((candidate) => candidate.strategy === "GUARANTEED");
+  assert.ok(offer);
+  const openingBudget = state.programs[programId].budget;
+  let result = advanceWeek(state, [{ type: "ACCEPT_SPONSORSHIP", programId, offerId: offer.id }]);
+  const payment = result.events.find((event) => event.type === "SPONSORSHIP_PAYMENT" && event.programId === programId);
+  const finance = result.events.find((event) => event.type === "WEEKLY_FINANCES" && event.programId === programId);
+  const recap = result.events.find((event) => event.type === "WEEKLY_RECAP" && event.programId === programId);
+  assert.ok(payment && finance && recap);
+  assert.equal(activeSponsorship(result.state, programId)?.id, offer.id);
+  assert.equal(payment.total, offer.weeklyPayment);
+  assert.equal(finance.sponsorshipRevenue, offer.weeklyPayment);
+  assert.equal(recap.sponsorshipRevenue, offer.weeklyPayment);
+  assert.equal(result.state.programs[programId].budget, openingBudget + finance.net);
+
+  const other = result.state.sponsorships[programId].offers.find((candidate) => candidate.id !== offer.id);
+  assert.ok(other);
+  result = advanceWeek(result.state, [{ type: "ACCEPT_SPONSORSHIP", programId, offerId: other.id }]);
+  assert.equal(activeSponsorship(result.state, programId)?.id, offer.id);
+  assert.ok(result.events.some((event) => event.type === "COMMAND_REJECTED" && /through the end of the season/i.test(event.reason)));
+});
+
 test("played games retain scores for the schedule and inbox", () => {
   const state = activeLeague("schedule-results", 4);
   const result = advanceWeek(state);
@@ -324,6 +406,186 @@ test("the selected depth chart determines starters and injured players promote b
   result = advanceWeek(injuredState);
   assert.equal(result.state.playerGameStats.some((line) => line.week === 1 && line.playerId === injuredStarter), false);
   assert.ok(result.state.playerGameStats.some((line) => line.week === 1 && line.playerId === promotedBackup));
+});
+
+test("a one-week injury actually costs one game before the player recovers", () => {
+  let state = activeLeague("one-week-injury", 4);
+  const weekOneGame = state.schedule.find((game) => game.week === 1);
+  assert.ok(weekOneGame);
+  const programId = weekOneGame.homeProgramId;
+  const starterId = state.depthCharts[programId].QB[0];
+  const backupId = state.depthCharts[programId].QB[1];
+  const starter = state.players[starterId];
+  starter.injury = {
+    name: "Ankle sprain",
+    severity: "MINOR",
+    weeksRemaining: 1,
+    originalWeeks: 1,
+    seasonEnding: false,
+    occurredSeason: state.season,
+    occurredWeek: 0
+  };
+  starter.injuryWeeksRemaining = 1;
+
+  const result = advanceWeek(state);
+  state = result.state;
+  assert.equal(state.playerGameStats.some((line) => line.week === 1 && line.playerId === starterId), false);
+  assert.ok(state.playerGameStats.some((line) => line.week === 1 && line.playerId === backupId));
+  assert.equal(currentInjury(state.players[starterId]), null);
+  assert.ok(result.events.some((event) =>
+    event.type === "PLAYER_RECOVERED"
+    && event.playerId === starterId
+    && event.injuryName === "Ankle sprain"));
+});
+
+test("the strength coach lowers the exact injury roll used by the engine", () => {
+  const state = activeLeague("visible-injury-prevention", 12);
+  const programId = "program-1";
+  const player = state.players[state.depthCharts[programId].RB[0]];
+  player.fatigue = 30;
+  const protectedRisk = playerInjuryRisk(state, player, 55);
+  const unprotected = structuredClone(state);
+  for (const [staffId, member] of Object.entries(unprotected.staff)) {
+    if (member.programId === programId && member.role === "STRENGTH_COACH") delete unprotected.staff[staffId];
+  }
+  const unprotectedRisk = playerInjuryRisk(unprotected, unprotected.players[player.id], 55);
+
+  assert.ok(protectedRisk.coachReductionPercent > 0);
+  assert.equal(unprotectedRisk.coachReductionPercent, 0);
+  assert.equal(unprotectedRisk.riskPercent, protectedRisk.riskWithoutCoachPercent);
+  assert.ok(protectedRisk.riskPercent < unprotectedRisk.riskPercent);
+});
+
+test("durability and the chosen training focus change the exact posted injury risk", () => {
+  const state = activeLeague("conditioning-injury-risk", 12);
+  const programId = "program-1";
+  const player = state.players[state.depthCharts[programId].RB[0]];
+  player.fatigue = 25;
+  const durabilityKey = Object.keys(player.ratings).find((key) => key === "durability");
+  assert.ok(durabilityKey);
+
+  const balanced = playerInjuryRisk(state, player, 55, "BALANCED");
+  const conditioned = playerInjuryRisk(state, player, 55, "CONDITIONING");
+  const strength = playerInjuryRisk(state, player, 55, "STRENGTH");
+  assert.ok(conditioned.riskPercent < balanced.riskPercent);
+  assert.ok(strength.riskPercent > balanced.riskPercent);
+
+  const fragile = structuredClone(player);
+  fragile.ratings[durabilityKey] = 35;
+  const durable = structuredClone(player);
+  durable.ratings[durabilityKey] = 95;
+  assert.ok(
+    playerInjuryRisk(state, durable, 55, "BALANCED").riskPercent
+      < playerInjuryRisk(state, fragile, 55, "BALANCED").riskPercent,
+    "the Durability attribute shown to the player must affect the engine roll"
+  );
+});
+
+test("an emergency walk-on quarterback starts only while every scholarship QB is unavailable", () => {
+  const state = activeLeague("emergency-quarterback", 4);
+  const programId = "program-1";
+  const quarterbacks = state.depthCharts[programId].QB.map((playerId) => state.players[playerId]);
+  assert.ok(quarterbacks.length >= 3);
+  for (const quarterback of quarterbacks) {
+    quarterback.injury = {
+      name: "Torn ACL",
+      severity: "MAJOR",
+      weeksRemaining: 14,
+      originalWeeks: 14,
+      seasonEnding: true,
+      occurredSeason: state.season,
+      occurredWeek: 0
+    };
+    quarterback.injuryWeeksRemaining = 14;
+  }
+
+  const emergency = activeEmergencyQuarterback(state, programId);
+  assert.ok(emergency);
+  assert.equal(emergency.eligibility.rosterStatus, "WALK_ON");
+  assert.ok(emergency.overall >= 45 && emergency.overall <= 55);
+
+  const result = advanceWeek(state);
+  const line = result.state.playerGameStats.find((candidate) =>
+    candidate.week === 1 && candidate.programId === programId && candidate.playerId === emergency.id);
+  assert.ok(line?.started, "the walk-on must enter the real rotation and box score");
+  assert.ok(line.snaps > 0);
+  assert.ok(quarterbacks.every((quarterback) => currentInjury(result.state.players[quarterback.id])?.seasonEnding),
+    "season-ending injuries must not tick down or recover during the same season");
+  assert.equal(result.events.some((event) =>
+    event.type === "PLAYER_INJURED" && event.playerId === emergency.id), false);
+
+  const returned = result.state.players[quarterbacks[0].id];
+  returned.injury = null;
+  returned.injuryWeeksRemaining = 0;
+  assert.equal(activeEmergencyQuarterback(result.state, programId), null);
+});
+
+test("injuries are diagnosed, persist on players, and occur often enough for depth to matter", () => {
+  let state = activeLeague("injury-rate-check", 24);
+  const season = state.season;
+  const injuries = [];
+  const acceleratedRecoveries = [];
+  while (state.season === season) {
+    const result = advanceWeek(state);
+    injuries.push(...result.events.filter((event) => event.type === "PLAYER_INJURED"));
+    acceleratedRecoveries.push(...result.events.filter((event) => event.type === "INJURY_RECOVERY_ACCELERATED"));
+    state = result.state;
+  }
+
+  assert.ok(injuries.length >= 90 && injuries.length <= 190, `expected a playable injury load, saw ${injuries.length}`);
+  assert.ok(injuries.every((event) => event.injuryName && ["MINOR", "MODERATE", "MAJOR"].includes(event.severity)));
+  assert.ok(injuries.some((event) => event.severity === "MODERATE"));
+  assert.ok(injuries.some((event) => event.severity === "MAJOR"));
+  const seasonEnding = injuries.filter((event) => event.seasonEnding);
+  assert.ok(seasonEnding.length / injuries.length >= 0.01 && seasonEnding.length / injuries.length <= 0.06,
+    `season-ending injuries should remain rare, saw ${seasonEnding.length}/${injuries.length}`);
+  assert.ok(seasonEnding.every((event) => event.severity === "MAJOR"));
+  assert.ok(injuries.filter((event) => event.injuryName === "Torn labrum")
+    .every((event) => !["DB", "K", "P"].includes(state.players[event.playerId].position)));
+  assert.ok(injuries.filter((event) => event.injuryName === "Concussion")
+    .every((event) => !["K", "P"].includes(state.players[event.playerId].position)));
+  assert.ok(injuries.every((event) => event.risk < event.riskWithoutCoach));
+  assert.ok(acceleratedRecoveries.length > 0, "strength coaches should visibly shorten some recoveries");
+});
+
+test("multi-seed health balance keeps catastrophic injuries rare and makes coach quality matter", () => {
+  const simulateHealthSeason = (seed, strengthCoachRating = null) => {
+    let state = activeLeague(seed, 12);
+    if (strengthCoachRating !== null) {
+      for (const member of Object.values(state.staff)) {
+        if (member.role === "STRENGTH_COACH") member.rating = strengthCoachRating;
+      }
+    }
+    const season = state.season;
+    const injuries = [];
+    let missedPlayerGames = 0;
+    while (state.season === season) {
+      missedPlayerGames += Object.values(state.players).filter((player) =>
+        player.eligibility.rosterStatus === "SCHOLARSHIP" && currentInjury(player)).length;
+      const result = advanceWeek(state);
+      injuries.push(...result.events.filter((event) => event.type === "PLAYER_INJURED"));
+      state = result.state;
+    }
+    return { injuries, missedPlayerGames };
+  };
+
+  const pooled = ["health-a", "health-b", "health-c"]
+    .map((seed) => simulateHealthSeason(seed))
+    .flatMap((result) => result.injuries);
+  const catastrophicShare = pooled.filter((event) => event.seasonEnding).length / pooled.length;
+  const starterShare = pooled.filter((event) => event.wasStarter).length / pooled.length;
+  assert.ok(pooled.length >= 150 && pooled.length <= 240, `expected 150–240 injuries across three leagues, saw ${pooled.length}`);
+  assert.ok(catastrophicShare >= 0.01 && catastrophicShare <= 0.06,
+    `season-ending share should remain exceptional, saw ${(catastrophicShare * 100).toFixed(1)}%`);
+  assert.ok(starterShare >= 0.35 && starterShare <= 0.75,
+    `rotation injuries should make depth matter without targeting only starters, saw ${(starterShare * 100).toFixed(1)}%`);
+
+  const weakCoach = simulateHealthSeason("coach-health-pair", 40);
+  const eliteCoach = simulateHealthSeason("coach-health-pair", 95);
+  assert.ok(eliteCoach.injuries.length < weakCoach.injuries.length,
+    `elite coach should prevent injuries on paired rolls: ${eliteCoach.injuries.length} vs ${weakCoach.injuries.length}`);
+  assert.ok(eliteCoach.missedPlayerGames < weakCoach.missedPlayerGames,
+    `elite coach should reduce missed player-games: ${eliteCoach.missedPlayerGames} vs ${weakCoach.missedPlayerGames}`);
 });
 
 test("a redshirted player does not play and preserves a season of eligibility", () => {
@@ -418,6 +680,38 @@ test("the season crowns six division champions, resolves a 12-team playoff, and 
   assert.ok(finalEvents.some((event) => event.type === "NATIONAL_CHAMPION_CROWNED"));
   assert.equal(finalEvents.filter((event) => event.type === "DIVISION_TITLE_WON").length, 6);
   assert.equal(finalEvents.filter((event) => event.type === "SEASON_AWARD_FINALIZED").length, 5);
+  const playoffStatLines = state.playerGameStats.filter((line) =>
+    line.season === season && line.gameId.startsWith(`playoff:${season}:`));
+  assert.deepEqual(
+    [...new Set(playoffStatLines.map((line) => line.week))].sort((left, right) => left - right),
+    [15, 16, 17, 18],
+    "postseason game logs must retain the round in which the player took snaps"
+  );
+  const playoffInjuries = finalEvents.filter((event) =>
+    event.type === "PLAYER_INJURED" && event.week >= 15 && event.week <= 18);
+  assert.ok(playoffInjuries.length > 0, "players who take playoff snaps must remain exposed to injury");
+  assert.ok(playoffInjuries.every((injury) => playoffStatLines.some((line) =>
+    line.playerId === injury.playerId && line.week === injury.week && line.snaps > 0
+  )), "every playoff injury must trace to actual snaps in that round");
+  const advancingInjury = playoffInjuries.find((injury) => {
+    if (injury.week >= 18) return false;
+    const line = playoffStatLines.find((candidate) =>
+      candidate.playerId === injury.playerId && candidate.week === injury.week);
+    const game = history.postseasonGames.find((candidate) => candidate.id === line?.gameId);
+    return Boolean(line && game && game.winnerProgramId === line.programId);
+  });
+  assert.ok(advancingInjury, "the fixture seed must include an injured player whose team advances");
+  assert.equal(
+    playoffStatLines.some((line) =>
+      line.playerId === advancingInjury.playerId && line.week === advancingInjury.week + 1),
+    false,
+    "a new playoff injury must remove the player from the following round"
+  );
+  assert.equal(
+    Object.values(state.players).some((player) => currentInjury(player)),
+    false,
+    "the current MVP intentionally clears every remaining injury at season rollover"
+  );
   const coachAward = history.awards.find((award) => award.type === "COACH_OF_THE_YEAR");
   assert.equal(state.staff[coachAward.winner.staffId].role, "HEAD_COACH");
 });
@@ -457,7 +751,10 @@ test("a development week permanently raises the position's attributes and Overal
 test("one weekly development spotlight supports a full-intensity player or diluted position room", () => {
   const individualState = activeLeague("development-spotlight-scope", 4);
   const groupState = structuredClone(individualState);
-  const quarterbacks = Object.values(individualState.players).filter((player) => player.programId === "program-1" && player.position === "QB");
+  const quarterbacks = Object.values(individualState.players).filter((player) =>
+    player.programId === "program-1"
+    && player.position === "QB"
+    && player.eligibility.rosterStatus === "SCHOLARSHIP");
   const target = quarterbacks[0];
   assert.ok(target && quarterbacks.length > 1);
   const before = target.overall;
@@ -567,6 +864,111 @@ test("weekly recaps connect results to fans, attendance, press, and game-day rev
     assert.equal(Math.sign(recap.teamResultFanChange), recap.result === "WIN" ? 1 : -1);
     assert.equal(Math.sign(recap.localPressChange), recap.result === "WIN" ? 1 : -1);
   }
+});
+
+test("weekly stories turn the recap into a small factual editorial package", () => {
+  const state = activeLeague("weekly-story-package", 12);
+  const programId = "program-1";
+  const result = advanceWeek(state);
+  const recap = result.events.find((event) => event.type === "WEEKLY_RECAP" && event.programId === programId);
+  assert.ok(recap);
+  const stories = weeklyStories(result.state, programId, recap.season, recap.week);
+  assert.ok(stories.length >= 2 && stories.length <= 4);
+  assert.equal(stories[0].kind, "PROGRAM_RESULT");
+  assert.equal(new Set(stories.map((story) => story.id)).size, stories.length);
+  assert.ok(stories.every((story) => story.season === recap.season && story.week === recap.week));
+
+  const lead = stories[0];
+  assert.equal(lead.programId, programId);
+  assert.equal(lead.result, recap.result);
+  assert.equal(lead.scoreFor, recap.scoreFor);
+  assert.equal(lead.fanChange, recap.fanChange);
+  assert.equal(lead.weeklyNet, recap.weeklyNet);
+
+  const national = stories.find((story) => story.kind === "NATIONAL_RESULT");
+  assert.ok(national);
+  const sourceGame = result.events.find((event) =>
+    event.type === "GAME_COMPLETED"
+    && [event.homeProgramId, event.awayProgramId].includes(national.winnerProgramId)
+    && [event.homeProgramId, event.awayProgramId].includes(national.loserProgramId));
+  assert.ok(sourceGame);
+  assert.equal(national.winnerScore, Math.max(sourceGame.homeScore, sourceGame.awayScore));
+  assert.equal(national.loserScore, Math.min(sourceGame.homeScore, sourceGame.awayScore));
+
+  const playerStory = stories.find((story) => story.kind === "PLAYER_SPOTLIGHT");
+  if (playerStory) {
+    const sourcePerformance = result.events.find((event) =>
+      event.type === "PLAYER_BRAND_UPDATED" && event.playerId === playerStory.playerId);
+    assert.ok(sourcePerformance);
+    assert.equal(playerStory.gameRating, sourcePerformance.gameRating);
+    assert.equal(playerStory.performanceSummary, sourcePerformance.performanceSummary);
+  }
+});
+
+test("weekly stories call out an earned sponsorship bonus", () => {
+  const state = activeLeague("weekly-story-sponsor", 12);
+  const homeFixture = state.schedule.find((game) => game.week === state.week);
+  assert.ok(homeFixture);
+  const programId = homeFixture.homeProgramId;
+  const program = state.programs[programId];
+  program.fanBase = 1_000_000;
+  program.fanSupport = 100;
+  program.ticketPrice = 10;
+  const offer = state.sponsorships[programId].offers.find((candidate) => candidate.strategy === "HOME_CROWD");
+  assert.ok(offer);
+
+  const result = advanceWeek(state, [{ type: "ACCEPT_SPONSORSHIP", programId, offerId: offer.id }]);
+  const recap = result.events.find((event) => event.type === "WEEKLY_RECAP" && event.programId === programId);
+  const payment = result.events.find((event) => event.type === "SPONSORSHIP_PAYMENT" && event.programId === programId);
+  assert.ok(recap && payment);
+  assert.ok(payment.homeAttendanceBonus > 0);
+  // Isolate the business trigger. A consequential injury intentionally owns
+  // this fourth story slot when both happen in the same week.
+  result.state.eventHistory = result.state.eventHistory.filter((event) =>
+    event.type !== "PLAYER_INJURED" || result.state.players[event.playerId]?.programId !== programId);
+  const story = weeklyStories(result.state, programId, recap.season, recap.week)
+    .find((candidate) => candidate.kind === "PROGRAM_MOMENTUM");
+  assert.ok(story);
+  assert.equal(story.angle, "SPONSOR_BONUS");
+  assert.equal(story.sponsorName, offer.sponsorName);
+  assert.equal(story.sponsorBonus, payment.total - payment.basePayment);
+});
+
+test("a consequential injury replaces the routine business story", () => {
+  const state = activeLeague("weekly-story-injury", 12);
+  const programId = "program-1";
+  const result = advanceWeek(state);
+  const recap = result.events.find((event) => event.type === "WEEKLY_RECAP" && event.programId === programId);
+  const playerId = result.state.depthCharts[programId].QB[0];
+  const replacementPlayerId = result.state.depthCharts[programId].QB[1];
+  assert.ok(recap && playerId && replacementPlayerId);
+  result.state.eventHistory.push({
+    type: "PLAYER_INJURED",
+    season: recap.season,
+    week: recap.week,
+    playerId,
+    injuryName: "Torn ACL",
+    severity: "MAJOR",
+    weeks: 14,
+    risk: 1.2,
+    riskWithoutCoach: 1.6,
+    coachReductionPercent: 25,
+    seasonEnding: true,
+    wasStarter: true,
+    replacementPlayerId,
+    emergencyQuarterback: false,
+    affectedUnit: "passOffense",
+    unitRatingBefore: 74,
+    unitRatingAfter: 68,
+    unitRatingChangePercent: -8.1
+  });
+
+  const stories = weeklyStories(result.state, programId, recap.season, recap.week);
+  const health = stories.find((story) => story.kind === "PROGRAM_HEALTH");
+  assert.ok(health);
+  assert.equal(health.angle, "MAJOR_INJURY");
+  assert.equal(health.seasonEnding, true);
+  assert.equal(stories.some((story) => story.kind === "PROGRAM_MOMENTUM"), false);
 });
 
 test("individual game performances grow player stardom and feed school fans", () => {
@@ -686,8 +1088,8 @@ test("a dynasty saves small, folds finished seasons, and round-trips exactly", a
   assert.ok(state.season > 2027, "the season must have rolled over");
   assert.ok(state.playerSeasonStats.length > 0, "a finished season must be archived");
   assert.ok(
-    state.playerGameStats.every((row) => row.season === state.season),
-    "per-game rows for finished seasons must not survive the rollover"
+    state.playerGameStats.every((row) => row.season === state.season || row.gameId.startsWith("playoff:")),
+    "regular-season rows for finished seasons must not survive the rollover; postseason rows are the permanent record"
   );
 
   // Folding is lossless for the totals a record book reads.

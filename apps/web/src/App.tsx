@@ -25,7 +25,7 @@ import type {
   WeekFocus
 } from "@college-legends/model";
 import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
-import type { BoxScore, BoxScoreTeam, ProgramPreview } from "@college-legends/simulation";
+import type { BoxScore, BoxScoreTeam, ProgramPreview, WeeklyStory } from "@college-legends/simulation";
 import {
   DEFAULT_GAME_PLAN,
   DEFENSIVE_IDENTITY_LABELS,
@@ -33,9 +33,13 @@ import {
   SCOUTING_TIERS,
   DEFENSIVE_PRESETS,
   OFFENSIVE_PRESETS,
+  activeSponsorship,
+  activeEmergencyQuarterback,
   developmentCandidates,
   matchingPreset,
   projectGate,
+  projectSponsorshipOffer,
+  sponsorshipMarketValue,
   stadiumCapacity as capacityForLevel,
   weeklyDecisions,
   weeklyBriefing,
@@ -46,9 +50,11 @@ import {
   focusCapacity,
   activeFocuses,
   scoutingTargetFor,
+  weeklyStories,
   seasonExpectation,
   startingLineup,
   attributesFor,
+  ratingByRole,
   boxScore,
   latestBoxScore,
   MAXIMUM_WEEKLY_ADVERTISING,
@@ -64,7 +70,10 @@ import {
   personnelSummary,
   rosterSchemeFit,
   programRoster,
+  programStrengthCoachBenefits,
   coachSchemeFit,
+  currentInjury,
+  playerInjuryRisk,
   schemeFitLabel,
   SCOUTING_TIER_DESCRIPTIONS,
   SCOUTING_TIER_LABELS,
@@ -246,6 +255,7 @@ export function App(): ReactElement {
     const key = command.type === "REPLACE_STAFF" ? `replace:${command.staffId}`
       : command.type === "SET_TICKET_PRICE" ? "ticket-price"
       : command.type === "SET_ADVERTISING" ? "advertising"
+      : command.type === "ACCEPT_SPONSORSHIP" ? "sponsorship"
       : command.type === "SET_GAME_PLAN" ? `game-plan:${Object.keys(command.plan).sort().join(",")}`
       : command.type === "SET_DEVELOPMENT_SPOTLIGHT" ? "development-spotlight"
       : command.type === "SET_PLAYER_MEDIA_ACTION" ? "featured-media"
@@ -370,6 +380,7 @@ function commandKey(command: GameCommand): string {
   if (command.type === "REPLACE_STAFF") return `replace:${command.staffId}`;
   if (command.type === "SET_TICKET_PRICE") return "ticket-price";
   if (command.type === "SET_ADVERTISING") return "advertising";
+  if (command.type === "ACCEPT_SPONSORSHIP") return "sponsorship";
   if (command.type === "SET_GAME_PLAN") return `game-plan:${Object.keys(command.plan).sort().join(",")}`;
   if (command.type === "SET_DEVELOPMENT_SPOTLIGHT") return "development-spotlight";
   if (command.type === "SET_PLAYER_MEDIA_ACTION") return "featured-media";
@@ -766,7 +777,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, wee
     {screen === "DASHBOARD" && <ProgramDashboard game={game} roster={roster} onNavigate={onNavigate} />}
     {screen === "THIS_WEEK" && <WeekHub game={game} pending={pendingCommands} onQueue={onQueue} initialTab={weekTab} />}
     {screen === "WEEKLY_RECAPS" && <WeeklyRecaps game={game} />}
-    {screen === "ROSTER" && <Roster roster={roster} />}
+    {screen === "ROSTER" && <Roster game={game} roster={roster} />}
     {screen === "DEPTH_CHART" && <DepthChart game={game} roster={roster} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "PLAYER_STATS" && <PlayerStats game={game} roster={roster} />}
     {screen === "HONORS" && <Honors game={game} />}
@@ -803,6 +814,17 @@ function ProgramDashboard({ game, roster, onNavigate }: {
   const file = board.find((dossier) => dossier.opponentProgramId === opponentId);
   const recap = [...game.state.eventHistory].reverse().find(
     (event): event is Extract<GameEvent, { type: "WEEKLY_RECAP" }> => event.type === "WEEKLY_RECAP" && event.programId === program.id
+  );
+  const recapLead = recap
+    ? weeklyStories(game.state, program.id, recap.season, recap.week)
+      .find((story): story is Extract<WeeklyStory, { kind: "PROGRAM_RESULT" }> => story.kind === "PROGRAM_RESULT")
+    : null;
+  const currentInjuryEvent = [...game.state.eventHistory].reverse().find(
+    (event): event is Extract<GameEvent, { type: "PLAYER_INJURED" }> =>
+      event.type === "PLAYER_INJURED"
+      && game.state.players[event.playerId]?.programId === program.id
+      && Boolean(currentInjury(game.state.players[event.playerId]!))
+      && (event.wasStarter || event.seasonEnding || event.emergencyQuarterback)
   );
 
   const go = (destination: string): void => {
@@ -851,6 +873,29 @@ function ProgramDashboard({ game, roster, onNavigate }: {
           </div></>}
     </article>
 
+    {currentInjuryEvent && (() => {
+      const player = game.state.players[currentInjuryEvent.playerId]!;
+      const replacement = currentInjuryEvent.replacementPlayerId
+        ? game.state.players[currentInjuryEvent.replacementPlayerId]
+        : null;
+      const unitImpact = currentInjuryEvent.affectedUnit
+        && currentInjuryEvent.unitRatingBefore !== null
+        && currentInjuryEvent.unitRatingAfter !== null
+        ? `${unitLabel(currentInjuryEvent.affectedUnit)} ${currentInjuryEvent.unitRatingBefore.toFixed(1)} → ${currentInjuryEvent.unitRatingAfter.toFixed(1)}`
+        : null;
+      return <article className="panel span-two injury-alert">
+        <p className="eyebrow">{currentInjuryEvent.emergencyQuarterback ? "Emergency quarterback active" : "Lineup change"}</p>
+        <h2>{player.name}: {injuryAbsence(currentInjury(player)!)}</h2>
+        <p className="muted">
+          {replacement
+            ? `${replacement.eligibility.rosterStatus === "WALK_ON" ? "Emergency walk-on " : ""}${replacement.name} takes his place.`
+            : "The next healthy player moves into the rotation."}
+          {unitImpact ? ` ${unitImpact}${currentInjuryEvent.unitRatingChangePercent !== null ? ` · ${Math.abs(currentInjuryEvent.unitRatingChangePercent).toFixed(1)}% lower unit rating` : ""}.` : ""}
+        </p>
+        <button className="box-score-button" onClick={() => onNavigate("DEPTH_CHART")}>Adjust depth chart</button>
+      </article>;
+    })()}
+
     <article className="panel"><p className="eyebrow">The program</p>
       <h2>{compactNumber(program.fanBase)} fans · #{program.nationalRank}</h2>
       <div className="snapshot-list">
@@ -866,7 +911,8 @@ function ProgramDashboard({ game, roster, onNavigate }: {
     </article>
 
     {recap && <article className="panel recap-feature"><p className="eyebrow">Last Saturday</p>
-      <h2>{recap.result === "BYE" ? `Week ${recap.week} bye` : `${recap.result}: ${recap.scoreFor}–${recap.scoreAgainst} points`}</h2>
+      <h2>{recapLead ? weeklyStoryHeadline(recapLead, game) : recap.result === "BYE" ? `Week ${recap.week} bye` : `${recap.result}: ${recap.scoreFor}–${recap.scoreAgainst} points`}</h2>
+      {recapLead && <p className="story-summary">{weeklyStoryBody(recapLead, game)}</p>}
       <RecapCascade recap={recap} game={game} />
       {recap.result !== "BYE" && <button className="box-score-button" onClick={() => onNavigate("THIS_WEEK", "REPORT")}>
         Open full box score
@@ -877,12 +923,40 @@ function ProgramDashboard({ game, roster, onNavigate }: {
   </section>;
 }
 
-function Roster({ roster }: { roster: Player[] }): ReactElement {
+function injuryStatus(player: Player): string {
+  const injury = currentInjury(player);
+  return injury
+    ? `${injury.name} · ${injuryAbsence(injury)}`
+    : "Healthy";
+}
+
+function injuryAbsence(injury: NonNullable<ReturnType<typeof currentInjury>>): string {
+  return injury.seasonEnding
+    ? "out for the season"
+    : `out ${injury.weeksRemaining} game${injury.weeksRemaining === 1 ? "" : "s"}`;
+}
+
+function Roster({ game, roster }: { game: GameView; roster: Player[] }): ReactElement {
   const average = roster.reduce((sum, player) => sum + player.overall, 0) / Math.max(roster.length, 1);
-  return <section className="panel table-panel"><SectionHeading eyebrow="Team management" title={`${roster.length} scholarship players`} detail={`Average rating ${average.toFixed(1)} · complete positional roster`} />
-    <div className="data-table roster-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>OVR</span><span>POT</span><span>Stardom</span><span>Fans</span><span>Year / status</span></div>
-      {roster.map((player) => <div className="data-row" key={player.id}><strong data-label="Player">{player.name}</strong><span data-label="Position">{player.position}</span><span data-label="Overall">{Math.round(player.overall)}</span><span data-label="Potential">{Math.round(player.potential)}</span><span data-label="Stardom">{player.stardom}/100</span><span data-label="Personal fans">{compactNumber(player.personalFans)}</span><span data-label="Year / status">{eligibilityClass(player)}<small>{player.eligibility.redshirtStatus === "REDSHIRTING" ? "Redshirting" : `${player.eligibility.seasonsRemaining} seasons left`}</small></span></div>)}
-    </div></section>;
+  const injured = roster.filter((player) => currentInjury(player));
+  const health = programStrengthCoachBenefits(game.state, game.playerProgramId);
+  return <section>
+    <article className="panel health-summary">
+      <SectionHeading eyebrow="Team health" title={`${roster.length - injured.length} healthy · ${injured.length} injured`} detail="An injured starter is removed automatically and the next healthy player on your depth chart takes his place." />
+      <div className="snapshot-list">
+        <p><span>Strength coach prevention</span><strong>{health.injuryRiskReductionPercent}% lower risk per player-game</strong></p>
+        <p><span>Strength coach recovery</span><strong>{health.extraRecoveryChancePercent}% chance to remove 1 extra week</strong></p>
+      </div>
+    </article>
+    <article className="panel table-panel"><SectionHeading eyebrow="Team management" title={`${roster.length} scholarship players`} detail={`Average rating ${average.toFixed(1)} · risk assumes a normal game workload and includes fatigue plus your strength coach`} />
+      <div className="data-table roster-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>OVR</span><span>POT</span><span>Durability</span><span>Game risk</span><span>Health</span><span>Stardom</span><span>Fans</span><span>Year / status</span></div>
+        {roster.map((player) => {
+          const risk = playerInjuryRisk(game.state, player, 55);
+          return <div className="data-row" key={player.id}><strong data-label="Player">{player.name}</strong><span data-label="Position">{player.position}</span><span data-label="Overall">{Math.round(player.overall)}</span><span data-label="Potential">{Math.round(player.potential)}</span><span data-label="Durability">{Math.round(ratingByRole(player.position, player.ratings, "DURABILITY"))}</span><span data-label="Game risk">{risk.riskPercent}%<small>{risk.riskWithoutCoachPercent}% before coach · {Math.round(player.fatigue)}% fatigue</small></span><span className={currentInjury(player) ? "injured-status" : "healthy-status"} data-label="Health">{injuryStatus(player)}</span><span data-label="Stardom">{player.stardom}/100</span><span data-label="Personal fans">{compactNumber(player.personalFans)}</span><span data-label="Year / status">{eligibilityClass(player)}<small>{player.eligibility.redshirtStatus === "REDSHIRTING" ? "Redshirting" : `${player.eligibility.seasonsRemaining} seasons left`}</small></span></div>;
+        })}
+      </div>
+    </article>
+  </section>;
 }
 
 function DepthChart({ game, roster, pending, onQueue }: { game: GameView; roster: Player[]; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
@@ -897,10 +971,12 @@ function DepthChart({ game, roster, pending, onQueue }: { game: GameView; roster
     const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_DEPTH_CHART" }> =>
       command.type === "SET_DEPTH_CHART" && command.position === position
     );
-    return queued?.playerIds ?? game.state.depthCharts[programId]?.[position] ?? roster
+    const ordered = queued?.playerIds ?? game.state.depthCharts[programId]?.[position] ?? roster
       .filter((player) => player.position === position)
       .sort((left, right) => right.overall - left.overall)
       .map((player) => player.id);
+    const emergency = position === "QB" ? activeEmergencyQuarterback(game.state, programId) : null;
+    return emergency && !ordered.includes(emergency.id) ? [emergency.id, ...ordered] : ordered;
   };
   const move = (position: Position, playerId: string, direction: -1 | 1): void => {
     const playerIds = [...orderedIds(position)];
@@ -917,16 +993,18 @@ function DepthChart({ game, roster, pending, onQueue }: { game: GameView; roster
       let activeIndex = 0;
       return <article className="panel position-card" key={position}><div className="position-title"><h2>{position}</h2><span>{starterCounts[position]} starter{starterCounts[position] === 1 ? "" : "s"}</span></div>
         {players.map((player, index) => {
+          const emergency = player.eligibility.rosterStatus === "WALK_ON";
           const redshirted = redshirtState(player);
-          const injured = player.injuryWeeksRemaining > 0;
+          const injury = currentInjury(player);
+          const injured = Boolean(injury);
           const availableSlot = !redshirted && !injured ? activeIndex++ : -1;
-          const role = redshirted ? "RS" : injured ? "OUT" : availableSlot < starterCounts[position] ? "START" : `#${availableSlot + 1}`;
+          const role = emergency ? "EMERGENCY" : redshirted ? "RS" : injured ? "OUT" : availableSlot < starterCounts[position] ? "START" : `#${availableSlot + 1}`;
           const canRedshirt = player.eligibility.redshirtStatus === "AVAILABLE" || player.eligibility.redshirtStatus === "REDSHIRTING";
           return <div className={`depth-player ${redshirted || injured ? "inactive" : ""}`} key={player.id}>
-            <span><b>{role}</b> {player.name}<small>{eligibilityClass(player)} · {player.eligibility.gamesPlayedThisSeason} GP · {player.eligibility.seasonsRemaining} seasons left</small></span>
+            <span><b>{role}</b> {player.name}<small>{emergency ? "Replacement-level walk-on · active until a scholarship QB returns" : injury ? `${injury.name} · ${injuryAbsence(injury)}` : `${eligibilityClass(player)} · ${player.eligibility.gamesPlayedThisSeason} GP · ${playerInjuryRisk(game.state, player, 55).riskPercent}% normal-workload injury risk`}</small></span>
             <strong>{Math.round(player.overall)}</strong>
-            <div className="depth-actions"><button disabled={index === 0} onClick={() => move(position, player.id, -1)} aria-label={`Move ${player.name} up`}>↑</button><button disabled={index === players.length - 1} onClick={() => move(position, player.id, 1)} aria-label={`Move ${player.name} down`}>↓</button>
-              <button className={redshirted ? "selected" : ""} disabled={!canRedshirt} onClick={() => onQueue({ type: "SET_REDSHIRT", programId, playerId: player.id, enabled: !redshirted })}>{redshirted ? "Remove RS" : "Redshirt"}</button></div>
+            <div className="depth-actions"><button disabled={emergency || index === 0} onClick={() => move(position, player.id, -1)} aria-label={`Move ${player.name} up`}>↑</button><button disabled={emergency || index === players.length - 1} onClick={() => move(position, player.id, 1)} aria-label={`Move ${player.name} down`}>↓</button>
+              <button className={redshirted ? "selected" : ""} disabled={emergency || !canRedshirt} onClick={() => onQueue({ type: "SET_REDSHIRT", programId, playerId: player.id, enabled: !redshirted })}>{redshirted ? "Remove RS" : "Redshirt"}</button></div>
           </div>;
         })}
       </article>;
@@ -1050,8 +1128,10 @@ function Development({ state, roster, programId, pending, onQueue }: { state: Ga
     <div className="data-table spotlight-table"><div className="data-row data-header"><span>Affected player</span><span>OVR/POT</span><span>Core ratings</span><span>Projected payoff</span></div>
       {selectedPlayers.map((player) => {
         const payoff = projectedDevelopmentPayoff(state, player, selectedFocus, intensity);
-        return <div className="data-row" key={player.id}><strong>{player.name}<small>{player.position} · {player.injuryWeeksRemaining > 0 ? `Out ${player.injuryWeeksRemaining} week${player.injuryWeeksRemaining === 1 ? "" : "s"}` : `${Math.round(player.fatigue)}% fatigue`}</small></strong><span>{Math.round(player.overall)} / {Math.round(player.potential)}</span><span><small>{attributesFor(player.position).map((attribute) =>
-        `${attribute.label} ${Math.round(player.ratings[attribute.key] ?? 50)}`).join(" · ")}</small></span><span><b>{formatRatingChanges(payoff.ratingChanges)}</b><small>{signed(payoff.fatigueChange)} fatigue</small></span></div>;
+        const injury = currentInjury(player);
+        const risk = playerInjuryRisk(state, player, 55, selectedFocus);
+        return <div className="data-row" key={player.id}><strong>{player.name}<small>{player.position} · {injury ? `${injury.name}, out ${injury.weeksRemaining} week${injury.weeksRemaining === 1 ? "" : "s"}` : `${Math.round(player.fatigue)}% fatigue`}</small></strong><span>{Math.round(player.overall)} / {Math.round(player.potential)}</span><span><small>{attributesFor(player.position).map((attribute) =>
+        `${attribute.label} ${Math.round(player.ratings[attribute.key] ?? 50)}`).join(" · ")}</small></span><span><b>{formatRatingChanges(payoff.ratingChanges)}</b><small>{signed(payoff.fatigueChange)} fatigue · ${risk.riskPercent}% projected game risk (${risk.riskWithoutCoachPercent}% before coach)</small></span></div>;
       })}
     </div>
   </section>;
@@ -1128,10 +1208,140 @@ function WeeklyRecaps({ game }: { game: GameView }): ReactElement {
     .reverse();
   return <section><SectionHeading eyebrow="Cause and effect" title="Weekly program recaps" detail="Team results and individual performances grow separate audiences that flow into attendance, game-day sales, media reach, and the budget." />
     {recaps.length ? <div className="recap-grid">{recaps.map((recap) => <article className="panel recap-card" key={`${recap.season}-${recap.week}`}>
-      <div className="recap-heading"><div><p className="eyebrow">Week {recap.week}</p><h2>{recap.result === "BYE" ? "Bye week" : `${recap.result} · ${recap.scoreFor}–${recap.scoreAgainst} points`}</h2></div><strong className={recap.result.toLowerCase()}>{recap.result}</strong></div>
+      <div className="recap-heading"><div><p className="eyebrow">Season {recap.season} · Week {recap.week}</p><h2>The week in review</h2></div><strong className={recap.result.toLowerCase()}>{recap.result}</strong></div>
+      <WeeklyStoryPackage stories={weeklyStories(game.state, game.playerProgramId, recap.season, recap.week)} game={game} />
       <RecapCascade recap={recap} game={game} />
     </article>)}</div> : <article className="panel"><p className="muted">Advance the first week to generate the first connected recap.</p></article>}
   </section>;
+}
+
+function storyProgram(game: GameView, programId: ProgramId, rank: number | null = null): string {
+  const program = game.state.programs[programId];
+  if (!program) return "Unknown program";
+  return `${rank !== null && rank <= 25 ? `#${rank} ` : ""}${program.name}`;
+}
+
+function weeklyStoryHeadline(story: WeeklyStory, game: GameView): string {
+  if (story.kind === "PROGRAM_RESULT") {
+    const program = storyProgram(game, story.programId);
+    const opponent = story.opponentProgramId ? storyProgram(game, story.opponentProgramId, story.opponentRank) : null;
+    if (story.result === "BYE") return `${program} catches its breath and keeps building`;
+    const margin = Math.abs((story.scoreFor ?? 0) - (story.scoreAgainst ?? 0));
+    if (story.result === "WIN" && story.opponentRank !== null && story.opponentRank <= 25) {
+      return `${program} takes down ${opponent}`;
+    }
+    if (story.result === "WIN" && story.marqueeGame) return `${program} turns the marquee gamble into a breakthrough`;
+    if (story.result === "WIN" && margin >= 21) return `${program} leaves no doubt against ${opponent}`;
+    if (story.result === "WIN" && margin <= 7) return `${program} survives ${opponent} in a one-score finish`;
+    if (story.result === "WIN") return `${program} beats ${opponent} and keeps building`;
+    if (story.opponentRank !== null && story.opponentRank <= 25 && margin <= 7) {
+      return `${program} pushes ${opponent} to the edge`;
+    }
+    if (margin <= 7) return `${program} comes up one score short against ${opponent}`;
+    if (margin >= 21) return `${program} has answers to find after the ${opponent} loss`;
+    return `${program} falls to ${opponent}`;
+  }
+  if (story.kind === "NATIONAL_RESULT") {
+    const winner = storyProgram(game, story.winnerProgramId, story.winnerRank);
+    const loser = storyProgram(game, story.loserProgramId, story.loserRank);
+    if (story.angle === "UPSET") return `${winner} sends a shock through the rankings`;
+    if (story.angle === "THRILLER") return `${winner} escapes ${loser} in the game of the week`;
+    if (story.angle === "RANKED_STATEMENT") return `${winner} makes a statement against ${loser}`;
+    if (story.angle === "SHOOTOUT") return `${winner} outlasts ${loser} in a shootout`;
+    return `${winner} handles ${loser} on the national stage`;
+  }
+  if (story.kind === "PLAYER_SPOTLIGHT") {
+    const player = game.state.players[story.playerId];
+    return `${player?.name ?? "A Saturday star"} owns the spotlight for ${storyProgram(game, story.programId)}`;
+  }
+  if (story.kind === "PROGRAM_HEALTH") {
+    const player = game.state.players[story.playerId]?.name ?? "A key player";
+    const replacement = story.replacementPlayerId ? game.state.players[story.replacementPlayerId]?.name : null;
+    if (story.angle === "EMERGENCY_QB") return `${game.state.programs[story.programId]?.name} turns to an emergency quarterback`;
+    if (story.angle === "KEY_RETURN") return `${player} returns to the starting lineup`;
+    if (story.angle === "MAJOR_INJURY") return `${player} is lost for the season`;
+    return `${player} goes down; ${replacement ?? "the next man"} steps in`;
+  }
+  const program = storyProgram(game, story.programId);
+  if (story.angle === "SPONSOR_BONUS") return `${program} delivers for ${story.sponsorName ?? "its sponsor"}`;
+  if (story.angle === "PACKED_HOUSE") return `${program} turns home Saturday into a packed-house payday`;
+  if (story.angle === "FAN_SURGE") return `${program} converts the weekend into a wave of new fans`;
+  return `${program} finishes a major week in the black`;
+}
+
+function weeklyStoryBody(story: WeeklyStory, game: GameView): string {
+  if (story.kind === "PROGRAM_RESULT") {
+    if (story.result === "BYE") {
+      return `There was no game, but the program still moved ${signedNumber(story.fanChange)} fans and finished the week ${signedMoney(story.weeklyNet)}.`;
+    }
+    const featured = story.featuredPlayerId ? game.state.players[story.featuredPlayerId] : null;
+    const performance = featured && story.featuredPlayerSummary
+      ? ` ${featured.name} led the story: ${story.featuredPlayerSummary}.`
+      : "";
+    const press = story.nationalPressChange !== 0
+      ? `${signedNumber(story.nationalPressChange)} national press points`
+      : `${signedNumber(story.localPressChange)} local press points`;
+    return `${story.scoreFor}–${story.scoreAgainst}.${performance} The result moved ${signedNumber(story.fanChange)} school fans, ${press}, and left ${signedMoney(story.weeklyNet)} after expenses.`;
+  }
+  if (story.kind === "NATIONAL_RESULT") {
+    const winner = storyProgram(game, story.winnerProgramId, story.winnerRank);
+    const loser = storyProgram(game, story.loserProgramId, story.loserRank);
+    if (story.angle === "UPSET") {
+      return `${winner} beat ${loser}, ${story.winnerScore}–${story.loserScore}, putting a ranked contender's season under immediate pressure.`;
+    }
+    return `${winner} beat ${loser}, ${story.winnerScore}–${story.loserScore}. This was the most consequential result elsewhere in the league.`;
+  }
+  if (story.kind === "PLAYER_SPOTLIGHT") {
+    const player = game.state.players[story.playerId];
+    const opponent = story.opponentProgramId ? game.state.programs[story.opponentProgramId] : null;
+    return `${player?.name ?? "The standout"} posted a ${story.gameRating}/99 game rating${opponent ? ` against ${opponent.name}` : ""}: ${story.performanceSummary}. That performance added ${signedNumber(story.personalFanChange)} personal fans and ${signedNumber(story.schoolFanLift)} fans to the program.`;
+  }
+  if (story.kind === "PROGRAM_HEALTH") {
+    const player = game.state.players[story.playerId]?.name ?? "The injured player";
+    if (story.angle === "KEY_RETURN") {
+      return `${player} completed his recovery from a ${story.injuryName.toLowerCase()} and reclaimed a starting job.`;
+    }
+    const replacement = story.replacementPlayerId
+      ? game.state.players[story.replacementPlayerId]?.name ?? "the next player on the depth chart"
+      : "the next player on the depth chart";
+    const unit = story.affectedUnit ? unitLabel(story.affectedUnit).toLowerCase() : "the affected unit";
+    const impact = story.unitRatingBefore !== null && story.unitRatingAfter !== null
+      ? ` ${unitLabel(story.affectedUnit!)} falls from ${story.unitRatingBefore.toFixed(1)} to ${story.unitRatingAfter.toFixed(1)}${story.unitRatingChangePercent !== null ? `, a ${Math.abs(story.unitRatingChangePercent).toFixed(1)}% drop in the unit rating` : ""}.`
+      : "";
+    if (story.angle === "EMERGENCY_QB") {
+      return `Every scholarship quarterback is unavailable. Emergency walk-on ${replacement} will start and remain active until a rostered quarterback returns.${impact}`;
+    }
+    return `${player} suffered a ${story.injuryName.toLowerCase()} and is ${story.seasonEnding || story.week >= 14 ? "out for the remainder of the season" : `expected to miss ${story.weeks} game${story.weeks === 1 ? "" : "s"}`}. ${replacement} moves into the rotation, affecting ${unit}.${impact}`;
+  }
+  if (story.angle === "SPONSOR_BONUS") {
+    return `${story.sponsorName ?? "The sponsor"} paid ${money(story.sponsorBonus)} above its guarantee after the contract trigger hit. The program finished the week ${signedMoney(story.weeklyNet)}.`;
+  }
+  if (story.angle === "PACKED_HOUSE") {
+    return `${compactNumber(story.attendance)} people filled ${Math.round(story.attendance / Math.max(1, story.capacity) * 100)}% of the stadium. The crowd helped turn the week into ${signedMoney(story.weeklyNet)}.`;
+  }
+  if (story.angle === "FAN_SURGE") {
+    return `${signedNumber(story.fanChange)} fans joined the program after one weekend, expanding the audience that drives future tickets and sponsorship value.`;
+  }
+  return `The program cleared ${signedMoney(story.weeklyNet)} after weekly expenses, creating more room to invest in staff and facilities.`;
+}
+
+function WeeklyStoryPackage({ stories, game }: { stories: WeeklyStory[]; game: GameView }): ReactElement | null {
+  const lead = stories.find((story) => story.kind === "PROGRAM_RESULT");
+  const briefs = stories.filter((story) => story !== lead);
+  if (!lead && briefs.length === 0) return null;
+  return <div className="story-package">
+    {lead && <article className="story-lead">
+      <p className="eyebrow">Program lead</p>
+      <h3>{weeklyStoryHeadline(lead, game)}</h3>
+      <p>{weeklyStoryBody(lead, game)}</p>
+    </article>}
+    {briefs.length > 0 && <div className="story-briefs">{briefs.map((story) =>
+      <article className={`story-brief ${story.kind.toLowerCase()}`} key={story.id}>
+        <p className="eyebrow">{story.kind === "NATIONAL_RESULT" ? "Around the nation" : story.kind === "PLAYER_SPOTLIGHT" ? "Saturday star" : story.kind === "PROGRAM_HEALTH" ? "Team health" : "Program business"}</p>
+        <h3>{weeklyStoryHeadline(story, game)}</h3>
+        <p>{weeklyStoryBody(story, game)}</p>
+      </article>)}</div>}
+  </div>;
 }
 
 function RecapCascade({ recap, game }: { recap: Extract<GameEvent, { type: "WEEKLY_RECAP" }>; game: GameView }): ReactElement {
@@ -1146,6 +1356,7 @@ function RecapCascade({ recap, game }: { recap: Extract<GameEvent, { type: "WEEK
     <p><span>Stadium attendance</span><strong>{recap.homeGame ? `${compactNumber(recap.attendance)} people / ${compactNumber(recap.capacity)} seats` : "Away / bye"}</strong></p>
     <p><span>Ticket revenue</span><strong>{money(recap.ticketRevenue)}</strong></p>
     <p><span>Concession revenue</span><strong>{money(recap.concessionRevenue)}</strong></p>
+    <p><span>Sponsorship revenue</span><strong>{money(recap.sponsorshipRevenue)}</strong></p>
     <p><span>Local press change</span><strong>{signedNumber(recap.localPressChange)} points</strong></p>
     <p><span>National press change</span><strong>{signedNumber(recap.nationalPressChange)} points</strong></p>
     <p><span>Weekly net income</span><strong>{signedMoney(recap.weeklyNet)}</strong></p>
@@ -1249,9 +1460,65 @@ function Staff({ game, pending, onQueue }: { game: GameView; pending: GameComman
 function Finances({ game, pending, onQueue }: { game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
   const program = game.state.programs[game.playerProgramId]!;
   const staffPayroll = Object.values(game.state.staff).filter((staff) => staff.programId === program.id).reduce((sum, staff) => sum + staff.salary, 0);
+  const sponsorship = game.state.sponsorships?.[program.id];
+  const activeSponsor = activeSponsorship(game.state, program.id);
+  const queuedSponsor = pending.find((command): command is Extract<GameCommand, { type: "ACCEPT_SPONSORSHIP" }> =>
+    command.type === "ACCEPT_SPONSORSHIP");
+  const sponsorshipRevenue = game.state.eventHistory
+    .filter((event): event is Extract<GameEvent, { type: "SPONSORSHIP_PAYMENT" }> =>
+      event.type === "SPONSORSHIP_PAYMENT"
+      && event.programId === program.id
+      && event.season === game.state.season)
+    .reduce((total, event) => total + event.total, 0);
+  const marketValue = sponsorshipMarketValue(program);
+  const strategyName = (strategy: "GUARANTEED" | "HOME_CROWD" | "WINNING"): string =>
+    strategy === "GUARANTEED" ? "Guaranteed partner" : strategy === "HOME_CROWD" ? "Game-day partner" : "Performance partner";
+  const contractTrigger = (offer: NonNullable<typeof sponsorship>["offers"][number]): string => {
+    if (offer.strategy === "HOME_CROWD") {
+      return `${money(offer.homeAttendanceBonus)} whenever a home crowd fills at least ${Math.round((offer.homeAttendanceTarget ?? 0) * 100)}% of the stadium`;
+    }
+    if (offer.strategy === "WINNING") {
+      return `${money(offer.winBonus)} for every win, plus another ${money(offer.rankedWinBonus)} when that win is against a top-25 team`;
+    }
+    return "No conditions. The full amount is guaranteed, including bye weeks";
+  };
   return <section className="finance-layout">
-    <article className="panel"><p className="eyebrow">Athletic department</p><h2>Operating position</h2><div className="snapshot-list"><p><span>Available budget</span><strong>{money(program.budget)}</strong></p><p><span>Base weekly revenue</span><strong>{money(program.weeklyRevenue)}</strong></p><p><span>Base weekly expenses</span><strong>{money(program.weeklyExpenses)}</strong></p><p><span>Annual staff payroll</span><strong>{money(staffPayroll)}</strong></p></div></article>
-    <article className="panel"><p className="eyebrow">Program reach</p><h2>Business drivers</h2><div className="snapshot-list"><p><span>Fan base</span><strong>{compactNumber(program.fanBase)}</strong></p><p><span>Stadium capacity</span><strong>{compactNumber(stadiumCapacity(program.facilities.STADIUM))}</strong></p><p><span>Local / national press</span><strong>{program.localPress} / {program.nationalPress}</strong></p><p><span>National rank</span><strong>#{program.nationalRank}</strong></p></div></article>
+    <article className="panel"><p className="eyebrow">Athletic department</p><h2>Operating position</h2><div className="snapshot-list"><p><span>Available budget</span><strong>{money(program.budget)}</strong></p><p><span>Base weekly revenue</span><strong>{money(program.weeklyRevenue)}</strong></p><p><span>Sponsorship earned this season</span><strong>{money(sponsorshipRevenue)}</strong></p><p><span>Base weekly expenses</span><strong>{money(program.weeklyExpenses)}</strong></p><p><span>Annual staff payroll</span><strong>{money(staffPayroll)}</strong></p></div></article>
+    <article className="panel"><p className="eyebrow">Sponsor market</p><h2>{money(marketValue)} of weekly reach</h2><p className="muted">Sponsors value the audience and recognition the program has already built. These four inputs set this season's offers.</p><div className="snapshot-list"><p><span>{compactNumber(program.fanBase)} fans × $1.25</span><strong>{money(program.fanBase * 1.25)}</strong></p><p><span>{program.nationalPress} national press points × $900</span><strong>{money(program.nationalPress * 900)}</strong></p><p><span>{program.prestige} prestige points × $400</span><strong>{money(program.prestige * 400)}</strong></p><p><span>{program.championships} titles × $15,000</span><strong>{money(program.championships * 15_000)}</strong></p></div></article>
+    {activeSponsor ? <article className="panel sponsor-active span-two">
+      <p className="eyebrow">Primary sponsor · signed through Season {game.state.season}</p>
+      <h2>{activeSponsor.sponsorName}</h2>
+      <p className="muted">{strategyName(activeSponsor.strategy)}. This contract cannot be replaced until next season.</p>
+      <div className="choice-compare">
+        <p><span>Guaranteed every week</span><strong>{money(activeSponsor.weeklyPayment)}</strong></p>
+        <p><span>Bonus trigger</span><strong>{contractTrigger(activeSponsor)}</strong></p>
+        <p><span>Earned so far</span><strong>{money(sponsorshipRevenue)}</strong></p>
+      </div>
+    </article> : <div className="sponsor-offers span-two">
+      <div className="sponsor-intro">
+        <p className="eyebrow">Primary sponsorship · choose one for Season {game.state.season}</p>
+        <h2>How much revenue do you want to put at risk?</h2>
+        <p className="muted">Each contract lasts through Week 14. The guarantee is paid every week; bonuses are added only when the stated trigger happens.</p>
+      </div>
+      <div className="sponsor-grid">{(sponsorship?.offers ?? []).map((offer) => {
+        const projection = projectSponsorshipOffer(game.state, program.id, offer);
+        const queued = queuedSponsor?.offerId === offer.id;
+        return <article className="panel business-decision sponsor-card" key={offer.id}>
+          <p className="eyebrow">{strategyName(offer.strategy)}</p>
+          <h2>{offer.sponsorName}</h2>
+          <p className="muted">{contractTrigger(offer)}.</p>
+          <div className="choice-compare">
+            <p><span>Guaranteed every week</span><strong>{money(offer.weeklyPayment)}</strong></p>
+            <p><span>Guaranteed remaining</span><strong>{money(projection.guaranteedRemaining)} over {projection.remainingWeeks} weeks</strong></p>
+            <p><span>Bonuses still available</span><strong>{money(projection.maximumBonusRemaining)}</strong></p>
+            <p><span>Maximum remaining value</span><strong>{money(projection.maximumRemaining)}</strong></p>
+          </div>
+          <button disabled={Boolean(queuedSponsor)} onClick={() => onQueue({ type: "ACCEPT_SPONSORSHIP", programId: program.id, offerId: offer.id })}>
+            {queued ? "Contract queued" : queuedSponsor ? "Another contract queued" : `Sign with ${offer.sponsorName}`}
+          </button>
+        </article>;
+      })}</div>
+    </div>}
     <div className="facility-grid span-two">{facilities.map((facility) => {
       const level = program.facilities[facility];
       const queued = pending.some((item) => item.type === "UPGRADE_FACILITY" && item.facility === facility);
@@ -1376,6 +1643,7 @@ function Inbox({ game }: { game: GameView }): ReactElement {
 const INBOX_NOISE: ReadonlySet<GameEvent["type"]> = new Set([
   "PLAYER_DEVELOPED", "PREP_POINTS_ADDED", "RECRUITING_POINTS_ADDED", "STAFF_ALLOCATION_SET",
   "SCOUTING_ALLOCATED", "PRACTICE_REPS_SET", "TICKET_PRICE_SET", "ADVERTISING_SET",
+  "SPONSORSHIP_PAYMENT",
   "GAME_PLAN_SET", "SCHEME_SET", "DEVELOPMENT_SPOTLIGHT_SET", "PLAYER_MEDIA_ACTION_SET",
   "DEPTH_CHART_UPDATED", "WEEKLY_FINANCES", "PLAYER_BRAND_UPDATED", "GAME_PLAN_REPORT",
   "WEEKLY_RECAP", "RANKINGS_UPDATED", "COMMAND_REJECTED"
@@ -1413,12 +1681,17 @@ function EventList({ events, game }: { events: GameEvent[]; game: GameView }): R
 
 function eventRelevantToProgram(event: GameEvent, game: GameView): boolean {
   const programId = game.playerProgramId;
+  if (event.type === "PLAYER_INJURED" || event.type === "PLAYER_RECOVERED" || event.type === "INJURY_RECOVERY_ACCELERATED") {
+    return game.state.players[event.playerId]?.programId === programId;
+  }
   if (event.type === "RECRUITING_CONTEST_RESOLVED") return event.offeredBy.includes(programId);
   if (event.type === "PROSPECT_COMMITTED") {
     return event.programId === programId || game.state.recruiting[programId]?.discoveredProspectIds.includes(event.prospectId) === true;
   }
   if (event.type === "PROSPECTS_DISCOVERED" || event.type === "PROSPECT_EVALUATED" || event.type === "RECRUITING_INVESTMENT"
-    || event.type === "RECRUITING_POINTS_ADDED" || event.type === "PROSPECT_ENROLLED" || event.type === "COMMAND_REJECTED") {
+    || event.type === "RECRUITING_POINTS_ADDED" || event.type === "PROSPECT_ENROLLED"
+    || event.type === "SPONSORSHIP_ACCEPTED" || event.type === "SPONSORSHIP_PAYMENT"
+    || event.type === "COMMAND_REJECTED") {
     return event.programId === programId;
   }
   return true;
@@ -1432,8 +1705,10 @@ function eventIcon(event: GameEvent): string {
   if (event.type === "WEEKLY_RECAP") return "↗";
   if (event.type === "MARQUEE_GAME_SCHEDULED") return "TV";
   if (event.type === "PLAYER_INJURED") return "✚";
+  if (event.type === "INJURY_RECOVERY_ACCELERATED") return "⚕";
   if (event.type === "PLAYER_RECOVERED") return "✓";
   if (event.type === "WEEKLY_FINANCES") return "＄";
+  if (event.type === "SPONSORSHIP_ACCEPTED" || event.type === "SPONSORSHIP_PAYMENT") return "＄";
   if (event.type === "FACILITY_UPGRADED") return "▲";
   if (event.type === "PROSPECT_SIGNED" || event.type === "PROSPECT_COMMITTED" || event.type === "PROSPECT_ENROLLED") return "★";
   if (event.type === "PROSPECTS_DISCOVERED" || event.type === "PROSPECT_EVALUATED") return "⌕";
@@ -1456,7 +1731,9 @@ function eventText(event: GameEvent, game: GameView): string {
     const winner = event.playerId ? game.state.players[event.playerId]?.name : event.staffId ? game.state.staff[event.staffId]?.name : "Winner";
     return `${winner} won ${SEASON_AWARD_LABELS[event.awardType]} with a ${event.score.toFixed(1)} score · ${signedNumber(event.playerFanGain)} personal fans · ${signedNumber(event.programFanGain)} school fans.`;
   }
-  if (event.type === "WEEKLY_FINANCES") return `${money(event.revenue)} revenue · ${money(event.expenses)} expenses · ${event.net >= 0 ? "+" : ""}${money(event.net)} net`;
+  if (event.type === "WEEKLY_FINANCES") return `${money(event.revenue)} revenue, including ${money(event.sponsorshipRevenue)} from sponsorship · ${money(event.expenses)} expenses · ${event.net >= 0 ? "+" : ""}${money(event.net)} net`;
+  if (event.type === "SPONSORSHIP_ACCEPTED") return `${event.sponsorName} signed through the end of Season ${event.season} · ${money(event.weeklyPayment)} guaranteed every week.`;
+  if (event.type === "SPONSORSHIP_PAYMENT") return `${event.sponsorName} paid ${money(event.basePayment)} guaranteed plus ${money(event.total - event.basePayment)} in bonuses · ${money(event.total)} total.`;
   if (event.type === "WEEKLY_RECAP") return `${event.result} · ${signedNumber(event.fanChange)} fans · ${signedNumber(event.localPressChange)} local press · ${signedNumber(event.nationalPressChange)} national press · ${signedMoney(event.weeklyNet)} net`;
   if (event.type === "PLAYER_BRAND_UPDATED") return `${game.state.players[event.playerId]?.name ?? "Player"}: ${event.performanceSummary} · ${signedNumber(event.personalFanChange)} personal fans · ${signedNumber(event.schoolFanLift)} school fans · ${signed(event.stardomChange)} stardom.`;
   if (event.type === "PLAYER_MEDIA_ACTION_SET") return `${game.state.players[event.playerId]?.name ?? "Player"} scheduled for ${label(event.action)}.`;
@@ -1480,8 +1757,23 @@ function eventText(event: GameEvent, game: GameView): string {
   }
   if (event.type === "DEPTH_CHART_UPDATED") return `${event.position} depth chart updated.`;
   if (event.type === "REDSHIRT_STATUS_CHANGED") return `${game.state.players[event.playerId]?.name ?? "Player"} is now ${event.status === "REDSHIRTING" ? "redshirting" : label(event.status)}.`;
-  if (event.type === "PLAYER_INJURED") return `${game.state.players[event.playerId]?.name ?? "Player"} will miss approximately ${event.weeks} week${event.weeks === 1 ? "" : "s"} (${event.risk}% risk).`;
-  if (event.type === "PLAYER_RECOVERED") return `${game.state.players[event.playerId]?.name ?? "Player"} has returned to full availability.`;
+  if (event.type === "PLAYER_INJURED") {
+    const diagnosis = event.injuryName?.toLowerCase() ?? "undisclosed injury";
+    const article = /^[aeiou]/.test(diagnosis) ? "an" : "a";
+    const coachEffect = Number.isFinite(event.riskWithoutCoach) && event.coachReductionPercent > 0
+      ? ` His strength coach reduced the risk from ${event.riskWithoutCoach}% to ${event.risk}%.`
+      : "";
+    const absence = event.seasonEnding || event.week >= 14
+      ? "is out for the remainder of the season"
+      : `will miss approximately ${event.weeks} game${event.weeks === 1 ? "" : "s"}`;
+    const replacement = event.replacementPlayerId ? game.state.players[event.replacementPlayerId] : null;
+    const lineupEffect = replacement
+      ? ` ${replacement.eligibility.rosterStatus === "WALK_ON" ? "Emergency walk-on " : ""}${replacement.name} takes his place${event.affectedUnit && event.unitRatingBefore !== null && event.unitRatingAfter !== null ? `; ${unitLabel(event.affectedUnit).toLowerCase()} falls from ${event.unitRatingBefore.toFixed(1)} to ${event.unitRatingAfter.toFixed(1)}` : ""}.`
+      : "";
+    return `${game.state.players[event.playerId]?.name ?? "Player"} suffered ${article} ${diagnosis} and ${absence}.${lineupEffect}${coachEffect}`;
+  }
+  if (event.type === "INJURY_RECOVERY_ACCELERATED") return `${game.state.staff[event.coachId]?.name ?? "The strength coach"} shortened ${game.state.players[event.playerId]?.name ?? "the player's"} recovery from a ${event.injuryName.toLowerCase()} by one week${event.weeksRemaining ? ` · approximately ${event.weeksRemaining} week${event.weeksRemaining === 1 ? "" : "s"} remain` : ""}.`;
+  if (event.type === "PLAYER_RECOVERED") return `${game.state.players[event.playerId]?.name ?? "Player"} has recovered from his ${event.injuryName?.toLowerCase() ?? "injury"} and returned to full availability.`;
   if (event.type === "PROSPECT_SIGNED") return `${game.state.prospects[event.prospectId]?.name ?? "Prospect"} signed with ${game.state.programs[event.programId]?.name}.`;
   if (event.type === "PROSPECTS_DISCOVERED") return `${event.prospectIds.length} new prospects found through ${label(event.searchType)} scouting for ${event.pointsSpent} points.`;
   if (event.type === "PROSPECT_EVALUATED") return `${label(event.evaluation)} report unlocked for ${game.state.prospects[event.prospectId]?.name ?? "prospect"} at a cost of ${event.pointsSpent} points.`;
@@ -2062,8 +2354,20 @@ function WeekReport({ game }: { game: GameView }): ReactElement {
     .reverse()
     .find((event): event is Extract<GameEvent, { type: "WEEK_FOCUS_PAYOFF" }> =>
       event.type === "WEEK_FOCUS_PAYOFF" && event.programId === programId);
+  const latestRecap = [...game.state.eventHistory]
+    .reverse()
+    .find((event): event is Extract<GameEvent, { type: "WEEKLY_RECAP" }> =>
+      event.type === "WEEKLY_RECAP" && event.programId === programId);
+  const stories = latestRecap
+    ? weeklyStories(game.state, programId, latestRecap.season, latestRecap.week)
+    : [];
 
   return <div className="week-tab-body">
+    {stories.length > 0 && <article className="panel weekly-stories-panel">
+      <p className="eyebrow">Season {latestRecap?.season} · Week {latestRecap?.week}</p>
+      <h2>The week in stories</h2>
+      <WeeklyStoryPackage stories={stories} game={game} />
+    </article>}
     {box && <BoxScorePanel box={box} programId={programId} />}
     {payoff && payoff.focuses.length > 0 && <article className="panel">
       <p className="eyebrow">What you chased last week</p>

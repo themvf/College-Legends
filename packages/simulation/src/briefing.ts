@@ -96,6 +96,21 @@ export function weeklyBriefing(
   const thisWeek = board.find((dossier) => dossier.week === state.week);
   const opponent = thisWeek ? state.programs[thisWeek.opponentProgramId] : null;
 
+  // A week without a sponsor is revenue that cannot be recovered later.
+  const sponsorship = state.sponsorships?.[programId];
+  if (sponsorship && !sponsorship.activeContractId && sponsorship.offers.length > 0) {
+    const safest = sponsorship.offers.reduce((best, offer) =>
+      offer.weeklyPayment > best.weeklyPayment ? offer : best);
+    items.push({
+      id: "SPONSORSHIP",
+      urgency: "DO_THIS",
+      headline: "The program has no primary sponsor",
+      detail: `${safest.sponsorName} is offering $${safest.weeklyPayment.toLocaleString()} guaranteed every week. A week without a contract is money you cannot recover later.`,
+      action: "Choose a sponsor",
+      destination: "FINANCES"
+    });
+  }
+
   // An unused priority. Hours never bank, so a slot nobody claimed is a week
   // the staff spent on nothing in particular.
   const capacity = focusCapacity(state, programId);

@@ -119,12 +119,15 @@ export function foldSeasonStats(
 /**
  * Drops what a save does not need to reconstruct the game. Per-game rows for
  * finished seasons are already folded into `playerSeasonStats`, and the event
- * log is a rolling feed rather than a record.
+ * log is a rolling feed rather than a record. Postseason rows are kept from
+ * every season — they are the permanent playoff record and bounded at eleven
+ * games a season — so a loaded career matches the one that was never saved.
  */
 export function saveablePayload(state: Readonly<GameState>): GameState {
   return {
     ...state,
-    playerGameStats: state.playerGameStats.filter((row) => row.season === state.season),
+    playerGameStats: state.playerGameStats.filter((row) =>
+      row.season === state.season || row.gameId.startsWith("playoff:")),
     eventHistory: state.eventHistory.slice(-SAVED_EVENT_LIMIT)
   } as GameState;
 }

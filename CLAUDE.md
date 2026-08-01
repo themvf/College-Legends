@@ -61,8 +61,9 @@ These are load-bearing. Breaking one is a design change, not a refactor.
 `advanceWeek` resolves in a fixed order:
 
 ```
-commands → recruiting market → recovery → development → games
-  → player brands → injuries → recaps/finances → rankings → recruiting points
+commands → recruiting market → fatigue recovery → development → games
+  → player brands → injury recovery → new injuries
+  → recaps/finances → rankings → recruiting points
 ```
 
 Season rollover fires when week passes 14: awards → division titles →
@@ -222,8 +223,8 @@ prospects-by-status) instead of `Object.values().filter()`.
 - `developmentFocus` and `mediaAction` reset to defaults at the top of every
   `advanceWeek`, so there are no multi-week training plans and the projected
   payoff UI is only valid for one week.
-- Injuries land at roughly 0.06 per team-game — far too few to make depth
-  matter.
+- ~~Injuries land at roughly 0.06 per team-game — far too few to make depth
+  matter.~~ Fixed by the player-health slice described below.
 - Home win rate is 53.6% against ~57-60% real; `homeFieldAdvantage: 1.8` is
   light.
 - The AI never uses the individual spotlight, never redshirts, never sets a
@@ -313,7 +314,7 @@ with a headline, the reason in plain language, a verb, and a destination the UI
 turns into a button. Items fire on: no practice reps, an unscouted opponent this
 week, a marquee game ahead with no file, a coordinator running someone else's
 scheme, recruiting points about to expire, nobody being developed, a ticket
-price well off fair, and a negative budget.
+price well off fair, no primary sponsor, and a negative budget.
 
 `seasonExpectation()` finally states the point of a season. `coachSecurity` and
 `championshipDeadline` have existed since the beginning and were never once
@@ -738,6 +739,50 @@ Advertising is deliberately **not** weekly arbitrage. Reach scales with the
 square root of spend, and a maximum spend costs more in the week than it returns
 at the gate — the return is the followers it compounds into.
 
+### Sponsorships turn fame into money
+
+The first sponsorship slice closes one part of the inert-fame finding. Every
+program receives three frozen, season-long offers:
+
+| contract | guarantee | upside |
+|---|---:|---|
+| Guaranteed partner | 100% of sponsor market value every week | none |
+| Game-day partner | 65% every week | 135% whenever a home crowd fills at least 90% of the stadium |
+| Performance partner | 45% every week | 75% for every win, plus 90% for a top-25 win |
+
+Sponsor market value is a named function of what the program has already built:
+`fanBase × $1.25 + nationalPress × $900 + prestige × $400 + championships ×
+$15,000`, rounded to $5,000 a week. These are balance hypotheses, but the shape
+is load-bearing: fans, recognition, institutional standing, and titles all
+become economically useful without buying a football rating.
+
+`projectSponsorshipOffer()` posts the exact remaining guarantee, every bonus
+still available, and the mathematical maximum before the player signs.
+`sponsorshipPayment()` owns the trigger logic used by the weekly finances, so
+the card and the cash cannot drift into parallel implementations.
+
+One primary sponsor may be signed per season and cannot be replaced until the
+rollover. Offers refresh after the new schedule is built. Rivals sign from the
+same market and choose by program character: front-runners back the crowd,
+bluebloods and talent magnets back winning, and diehards/developers protect the
+guaranteed floor.
+
+### Weekly stories make the numbers memorable
+
+`weeklyStories()` turns each completed week into a deterministic editorial
+package without adding prose to engine events or changing save data. The UI
+writes the sentences from structured facts already emitted by the simulation.
+
+Every issue leads with the player's program and changes its angle for a ranked
+upset, marquee breakthrough, blowout, one-score finish, close ranked loss, or
+bye. It then selects one consequential national result, one real box-score
+standout, and—only when earned—one program-business story for a sponsorship
+bonus, packed house, fan surge, or unusually profitable week.
+
+The package is deliberately capped at four stories. It is a summary, not a
+second inbox, and every claim can be traced to a `WEEKLY_RECAP`,
+`GAME_COMPLETED`, `PLAYER_BRAND_UPDATED`, or `SPONSORSHIP_PAYMENT` event.
+
 ### Development candidates
 
 `developmentCandidates()` returns three players for three different reasons:
@@ -846,6 +891,47 @@ percentage faster strength-rating gains, fatigue points recovered per player per
 week, percentage lower injury risk per player-game, and a percentage chance to
 remove one additional injury week. The engine rejects allocation commands for
 the post and ignores stale allocations from older saves.
+
+**Built in the player-health slice.** Every player now carries either no injury
+or a named diagnosis with minor, moderate, or major severity and a real recovery
+timeline. Only players who took game snaps are exposed. Position, snaps,
+durability, fatigue, and a strength-development spotlight determine the
+unprotected risk; the strength coach's posted reduction is then applied to that
+exact roll. A one-week injury now actually costs one game: existing injuries
+recover after Saturday, while new injuries are diagnosed afterward. Recovery
+events name the injury, and an extra week removed by the strength coach is its
+own visible event. The roster and depth chart show the diagnosis and games
+remaining, and the next healthy depth-chart player is promoted automatically.
+Every playoff round uses that same sequence: only players who record postseason
+snaps can be injured, and a diagnosis carries into the next round. Diagnoses own
+their recovery ranges, so a torn ACL, torn labrum, and broken collarbone do not
+share an interchangeable generic "major injury" timeline. For the current MVP,
+all remaining injuries clear at season rollover; offseason injury carryover is
+explicitly deferred.
+
+**The completed health rules.** Minor/moderate/season-ending outcomes target
+roughly 78% / 19% / 3% of diagnosed injuries. A season-ending injury is a
+first-class flag: it never ticks down, never receives accelerated recovery, and
+means unavailable for every remaining game in the current season. It still
+clears at rollover — no injury ever enters the next season. Postseason wording
+therefore says "out for the remainder of the season", never that a player will
+miss next year.
+
+Diagnosis pools are position-aware and include concussions. Conditioning work
+lowers this week's risk by 15%; strength work raises it by 15%; Durability,
+fatigue, actual snaps, position, and the strength coach remain inputs to the
+exact posted percentage. The roster shows Durability and normal-workload risk
+before and after the coach. Injury events store the actual promoted player and
+the before/after unit rating, so the dashboard and weekly story can state the
+football cost rather than merely saying "out".
+
+Every program owns one hidden, replacement-level walk-on quarterback (45 LOW /
+50 MID / 55 POWER, before small attribute shape). He enters the real rotation
+only when every scholarship quarterback is injured or redshirting, appears in
+the depth chart and box score, costs no scholarship/recruiting slot, cannot be
+developed or injured, and leaves the active rotation as soon as a scholarship
+quarterback returns. This is a simulation safety valve, not roster depth the
+player can exploit.
 
 **Only a coordinator's prep hours install his own side.** The head coach's are
 general team quality and cover at a discount. That is what keeps "who runs my
@@ -1881,7 +1967,7 @@ Each step is playable and each depends on the one before it.
    Playbook identity as a staged multi-week project, play concepts, and
    coordinator delegation remain — see `docs/GAMEPLAN_AND_PREPARATION.md`.
 6. ~~Ticket pricing and advertising~~ — done; see "The weekly decision loop".
-   Still open from finding 3: media rights, sponsorship, merchandise, recurring
+   Sponsorship is done. Still open from finding 3: media rights, merchandise, recurring
    facility costs, and an insolvency check. `weeklyRevenue` and `weeklyExpenses`
    are still stored constants.
 7. ~~The scouting department, staff hour allocation, and one weekly screen~~ —
@@ -1890,7 +1976,8 @@ Each step is playable and each depends on the one before it.
 8. **The attention economy and system fit** — see the section above. Slice 1,
    generation and personnel groupings, is done. Next is slice 2: derived traits,
    the read-only fit score, and prospect fit ranges. Outcome modifiers and the
-   16-hour week remain slice 3; injuries, rivals, and caching remain slice 4.
+   16-hour week remain slice 3; rivals and caching remain slice 4. Player
+   injuries and the strength-coach hedge are done.
 9. Add an offseason phase — unblocks marquee scheduling every year, signing day,
    the portal as an input, coach hiring, and expectations/firing.
 10. Performance and save size before any iOS work. **Save size is done** — see
