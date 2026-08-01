@@ -35,6 +35,22 @@ import {
 import { advertisingReach, DEFENSIVE_PRESETS, developmentCandidates, fairTicketPrice, matchingPreset, MAXIMUM_TICKET_PRICE, MAXIMUM_WEEKLY_ADVERTISING, MINIMUM_TICKET_PRICE, OFFENSIVE_PRESETS, pricingGoodwill, projectGate } from "./business.js";
 import { MAXIMUM_REPS_PER_SIDE, planExecution, repsFatigue, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
 import { foldSeasonStats } from "./persistence.js";
+import { advertisingCredit, applyBooster, boosterDueThisWeek, buildBoosterOffer, takeawayMultiplier } from "./boosters.js";
+
+export {
+  advertisingCredit,
+  boosterDueThisWeek,
+  BOOSTER_INTERVAL,
+  BOOSTER_KIND_LABELS,
+  buildBoosterOffer,
+  latestBoosterOffer,
+  LEGEND_OVERALL_GAIN,
+  LEGEND_POSITIONS,
+  pendingBoosterOffer,
+  POSITION_ROOM_LABELS,
+  takeawayMultiplier,
+  TAKEAWAY_BOOST
+} from "./boosters.js";
 
 export {
   compressionAvailable,
@@ -778,7 +794,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
     // content carried one set of development rates and every league ever created
     // carried another, so tuning the balance file changed nothing at all.
     identity: { rootSeed, balanceConfiguration: clone(DEFAULT_BALANCE), simulationVersion: "0.1.0" },
-    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, weekFocus: {}, scoutingTarget: {}, dossiers: {}, staff: {}, depthCharts: {}, playerGameStats: [], playerSeasonStats: [], schedule: [], seasonHistory: [], eventHistory: []
+    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, weekFocus: {}, scoutingTarget: {}, dossiers: {}, boosters: {}, staff: {}, depthCharts: {}, playerGameStats: [], playerSeasonStats: [], schedule: [], seasonHistory: [], eventHistory: []
   };
   const rosterPositions = Object.entries(ROSTER_COMPOSITION).flatMap(([position, count]) =>
     Array.from({ length: count }, () => position as Position)
@@ -851,6 +867,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
     state.gamePlans[id] = { ...DEFAULT_GAME_PLAN };
     state.preparation[id] = { points: 0, weeklyPoints: 0, scoutingPoints: 0, weeklyScoutingPoints: 0, offensiveReps: 0, defensiveReps: 0 };
     state.dossiers[id] = {};
+    state.boosters[id] = { offer: null, advertisingCredit: 0, takeawayBoostWeek: null };
     state.weekFocus[id] = [];
     state.scoutingTarget[id] = null;
     for (const [staffIndex, role] of STAFF_ROLES.entries()) {
@@ -1307,6 +1324,7 @@ function refreshPreparation(state: GameState, events: GameEvent[]): void {
     // department's target are all derived from them rather than re-entered.
     applyWeekFocus(state, programId);
     commitScoutingOutput(state, programId, events);
+    offerBoosters(state, programId, events);
     events.push({
       type: "PREP_POINTS_ADDED",
       season: state.season,
@@ -1397,6 +1415,40 @@ function recordFocusPayoffs(state: GameState, inputs: Map<string, FocusInputs>, 
       recruitingPointsAdded: recruitingByProgram.get(programId) ?? 0
     });
   }
+}
+
+/**
+ * Puts four people on the table, every third week.
+ *
+ * Cleared and rebuilt rather than accumulated: an offer is this week's, and a
+ * player who ignores one does not find it stacked on top of the next. The RNG
+ * path depends only on season, week and program, so the same career always meets
+ * the same four people — reloading cannot re-roll them.
+ */
+function offerBoosters(state: GameState, programId: string, events: GameEvent[]): void {
+  state.boosters ??= {};
+  state.boosters[programId] ??= { offer: null, advertisingCredit: 0, takeawayBoostWeek: null };
+  const boosters = state.boosters[programId]!;
+  // A takeaway week is one game only, and the game it was bought for has been
+  // played by the time this runs.
+  if (boosters.takeawayBoostWeek !== null && boosters.takeawayBoostWeek < state.week) {
+    boosters.takeawayBoostWeek = null;
+  }
+  if (!boosterDueThisWeek(state.week)) {
+    if (boosters.offer && boosters.offer.week !== state.week) boosters.offer = null;
+    return;
+  }
+  const rng = new AddressableRng(state.identity.rootSeed).fork("boosters", String(state.season), String(state.week));
+  const offer = buildBoosterOffer(state, programId, rng);
+  if (!offer) return;
+  boosters.offer = offer;
+  events.push({
+    type: "BOOSTER_OFFERED",
+    season: state.season,
+    week: state.week,
+    programId,
+    options: offer.options.map((option) => ({ ...option }))
+  });
 }
 
 /**
@@ -1529,7 +1581,8 @@ export function prepareWeek(input: Readonly<GameState>, commands: readonly GameC
     command.type === "ALLOCATE_SCOUTING" || command.type === "SET_SCHEME"
     || command.type === "REPLACE_STAFF" || command.type === "SET_PRACTICE_REPS"
     || command.type === "SET_STAFF_ALLOCATION" || command.type === "SET_WEEK_HOURS"
-    || command.type === "SET_WEEK_FOCUS" || command.type === "SET_SCOUTING_TARGET");
+    || command.type === "SET_WEEK_FOCUS" || command.type === "SET_SCOUTING_TARGET"
+    || command.type === "CHOOSE_BOOSTER");
   if (preparationCommands.length > 0) {
     resolveCommands(state, preparationCommands, new AddressableRng(state.identity.rootSeed).fork("preparation", String(state.season), String(state.week)), events);
   }
@@ -1668,6 +1721,44 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       applyWeekFocus(state, program.id, events);
       // Hours moved, so the department's output moved with them.
       commitScoutingOutput(state, program.id);
+      continue;
+    }
+    if (command.type === "CHOOSE_BOOSTER") {
+      const boosters = state.boosters?.[program.id];
+      const offer = boosters?.offer;
+      if (!offer || offer.week !== state.week) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Nobody is on the table this week." });
+        continue;
+      }
+      if (offer.chosenOptionId !== null) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "You already took one of them this week." });
+        continue;
+      }
+      const option = offer.options.find((entry) => entry.id === command.optionId);
+      if (!option) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That offer is not on the table." });
+        continue;
+      }
+      const outcome = applyBooster(
+        state,
+        program.id,
+        option,
+        new AddressableRng(state.identity.rootSeed).fork("boosters", String(state.season), String(state.week))
+      );
+      offer.chosenOptionId = option.id;
+      offer.succeeded = outcome.succeeded;
+      events.push({
+        type: "BOOSTER_RESOLVED",
+        season: state.season,
+        week: state.week,
+        programId: program.id,
+        optionId: option.id,
+        kind: option.kind,
+        name: option.name,
+        succeeded: outcome.succeeded,
+        outcome: outcome.outcome,
+        playerIds: outcome.playerIds
+      });
       continue;
     }
     if (command.type === "SET_SCOUTING_TARGET") {
@@ -2662,7 +2753,8 @@ function teamSide(state: Readonly<GameState>, programId: string, opponentProgram
     execution: {
       offense: planExecution(state, programId, "OFFENSE"),
       defense: planExecution(state, programId, "DEFENSE")
-    }
+    },
+    takeawayMultiplier: takeawayMultiplier(state, programId)
   };
 }
 
@@ -3021,7 +3113,17 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
     // Price and marketing decide the gate. Advertising still buys followers on a
     // bye or on the road, but there is no ticket revenue without a home game.
     const playedAtHome = Boolean(homeGame && game?.played);
-    const gate = projectGate(program, opponent, capacity, marqueeGame);
+    // A local business that came through has already paid for this week's
+    // advertising, so the program gets the reach without the cost. Spent on the
+    // next home game and only there — advertising is inert on the road.
+    const boosterCredit = playedAtHome ? state.boosters?.[program.id]?.advertisingCredit ?? 0 : 0;
+    const gate = projectGate(
+      program, opponent, capacity, marqueeGame, undefined,
+      program.advertisingSpend + boosterCredit
+    );
+    if (boosterCredit > 0 && state.boosters?.[program.id]) {
+      state.boosters[program.id]!.advertisingCredit = 0;
+    }
     // Marketing sells tickets to a home game. On the road there is no gate to
     // fill, so the spend does not happen and is not charged.
     const advertisingFans = playedAtHome ? gate.advertisingFans : 0;

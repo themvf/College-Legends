@@ -1,6 +1,7 @@
 import type { DevelopmentFocus, GamePlan, GameState, GameCommand, Position, Prospect, WeekFocus } from "@college-legends/model";
 import {
   focusCapacity,
+  pendingBoosterOffer,
   programUnitRatings,
   projectedGamePlan,
   scoutingBoard,
@@ -65,6 +66,42 @@ function planFocus(state: Readonly<GameState>, programId: string): GameCommand[]
   return commands;
 }
 
+/**
+ * Rivals answer the same knock at the door. Without this the four offers are a
+ * standing buff only the human collects, and the league drifts apart by roughly
+ * a donation and a legend every three weeks.
+ *
+ * They take expected value — chance times what it is worth to *this* program —
+ * so a program with nothing in the bank chases the cheque and a good one with a
+ * game to win takes the defensive week.
+ */
+function planBooster(state: Readonly<GameState>, programId: string): GameCommand[] {
+  const offer = pendingBoosterOffer(state, programId);
+  if (!offer) return [];
+  const program = state.programs[programId];
+  if (!program) return [];
+  const playingThisWeek = state.schedule.some((game) =>
+    game.week === state.week && !game.played
+    && (game.homeProgramId === programId || game.awayProgramId === programId));
+  const atHome = state.schedule.some((game) =>
+    game.week === state.week && !game.played && game.homeProgramId === programId);
+
+  const worth = (option: (typeof offer.options)[number]): number => {
+    const odds = option.chance / 100;
+    if (option.kind === "DONOR") {
+      // A cheque matters most to a program that is short of money.
+      return odds * (60 + Math.max(0, 40 - program.budget / 500_000));
+    }
+    if (option.kind === "POSITION_LEGEND") return odds * 70;
+    if (option.kind === "LOCAL_BUSINESS") return atHome ? odds * 55 : 0;
+    return playingThisWeek ? odds * 62 : 0;
+  };
+
+  const best = [...offer.options]
+    .sort((left, right) => worth(right) - worth(left) || left.id.localeCompare(right.id))[0];
+  return best ? [{ type: "CHOOSE_BOOSTER", programId, optionId: best.id }] : [];
+}
+
 function upcomingOpponent(state: Readonly<GameState>, programId: string): string | null {
   const game = state.schedule.find((item) =>
     item.week === state.week && !item.played && (item.homeProgramId === programId || item.awayProgramId === programId)
@@ -81,6 +118,7 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
     const commands: GameCommand[] = [];
 
     commands.push(...planFocus(state, program.id));
+    commands.push(...planBooster(state, program.id));
 
     const desired = planGamePlan(state, program.id, upcomingOpponent(state, program.id));
     const current = state.gamePlans?.[program.id];

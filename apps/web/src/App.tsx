@@ -39,6 +39,8 @@ import {
   stadiumCapacity as capacityForLevel,
   weeklyDecisions,
   weeklyBriefing,
+  latestBoosterOffer,
+  BOOSTER_KIND_LABELS,
   weekPriorities,
   WEEK_FOCUS_LABELS,
   focusCapacity,
@@ -239,7 +241,8 @@ export function App(): ReactElement {
     // These settle now rather than on advance, so the screens and the dashboard
     // briefing reflect the decision the moment it is made.
     if (command.type === "ALLOCATE_SCOUTING" || command.type === "SET_PRACTICE_REPS"
-      || command.type === "SET_STAFF_ALLOCATION" || command.type === "SET_WEEK_HOURS") { prepare(command); return; }
+      || command.type === "SET_STAFF_ALLOCATION" || command.type === "SET_WEEK_HOURS"
+      || command.type === "CHOOSE_BOOSTER") { prepare(command); return; }
     const key = command.type === "REPLACE_STAFF" ? `replace:${command.staffId}`
       : command.type === "SET_TICKET_PRICE" ? "ticket-price"
       : command.type === "SET_ADVERTISING" ? "advertising"
@@ -287,9 +290,78 @@ export function App(): ReactElement {
     onTake={takeJob} onReroll={() => startGame(offers.careerPath, Math.floor(Math.random() * 100_000))}
     onBack={() => setOffers(undefined)} />;
   if (!game) return <NewGame busy={busy} onStart={(path) => startGame(path)} resumable={resumable} saved={saved} onResume={resume} onAbandon={abandon} />;
-  return <Dashboard game={game} screen={screen} busy={busy} error={error} pendingCommands={pendingCommands}
-    onNavigate={(next, tab) => { setWeekTab(tab); setScreen(next); }}
-    weekTab={weekTab} onQueue={queue} onBegin={begin} onAdvance={advance} />;
+  return <>
+    <Dashboard game={game} screen={screen} busy={busy} error={error} pendingCommands={pendingCommands}
+      onNavigate={(next, tab) => { setWeekTab(tab); setScreen(next); }}
+      weekTab={weekTab} onQueue={queue} onBegin={begin} onAdvance={advance} />
+    <BoosterPopup game={game} busy={busy} onChoose={(optionId) =>
+      prepare({ type: "CHOOSE_BOOSTER", programId: game.playerProgramId, optionId })} />
+  </>;
+}
+
+/**
+ * Somebody at the door, every third week.
+ *
+ * Deliberately a modal rather than another panel: this is the one thing in the
+ * game that happens *to* the program rather than being something the staff is
+ * spending, and it should interrupt. Four people, one yes, and it does not
+ * always come off — the odds are printed on every card before you pick, because
+ * a gamble with hidden odds is a slot machine.
+ */
+function BoosterPopup({ game, busy, onChoose }: {
+  game: GameView; busy: boolean; onChoose: (optionId: string) => void;
+}): ReactElement | null {
+  const programId = game.playerProgramId;
+  const offer = latestBoosterOffer(game.state, programId);
+  const [dismissed, setDismissed] = useState<string>();
+  const offerKey = offer ? `${offer.season}:${offer.week}` : "";
+  // A new offer re-opens the popup even if the last one was dismissed.
+  useEffect(() => { setDismissed(undefined); }, [offerKey]);
+  if (!offer || dismissed === offerKey) return null;
+
+  const resolved = offer.chosenOptionId !== null;
+  const chosen = resolved ? offer.options.find((option) => option.id === offer.chosenOptionId) : undefined;
+  const result = [...game.state.eventHistory].reverse()
+    .find((event): event is Extract<GameEvent, { type: "BOOSTER_RESOLVED" }> =>
+      event.type === "BOOSTER_RESOLVED" && event.programId === programId && event.optionId === offer.chosenOptionId);
+
+  return <div className="booster-backdrop" role="dialog" aria-modal="true" aria-label="Someone is at the door">
+    <div className="booster-modal">
+      {!resolved && <>
+        <p className="eyebrow">Week {offer.week} · someone's at the door</p>
+        <h2>Four people want to help. You can say yes to one.</h2>
+        <p className="muted">
+          The percentage is the chance it actually comes off. None of them are certain, and you only get one — pick
+          the one worth the risk this week.
+        </p>
+        <div className="booster-options">{offer.options.map((option) => {
+          const odds = option.chance;
+          return <button className="booster-option" key={option.id} disabled={busy} onClick={() => onChoose(option.id)}>
+            <span className="booster-kind">{BOOSTER_KIND_LABELS[option.kind]}</span>
+            <strong className="booster-name">{option.name}</strong>
+            <span className="booster-headline">{option.headline}</span>
+            <span className="booster-reward">{option.reward}</span>
+            <span className="booster-note">{option.note}</span>
+            <span className={odds >= 60 ? "booster-odds safe" : odds >= 40 ? "booster-odds" : "booster-odds long"}>
+              {odds}% chance
+            </span>
+          </button>;
+        })}</div>
+        <button className="booster-dismiss" disabled={busy} onClick={() => setDismissed(offerKey)}>
+          Turn them all away
+        </button>
+      </>}
+      {resolved && chosen && <div className={result?.succeeded ? "booster-result win" : "booster-result miss"}>
+        <p className="eyebrow">{BOOSTER_KIND_LABELS[chosen.kind]} · {chosen.name}</p>
+        <h2>{result?.succeeded ? "Success!" : "Try again next time!"}</h2>
+        <p className="muted">
+          {result?.succeeded ? result.outcome : `${chosen.name} could not make it work. Nothing changes this week.`}
+        </p>
+        {result?.succeeded && <p className="booster-reward">{chosen.reward}</p>}
+        <button className="booster-dismiss primary" onClick={() => setDismissed(offerKey)}>Close</button>
+      </div>}
+    </div>
+  </div>;
 }
 
 function commandKey(command: GameCommand): string {
