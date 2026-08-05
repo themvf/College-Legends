@@ -147,6 +147,13 @@ dd { margin:0; font-weight:700; text-align:right; }
 .pursuit-actions>span { margin-right:auto; }
 .pursuit-actions button { padding:.5rem .7rem; }
 .pursuit-actions>strong { color:#e0b057; font-size:.7rem; }
+.nil-offer { border-top:1px solid #294864; margin:0 1.15rem; padding:.75rem 0 1rem; display:flex; flex-direction:column; gap:.4rem; font-size:.74rem; }
+.nil-offer>span { color:#91a8b9; font-size:.66rem; text-transform:uppercase; letter-spacing:.05em; }
+.nil-offer-row { display:flex; align-items:center; gap:.7rem; }
+.nil-offer-row input[type="range"] { flex:1; }
+.nil-offer-row strong { min-width:6.5rem; text-align:right; }
+.nil-offer button { align-self:flex-start; padding:.45rem .7rem; }
+.nil-offer>strong { color:#e0b057; font-size:.7rem; }
 .error { background:#6b2530; padding:.75rem 1rem; border-radius:.5rem; }
 .position-grid,.facility-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
 .position-card { padding:0; overflow:hidden; }
@@ -496,9 +503,11 @@ dd { margin:0; font-weight:700; text-align:right; }
 .focus-card header { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; }
 .focus-card h3 { margin: 0 0 .2rem; font-size: 1rem; }
 .focus-card header .muted { margin: 0; font-size: .78rem; }
-.focus-card .stakes { flex: none; min-width: 2.4rem; text-align: center; padding: .2rem .4rem;
+.focus-card .stakes { flex: none; min-width: 3.2rem; text-align: center; padding: .2rem .4rem;
   border-radius: 6px; font-weight: 700; font-variant-numeric: tabular-nums; font-size: .9rem;
-  background: rgba(255,255,255,.07); color: #91a8b9; }
+  background: rgba(255,255,255,.07); color: #91a8b9; display: flex; flex-direction: column; line-height: 1.15; }
+.focus-card .stakes small { font-size: .56rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; opacity: .8; }
+.focus-card .stakes b { font-size: .85rem; }
 .focus-card .stakes.high { background: rgba(224,176,87,.18); color: #e0b057; }
 .focus-card .stakes.low { opacity: .6; }
 .focus-owner { margin: 0; font-size: .84rem; }

@@ -137,7 +137,7 @@ export function weeklyBriefing(
     items.push({
       id: `WEEK_FOCUS:${missed.focus}`,
       urgency: "WORTH_A_LOOK",
-      headline: `${missed.label} is worth more this week than what you're chasing`,
+      headline: `"${missed.label}" looks worth more this week than what you're chasing`,
       detail: `${missed.stakesNote} Left alone: ${missed.baseline}. Chased: ${missed.focused}.`,
       action: "Change the week",
       destination: "WEEK_PRACTICE"
@@ -188,14 +188,17 @@ export function weeklyBriefing(
     });
   }
 
-  // Recruiting points expire every week.
+  // A large idle recruiting balance. Points bank week to week — the old copy
+  // said they reset, which the recruiting screen visibly contradicted — but a
+  // pile nobody is spending still signs nobody, and the class closes at
+  // season's end.
   const recruitingPoints = state.recruiting[programId]?.points ?? 0;
   if (recruitingPoints >= 25) {
     items.push({
       id: "RECRUITING",
       urgency: "WORTH_A_LOOK",
-      headline: `${recruitingPoints} recruiting points are going to waste`,
-      detail: "They reset every week. Spend them finding players or chasing the ones you've found.",
+      headline: `${recruitingPoints} recruiting points are sitting unspent`,
+      detail: "They bank week to week, but the class signs during the season — points still idle at the end sign nobody. Spend them finding players or chasing the ones you've found.",
       action: "Work the phones",
       destination: "RECRUITING"
     });

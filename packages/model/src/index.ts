@@ -638,6 +638,23 @@ export interface RecruitingProgramState {
   scoutingByProspect: Record<ProspectId, ProspectScoutingState>;
 }
 
+/**
+ * NIL money per program. Offers are weekly dollars promised to an AVAILABLE
+ * prospect and reserve donor capacity while live; on commitment an offer
+ * converts to a commitment that charges every week the player is rostered.
+ * The ceiling — donor capacity — is derived from fans, support, prestige,
+ * titles, and donorCulture, never stored: money cannot raise it.
+ */
+export interface NilProgramState {
+  /** Weekly dollars offered, keyed by prospect. Cleared when the contest resolves. */
+  offersByProspect: Record<ProspectId, number>;
+  /**
+   * Weekly dollars committed. Keyed by prospect id from commitment until
+   * enrollment re-keys it to the player id; deleted when he leaves.
+   */
+  commitmentsByPlayer: Record<PlayerId, number>;
+}
+
 export interface DevelopmentSpotlight {
   focus: Exclude<DevelopmentFocus, "BALANCED">;
   target: DevelopmentSpotlightTarget;
@@ -789,6 +806,8 @@ export interface GameState {
   dossiers: Record<ProgramId, Record<ProgramId, number>>;
   /** Booster offers and anything a successful one left running. */
   boosters: Record<ProgramId, BoosterProgramState>;
+  /** NIL offers and commitments per program. The capacity ceiling is derived, never stored. */
+  nil: Record<ProgramId, NilProgramState>;
   staff: Record<string, StaffMember>;
   depthCharts: Record<ProgramId, DepthChart>;
   playerGameStats: PlayerGameStatLine[];
@@ -844,6 +863,13 @@ export type GameCommand =
   | { type: "SET_SCOUTING_TARGET"; programId: ProgramId; opponentProgramId: ProgramId | null }
   /** Takes one of the four people on the table this week. Resolves immediately. */
   | { type: "CHOOSE_BOOSTER"; programId: ProgramId; optionId: string }
+  /**
+   * A weekly NIL offer to an AVAILABLE prospect; 0 withdraws it. Requires at
+   * least one evaluation and a projected opening, reserves donor capacity while
+   * live, and resolves with everything else in the order-independent market —
+   * the amount is absolute, never "outbid by X", so command order cannot matter.
+   */
+  | { type: "SET_NIL_OFFER"; programId: ProgramId; prospectId: ProspectId; weeklyAmount: number }
   /** The program's scheme. A takeover and offseason decision, not a weekly one. */
   | { type: "SET_SCHEME"; programId: ProgramId; scheme: Partial<SchemeIdentity> }
   | { type: "ALLOCATE_SCOUTING"; programId: ProgramId; opponentProgramId: ProgramId; points: number }
@@ -991,6 +1017,23 @@ export type GameEvent =
     }
   | { type: "PROSPECT_ENROLLED"; season: Season; prospectId: ProspectId; playerId: PlayerId; programId: ProgramId }
   | {
+      type: "NIL_DEAL_SIGNED";
+      season: Season;
+      week: number;
+      prospectId: ProspectId;
+      programId: ProgramId;
+      weeklyAmount: number;
+      askingPrice: number;
+    }
+  | {
+      type: "NIL_COMMITMENT_ENDED";
+      season: Season;
+      playerId: PlayerId;
+      programId: ProgramId;
+      weeklyAmount: number;
+      reason: "GRADUATED" | "ELIGIBILITY_EXHAUSTED" | "TRANSFER_PORTAL";
+    }
+  | {
       type: "RECRUITING_POINTS_ADDED";
       season: Season;
       week: number;
@@ -1124,7 +1167,7 @@ export type GameEvent =
       defensiveExecution: number;
       notes: string[];
     }
-  | { type: "WEEKLY_FINANCES"; season: Season; week: number; programId: ProgramId; revenue: number; sponsorshipRevenue: number; expenses: number; net: number }
+  | { type: "WEEKLY_FINANCES"; season: Season; week: number; programId: ProgramId; revenue: number; sponsorshipRevenue: number; nilSpend: number; expenses: number; net: number }
   | {
       type: "WEEKLY_RECAP";
       season: Season;

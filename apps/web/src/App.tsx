@@ -14,6 +14,7 @@ import type {
   PlayerMediaAction,
   Position,
   ProgramId,
+  Prospect,
   RecruitingEvaluation,
   RecruitingSearchType,
   SeasonAwardType,
@@ -31,12 +32,9 @@ import {
   DEFENSIVE_IDENTITY_LABELS,
   OFFENSIVE_IDENTITY_LABELS,
   SCOUTING_TIERS,
-  DEFENSIVE_PRESETS,
-  OFFENSIVE_PRESETS,
   activeSponsorship,
   activeEmergencyQuarterback,
   developmentCandidates,
-  matchingPreset,
   projectGate,
   projectSponsorshipOffer,
   sponsorshipMarketValue,
@@ -51,6 +49,12 @@ import {
   activeFocuses,
   scoutingTargetFor,
   weeklyStories,
+  committedNilTotal,
+  freeNilCapacity,
+  nilAskingPriceRange,
+  reservedNilTotal,
+  weeklyDonorCapacity,
+  SPOTLIGHT_INTENSITY,
   seasonExpectation,
   startingLineup,
   attributesFor,
@@ -134,6 +138,10 @@ const spotlightFocuses: Exclude<DevelopmentFocus, "BALANCED">[] = ["TECHNIQUE", 
 const playerMediaActions: PlayerMediaAction[] = ["FOOTBALL_FOCUS", "MEDIA_DAY", "SOCIAL_MEDIA", "COMMUNITY_APPEARANCE"];
 const recruitingEvaluations: RecruitingEvaluation[] = ["BASIC", "ATHLETIC", "POSITION", "CHARACTER", "MEDICAL", "PROJECTION"];
 const facilities: FacilityType[] = ["TRAINING", "STADIUM", "ACADEMICS", "RECRUITING", "SCOUTING"];
+/** Player-facing facility names. "TRAI 4" on the job-selection cards was the game's own no-cryptic-columns rule broken on its most important screen. */
+const FACILITY_NAMES: Record<FacilityType, string> = {
+  TRAINING: "Weight room", STADIUM: "Stadium", ACADEMICS: "Academics", RECRUITING: "Recruiting", SCOUTING: "Scouting"
+};
 const starterCounts: Record<Player["position"], number> = { QB: 1, RB: 1, WR: 3, TE: 1, OL: 5, DL: 4, LB: 3, DB: 4, K: 1, P: 1 };
 const descriptions: Record<CareerPath, string> = {
   DYNASTY_BUILDER: "Take an overlooked program and build a dynasty. Average players, a small budget, low expectations, and the longest leash.",
@@ -196,7 +204,6 @@ export function App(): ReactElement {
         events: response.events
       }));
       if (response.type === "COMPLETE") {
-        setPendingCommands([]);
         const playedGame = response.events.some((gameEvent) =>
           gameEvent.type === "WEEKLY_RECAP"
           && gameEvent.programId === playerProgramIdRef.current
@@ -241,6 +248,7 @@ export function App(): ReactElement {
     if (!game) return;
     setScreen("DASHBOARD");
     send({ type: "BEGIN_SEASON", requestId: nextRequestId(), playerProgramId: game.playerProgramId, commands: pendingCommands });
+    setPendingCommands([]);
   };
   const prepare = (command: GameCommand): void => {
     if (!game) return;
@@ -290,6 +298,10 @@ export function App(): ReactElement {
   const advance = (): void => {
     if (!game) return;
     send({ type: "ADVANCE_WEEK", requestId: nextRequestId(), playerProgramId: game.playerProgramId, commands: pendingCommands });
+    // Clear at send time, not on COMPLETE. Clearing on completion silently
+    // wiped any decision the player queued while the week was simulating —
+    // a command the engine never saw and the screen said was queued.
+    setPendingCommands([]);
   };
 
   if (game && game.state.phase === "ROSTER_REVIEW" && !setupDone) {
@@ -441,9 +453,9 @@ function ChooseJob({ busy, careerPath, previews, onTake, onReroll, onBack }: {
           <div><dt>Best of them</dt><dd>{preview.bestCeiling}</dd></div>
         </dl>
         <div className="facility-strip">{facilityOrder.map((type) =>
-          <span className="facility-pip" key={type}>
-            <small>{type.slice(0, 4)}</small>
-            <b>{preview.facilities[type]}</b>
+          <span className="facility-pip" key={type} title={`${FACILITY_NAMES[type]}, level ${preview.facilities[type]} of 5`}>
+            <small>{FACILITY_NAMES[type]}</small>
+            <b>{preview.facilities[type]}/5</b>
           </span>)}
         </div>
         <ul className="plan-notes">{preview.notes.map((note) => <li key={note}>{note}</li>)}</ul>
@@ -730,7 +742,6 @@ function NewGame({ busy, onStart, resumable, saved, onResume, onAbandon }: {
         <dl>
           <div><dt>Opening budget</dt><dd>${(profile.budget / 1_000_000).toFixed(1)}M</dd></div>
           <div><dt>Opening roster</dt><dd>85 players</dd></div>
-          <div><dt>Job security</dt><dd>{profile.initialSecurity}/100</dd></div>
           <div><dt>Mandate</dt><dd>{profile.championshipDeadline ? `Win title in ${profile.championshipDeadline} years` : "Build at your pace"}</dd></div>
         </dl>
         <button disabled={busy} onClick={() => onStart(path)}>{busy ? "Creating program…" : `Start as ${profile.label}`}</button>
@@ -756,8 +767,12 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, wee
       <div><p className="eyebrow">{program.tier} TIER · {DIVISION_NAMES[program.divisionId]}</p><h1>{program.name}</h1><p>{program.city}, {program.stateCode} · Season {game.state.season} · {isReview ? "Opening roster review" : `Week ${game.state.week}`}</p></div>
       <div className="week-action">
         {isReview
-          ? <><span>{pendingCommands.length ? `${pendingCommands.length} preseason decision queued` : "Recruiting has not started"}</span><button disabled={busy} onClick={onBegin}>{busy ? "Starting…" : "Accept roster & begin season"}</button></>
-          : <><span>{pendingCommands.length} decision{pendingCommands.length === 1 ? "" : "s"} queued</span><button disabled={busy} onClick={onAdvance}>{busy ? "Simulating…" : "Advance week"}</button></>}
+          ? <><span>{pendingCommands.length
+            ? `${pendingCommands.length} preseason decision${pendingCommands.length === 1 ? "" : "s"} queued`
+            : marqueeGameOptions(game.state, program.id).length > 0
+              ? "A marquee-game offer is open on the Schedule tab — it expires when you accept"
+              : "Recruiting has not started"}</span><button disabled={busy} onClick={onBegin}>{busy ? "Starting…" : "Accept roster & begin season"}</button></>
+          : <><span>{pendingCommands.length > 0 ? `${pendingCommands.length} decision${pendingCommands.length === 1 ? "" : "s"} will apply on advance` : "Plays Saturday with the standing plan"}</span><button disabled={busy} onClick={onAdvance}>{busy ? "Simulating…" : "Advance week"}</button></>}
       </div>
     </header>
     {error && <p className="error">{error}</p>}
@@ -766,7 +781,10 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, wee
       <Metric label="National rank" value={`#${program.nationalRank}`} />
       <Metric label="Fans" value={compactNumber(program.fanBase)} />
       <Metric label="Budget" value={money(program.budget)} />
-      <Metric label="Job security" value={`${program.coachSecurity}/100`} />
+      {/* Job security is retired from the header until the firing loop exists —
+          the simulation never reads it, and a headline stat that nothing can
+          move is a promise the game does not keep. seasonExpectation's win
+          target carries the pressure honestly. */}
       <Metric label="National titles" value={`${program.championships}`} />
       <Metric label="Roster" value={`${roster.length}/${program.scholarshipLimit}`} />
     </section>
@@ -840,7 +858,6 @@ function ProgramDashboard({ game, roster, onNavigate }: {
     <article className="panel hero-panel command-hero">
       <p className="eyebrow">
         {game.state.phase === "ROSTER_REVIEW" ? "Before the season" : `Week ${game.state.week}`}
-        {expectation ? ` · Job security ${expectation.jobSecurity}/100` : ""}
       </p>
       <h2>{game.state.phase === "ROSTER_REVIEW"
         ? "Get the program ready"
@@ -848,7 +865,7 @@ function ProgramDashboard({ game, roster, onNavigate }: {
       {expectation && <p className="muted">{expectation.standing}</p>}
       {nextGame && <p className="muted">
         {file && file.tiers.length > 0
-          ? `You've got ${file.tiers.length === 3 ? "a complete file" : "a partial file"} on them — ${file.confidence}% reliable.`
+          ? `You've got ${file.tiers.length === 3 ? "a complete file" : "a partial file"} on them — what it reports is about ${file.confidence}% dependable.`
           : "You haven't scouted them at all."}
         {opponent ? ` They're #${opponent.nationalRank} at ${opponent.wins}–${opponent.losses}.` : ""}
       </p>}
@@ -952,7 +969,7 @@ function Roster({ game, roster }: { game: GameView; roster: Player[] }): ReactEl
       <div className="data-table roster-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>OVR</span><span>POT</span><span>Durability</span><span>Game risk</span><span>Health</span><span>Stardom</span><span>Fans</span><span>Year / status</span></div>
         {roster.map((player) => {
           const risk = playerInjuryRisk(game.state, player, 55);
-          return <div className="data-row" key={player.id}><strong data-label="Player">{player.name}</strong><span data-label="Position">{player.position}</span><span data-label="Overall">{Math.round(player.overall)}</span><span data-label="Potential">{Math.round(player.potential)}</span><span data-label="Durability">{Math.round(ratingByRole(player.position, player.ratings, "DURABILITY"))}</span><span data-label="Game risk">{risk.riskPercent}%<small>{risk.riskWithoutCoachPercent}% before coach · {Math.round(player.fatigue)}% fatigue</small></span><span className={currentInjury(player) ? "injured-status" : "healthy-status"} data-label="Health">{injuryStatus(player)}</span><span data-label="Stardom">{player.stardom}/100</span><span data-label="Personal fans">{compactNumber(player.personalFans)}</span><span data-label="Year / status">{eligibilityClass(player)}<small>{player.eligibility.redshirtStatus === "REDSHIRTING" ? "Redshirting" : `${player.eligibility.seasonsRemaining} seasons left`}</small></span></div>;
+          return <div className="data-row" key={player.id}><strong data-label="Player">{player.name}</strong><span data-label="Position">{player.position}</span><span data-label="Overall">{Math.round(player.overall)}</span><span data-label="Potential">{Math.round(player.potential)}</span><span data-label="Durability">{Math.round(ratingByRole(player.position, player.ratings, "DURABILITY"))}</span><span data-label="Game risk">{risk.riskPercent}%<small>{risk.riskWithoutCoachPercent}% before coach · {Math.round(player.fatigue)}% fatigue</small></span><span className={currentInjury(player) ? "injured-status" : "healthy-status"} data-label="Health">{injuryStatus(player)}</span><span data-label="Stardom">{player.stardom}/100</span><span data-label="Personal fans">{compactNumber(player.personalFans)}</span><span data-label="Year / status">{eligibilityClass(player)}<small>{player.eligibility.redshirtStatus === "REDSHIRTING" ? "Redshirting" : `${player.eligibility.seasonsRemaining} season${player.eligibility.seasonsRemaining === 1 ? "" : "s"} left`}</small></span></div>;
         })}
       </div>
     </article>
@@ -1100,7 +1117,10 @@ function Development({ state, roster, programId, pending, onQueue }: { state: Ga
   const selectedPlayers = roster.filter((player) =>
     selectedTarget.type === "PLAYER" ? player.id === selectedTarget.playerId : player.position === selectedTarget.position
   );
-  const intensity = selectedTarget.type === "PLAYER" ? 1 : 0.55;
+  // The engine's own constants, not a copy. This screen shipped for months
+  // reading 1 / 0.55 while the engine ran 1.6 / 0.28 — every projection on it
+  // was wrong, and the copy below quoted the stale number too.
+  const intensity = selectedTarget.type === "PLAYER" ? SPOTLIGHT_INTENSITY.PLAYER : SPOTLIGHT_INTENSITY.POSITION;
   const queueSpotlight = (value: string, focus: Exclude<DevelopmentFocus, "BALANCED">): void => {
     const [type, id] = value.split(":") as ["PLAYER" | "POSITION", string];
     onQueue({
@@ -1110,7 +1130,7 @@ function Development({ state, roster, programId, pending, onQueue }: { state: Ga
       target: type === "PLAYER" ? { type, playerId: id } : { type, position: id as Position }
     });
   };
-  return <section className="panel table-panel"><SectionHeading eyebrow="Player development" title="One weekly development spotlight" detail="Choose one player for full-intensity work or one position room for a 55%-intensity group session. Everyone else follows the balanced team plan automatically." />
+  return <section className="panel table-panel"><SectionHeading eyebrow="Player development" title="One weekly development spotlight" detail={`One player gets concentrated work at ${Math.round(SPOTLIGHT_INTENSITY.PLAYER * 100)}% of the normal rate, or a whole position room shares a session at ${Math.round(SPOTLIGHT_INTENSITY.POSITION * 100)}% each. Everyone else follows the balanced team plan automatically.`} />
     <div className="decision-legend">
       {developmentFocuses.map((focus) => {
         const sample = developmentPayoff(focus, "QB");
@@ -1123,7 +1143,7 @@ function Development({ state, roster, programId, pending, onQueue }: { state: Ga
         <optgroup label="Individual players">{[...roster].sort((left, right) => right.overall - left.overall).map((player) => <option key={player.id} value={`PLAYER:${player.id}`}>{player.name} · {player.position} · {Math.round(player.overall)} OVR</option>)}</optgroup>
       </select></label>
       <div><span>Training payoff</span><div className="spotlight-focuses">{spotlightFocuses.map((focus) => <button className={selectedFocus === focus && queued ? "selected" : ""} key={focus} onClick={() => queueSpotlight(targetValue, focus)}>{label(focus)}</button>)}</div></div>
-      <article><p className="eyebrow">{selectedTarget.type === "PLAYER" ? "Full intensity" : "Group intensity"}</p><h2>{Math.round(intensity * 100)}% payoff · {selectedPlayers.length} player{selectedPlayers.length === 1 ? "" : "s"}</h2><p className="muted">{queued ? "This is the program's only special development investment this week." : "Choose a payoff to queue this week's spotlight."}</p></article>
+      <article><p className="eyebrow">{selectedTarget.type === "PLAYER" ? "Concentrated work" : "Room session"}</p><h2>{Math.round(intensity * 100)}% of the normal rate · {selectedPlayers.length} player{selectedPlayers.length === 1 ? "" : "s"}</h2><p className="muted">{queued ? "This is the program's only special development investment this week." : "Choose a training focus to queue this week's spotlight."}</p></article>
     </div>
     <div className="data-table spotlight-table"><div className="data-row data-header"><span>Affected player</span><span>OVR/POT</span><span>Core ratings</span><span>Projected payoff</span></div>
       {selectedPlayers.map((player) => {
@@ -1131,7 +1151,7 @@ function Development({ state, roster, programId, pending, onQueue }: { state: Ga
         const injury = currentInjury(player);
         const risk = playerInjuryRisk(state, player, 55, selectedFocus);
         return <div className="data-row" key={player.id}><strong>{player.name}<small>{player.position} · {injury ? `${injury.name}, out ${injury.weeksRemaining} week${injury.weeksRemaining === 1 ? "" : "s"}` : `${Math.round(player.fatigue)}% fatigue`}</small></strong><span>{Math.round(player.overall)} / {Math.round(player.potential)}</span><span><small>{attributesFor(player.position).map((attribute) =>
-        `${attribute.label} ${Math.round(player.ratings[attribute.key] ?? 50)}`).join(" · ")}</small></span><span><b>{formatRatingChanges(payoff.ratingChanges)}</b><small>{signed(payoff.fatigueChange)} fatigue · ${risk.riskPercent}% projected game risk (${risk.riskWithoutCoachPercent}% before coach)</small></span></div>;
+        `${attribute.label} ${Math.round(player.ratings[attribute.key] ?? 50)}`).join(" · ")}</small></span><span><b>{formatRatingChanges(payoff.ratingChanges)}</b><small>{signed(payoff.fatigueChange)} fatigue · {risk.riskPercent}% projected game risk ({risk.riskWithoutCoachPercent}% before coach)</small></span></div>;
       })}
     </div>
   </section>;
@@ -1179,11 +1199,12 @@ function Schedule({ game, pending, onQueue }: { game: GameView; pending: GameCom
   return <section className="schedule-layout">
     {game.state.phase === "ROSTER_REVIEW" && <article className="panel marquee-planner"><p className="eyebrow">Preseason business decision</p><h2>Bring a Top-25 program to your stadium</h2>
       <p className="muted">Pay an appearance guarantee now to replace one cross-division opponent. An upset creates a major national story; a loss causes only a small recognition dip. The ranked visitor also lifts attendance, tickets, and concessions.</p>
+      <p className="muted"><strong>These offers expire the moment you accept the roster</strong> — this is the only window to buy one. The guarantee comes out of your {money(program.budget)} budget on the spot.</p>
       <div className="marquee-options">{options.slice(0, 8).map((option) => {
         const opponent = game.state.programs[option.opponentProgramId]!;
         const selected = queued?.opponentProgramId === opponent.id;
         return <button className={selected ? "selected" : ""} key={opponent.id} onClick={() => onQueue({ type: "SCHEDULE_MARQUEE_HOME_GAME", programId: program.id, opponentProgramId: opponent.id })}>
-          <span>#{option.rank} {opponent.abbreviation}</span><small>Week {option.week} · {money(option.guarantee)}</small>
+          <span>#{option.rank} {opponent.name}</span><small>Week {option.week} · {money(option.guarantee)} guarantee</small>
         </button>;
       })}</div>
       {!options.length && <p className="muted">No affordable compatible Top-25 date is available.</p>}
@@ -1566,12 +1587,16 @@ function Recruiting({ game, locked, incomingOpenings, pending, onQueue }: {
   return <section className="recruiting-layout">
     <article className="panel recruiting-command-center">
       <div><p className="eyebrow">Prospect Market</p><h2>{locked ? "Recruiting opens with the season" : `${pointsAvailable} Recruiting Points available`}</h2>
-        <p className="muted">Use one shared resource to discover talent, unlock information, and entice recruits. Investments persist; committed freshmen enroll next season.</p></div>
+        <p className="muted">Points bank from week to week and pay for searches, evaluations, and pursuit. NIL money is separate: weekly dollars from your donors, capped by how much they love this program — not by your budget.</p></div>
       <div className="recruiting-metrics">
-        <Metric label="Weekly production" value={`+${recruiting.weeklyPoints}`} />
+        <Metric label="Weekly production" value={`+${recruiting.weeklyPoints} points`} />
         <Metric label="Projected openings" value={String(incomingOpenings)} />
         <Metric label="Committed" value={String(commitments.length)} />
-        <Metric label="Board" value={String(prospects.length)} />
+        <Metric label="On your board" value={String(prospects.length)} />
+        <Metric label="Donor NIL ceiling" value={`${money(weeklyDonorCapacity(program))} a week`} />
+        <Metric label="Promised to signees" value={`${money(committedNilTotal(game.state, program.id))} a week`} />
+        <Metric label="Reserved by offers" value={`${money(reservedNilTotal(game.state, program.id))} a week`} />
+        <Metric label="Free to offer" value={`${money(Math.max(0, freeNilCapacity(game.state, program.id)))} a week`} />
       </div>
     </article>
 
@@ -1624,10 +1649,64 @@ function Recruiting({ game, locked, incomingOpenings, pending, onQueue }: {
               {complete ? `${label(evaluation)} ✓` : queued ? `${label(evaluation)} queued` : `${label(evaluation)} · ${cost}`}
             </button>;
           })}</div>
-          <div className="pursuit-actions"><span>{incomingOpenings > 0 ? "Entice him to join" : "Incoming class full"}</span>{[5, 10, 20].map((points) => <button disabled={incomingOpenings <= 0 || pointsAvailable < points} key={points} onClick={() => onQueue({ type: "INVEST_RECRUITING_POINTS", programId: program.id, prospectId: prospect!.id, points })}>+{points}</button>)}{queuedInvestment && <strong>+{queuedInvestment.points} queued</strong>}</div></>}
+          <div className="pursuit-actions"><span>{incomingOpenings > 0 ? "Entice him to join" : "Incoming class full"}</span>{[5, 10, 20].map((points) => <button disabled={incomingOpenings <= 0 || pointsAvailable < points} key={points} onClick={() => onQueue({ type: "INVEST_RECRUITING_POINTS", programId: program.id, prospectId: prospect!.id, points })}>+{points}</button>)}{queuedInvestment && <strong>+{queuedInvestment.points} queued</strong>}</div>
+          <NilOfferControl game={game} prospect={prospect!} pending={pending} onQueue={onQueue} disabled={incomingOpenings <= 0} /></>}
+          {committed && (game.state.nil?.[program.id]?.commitmentsByPlayer[prospect!.id] ?? 0) > 0 &&
+            <p className="muted">NIL deal: {money(game.state.nil![program.id]!.commitmentsByPlayer[prospect!.id]!)} a week, charged until he leaves the program.</p>}
         </article>;
       })}</div>}
   </section>;
+}
+
+/**
+ * The NIL offer on one recruit: a weekly dollar slider against the donor
+ * ceiling, with his asking price beside it. The percentage is explicitly the
+ * share of what money can buy with him — never his odds of committing, which
+ * depend on everything else on this card too.
+ */
+function NilOfferControl({ game, prospect, pending, onQueue, disabled }: {
+  game: GameView;
+  prospect: Prospect;
+  pending: GameCommand[];
+  onQueue: (command: GameCommand) => void;
+  disabled: boolean;
+}): ReactElement | null {
+  const program = game.state.programs[game.playerProgramId]!;
+  const scouting = game.state.recruiting[program.id]?.scoutingByProspect[prospect.id];
+  const evaluationCount = scouting?.evaluations.length ?? 0;
+  const currentOffer = game.state.nil?.[program.id]?.offersByProspect[prospect.id] ?? 0;
+  const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_NIL_OFFER" }> =>
+    command.type === "SET_NIL_OFFER" && command.prospectId === prospect.id);
+  const [amount, setAmount] = useState(queued?.weeklyAmount ?? currentOffer);
+  // Other cards' queued raises also reserve capacity before the engine sees them.
+  const queuedElsewhere = pending
+    .filter((command): command is Extract<GameCommand, { type: "SET_NIL_OFFER" }> =>
+      command.type === "SET_NIL_OFFER" && command.prospectId !== prospect.id)
+    .reduce((sum, command) => sum + Math.max(0, command.weeklyAmount - (game.state.nil?.[program.id]?.offersByProspect[command.prospectId] ?? 0)), 0);
+  const free = Math.max(0, freeNilCapacity(game.state, program.id) - queuedElsewhere);
+  const maximum = currentOffer + free;
+  if (evaluationCount === 0) {
+    return <div className="nil-offer"><span>NIL money</span><p className="muted">Evaluate him at least once to learn what he wants and put money on the table.</p></div>;
+  }
+  const ask = nilAskingPriceRange(prospect, evaluationCount, program);
+  const askMidpoint = (ask.low + ask.high) / 2;
+  const shareOfCeiling = amount > 0 ? Math.round((1 - Math.exp(-amount / Math.max(1, askMidpoint))) * 100) : 0;
+  return <div className="nil-offer">
+    <span>NIL money</span>
+    <p>Wants {ask.exact ? `${money(ask.low)} a week` : `${money(ask.low)}–${money(ask.high)} a week (scout him again for the exact figure)`}</p>
+    <div className="nil-offer-row">
+      <input type="range" min={0} max={Math.max(maximum, currentOffer)} step={50} value={Math.min(amount, Math.max(maximum, currentOffer))}
+        disabled={disabled || maximum <= 0} onChange={(event) => setAmount(Number(event.target.value))} />
+      <strong>{money(amount)} a week</strong>
+    </div>
+    <p className="muted">{amount > 0 ? `Buys ${shareOfCeiling}% of what money can get you with him — his priorities and your program still decide the rest.` : maximum <= 0 ? "Your donors are fully committed. Capacity comes from fans, support, prestige, and titles." : "Money helps most with recruits chasing stardom, least with ones choosing home or the classroom."}</p>
+    {amount !== (queued?.weeklyAmount ?? currentOffer) &&
+      <button disabled={disabled} onClick={() => onQueue({ type: "SET_NIL_OFFER", programId: program.id, prospectId: prospect.id, weeklyAmount: amount })}>
+        {amount === 0 ? "Withdraw the offer (he'll remember)" : `Offer ${money(amount)} a week`}
+      </button>}
+    {queued && <strong>{money(queued.weeklyAmount)} a week queued</strong>}
+    {!queued && currentOffer > 0 && amount === currentOffer && <strong>{money(currentOffer)} a week on the table</strong>}
+  </div>;
 }
 
 function Inbox({ game }: { game: GameView }): ReactElement {
@@ -1646,7 +1725,11 @@ const INBOX_NOISE: ReadonlySet<GameEvent["type"]> = new Set([
   "SPONSORSHIP_PAYMENT",
   "GAME_PLAN_SET", "SCHEME_SET", "DEVELOPMENT_SPOTLIGHT_SET", "PLAYER_MEDIA_ACTION_SET",
   "DEPTH_CHART_UPDATED", "WEEKLY_FINANCES", "PLAYER_BRAND_UPDATED", "GAME_PLAN_REPORT",
-  "WEEKLY_RECAP", "RANKINGS_UPDATED", "COMMAND_REJECTED"
+  "WEEKLY_RECAP", "RANKINGS_UPDATED", "COMMAND_REJECTED",
+  // Every program emits these weekly; the player's own payoff already has a
+  // home on the postgame screen. Left unfiltered they were twelve identical
+  // rows — the same defect the "Prep Points Added" purge fixed once before.
+  "WEEK_FOCUS_PAYOFF", "WEEK_FOCUS_SET", "SCOUTING_TARGET_SET", "SEASON_STATS_ARCHIVED"
 ] as GameEvent["type"][]);
 
 /**
@@ -1685,9 +1768,10 @@ function eventRelevantToProgram(event: GameEvent, game: GameView): boolean {
     return game.state.players[event.playerId]?.programId === programId;
   }
   if (event.type === "RECRUITING_CONTEST_RESOLVED") return event.offeredBy.includes(programId);
-  if (event.type === "PROSPECT_COMMITTED") {
+  if (event.type === "PROSPECT_COMMITTED" || event.type === "NIL_DEAL_SIGNED") {
     return event.programId === programId || game.state.recruiting[programId]?.discoveredProspectIds.includes(event.prospectId) === true;
   }
+  if (event.type === "NIL_COMMITMENT_ENDED") return event.programId === programId;
   if (event.type === "PROSPECTS_DISCOVERED" || event.type === "PROSPECT_EVALUATED" || event.type === "RECRUITING_INVESTMENT"
     || event.type === "RECRUITING_POINTS_ADDED" || event.type === "PROSPECT_ENROLLED"
     || event.type === "SPONSORSHIP_ACCEPTED" || event.type === "SPONSORSHIP_PAYMENT"
@@ -1731,7 +1815,13 @@ function eventText(event: GameEvent, game: GameView): string {
     const winner = event.playerId ? game.state.players[event.playerId]?.name : event.staffId ? game.state.staff[event.staffId]?.name : "Winner";
     return `${winner} won ${SEASON_AWARD_LABELS[event.awardType]} with a ${event.score.toFixed(1)} score · ${signedNumber(event.playerFanGain)} personal fans · ${signedNumber(event.programFanGain)} school fans.`;
   }
-  if (event.type === "WEEKLY_FINANCES") return `${money(event.revenue)} revenue, including ${money(event.sponsorshipRevenue)} from sponsorship · ${money(event.expenses)} expenses · ${event.net >= 0 ? "+" : ""}${money(event.net)} net`;
+  if (event.type === "WEEKLY_FINANCES") return `${money(event.revenue)} revenue, including ${money(event.sponsorshipRevenue)} from sponsorship · ${money(event.expenses)} expenses${event.nilSpend > 0 ? `, including ${money(event.nilSpend)} in NIL commitments` : ""} · ${event.net >= 0 ? "+" : ""}${money(event.net)} net`;
+  if (event.type === "NIL_DEAL_SIGNED") {
+    const prospect = game.state.prospects[event.prospectId];
+    const asked = event.weeklyAmount >= event.askingPrice ? "at" : "under";
+    return `${prospect?.name ?? "A recruit"} signed with ${game.state.programs[event.programId]?.name ?? "a program"} on a ${money(event.weeklyAmount)}-a-week NIL deal — ${asked} his ${money(event.askingPrice)} asking price.`;
+  }
+  if (event.type === "NIL_COMMITMENT_ENDED") return `${game.state.players[event.playerId]?.name ?? "A player"} left the program; his ${money(event.weeklyAmount)}-a-week NIL deal comes off the books.`;
   if (event.type === "SPONSORSHIP_ACCEPTED") return `${event.sponsorName} signed through the end of Season ${event.season} · ${money(event.weeklyPayment)} guaranteed every week.`;
   if (event.type === "SPONSORSHIP_PAYMENT") return `${event.sponsorName} paid ${money(event.basePayment)} guaranteed plus ${money(event.total - event.basePayment)} in bonuses · ${money(event.total)} total.`;
   if (event.type === "WEEKLY_RECAP") return `${event.result} · ${signedNumber(event.fanChange)} fans · ${signedNumber(event.localPressChange)} local press · ${signedNumber(event.nationalPressChange)} national press · ${signedMoney(event.weeklyNet)} net`;
@@ -1978,8 +2068,10 @@ function WeekPriorities({ game, pending, onQueue }: {
             <h3>{card.label}</h3>
             <p className="muted">{card.blurb}</p>
           </div>
-          <span className={card.stakes >= 60 ? "stakes high" : card.stakes >= 30 ? "stakes" : "stakes low"}>
-            {card.stakes}
+          <span className={card.stakes >= 60 ? "stakes high" : card.stakes >= 30 ? "stakes" : "stakes low"}
+            title="How much this is worth this week, 0–100, judged from the numbers on this card">
+            <small>matters</small>
+            <b>{card.stakes}/100</b>
           </span>
         </header>
         <p className="focus-owner">
@@ -2142,34 +2234,12 @@ function WeekDecisions({ game, pending, onQueue }: {
       </div>}
     </article>
 
-    <article className="panel">
-      <Header id="OFFENSE" title="4 · Offensive strategy" />
-      <h2>{matchingPreset(plan, OFFENSIVE_PRESETS)?.label ?? "Custom"}</h2>
-      <div className="plan-options">{OFFENSIVE_PRESETS.map((preset) =>
-        <button className={matchingPreset(plan, OFFENSIVE_PRESETS)?.id === preset.id ? "plan-option active" : "plan-option"}
-          key={preset.id}
-          onClick={() => onQueue({ type: "SET_GAME_PLAN", programId, plan: preset.plan })}>
-          <strong>{preset.label}</strong>
-          <span className="effect">{preset.effect}</span>
-          <span className="tradeoff">{preset.tradeoff}</span>
-        </button>)}
-      </div>
-    </article>
-
-    <article className="panel">
-      <Header id="DEFENSE" title="5 · Defensive strategy" />
-      <h2>{matchingPreset(plan, DEFENSIVE_PRESETS)?.label ?? "Custom"}</h2>
-      <div className="plan-options">{DEFENSIVE_PRESETS.map((preset) =>
-        <button className={matchingPreset(plan, DEFENSIVE_PRESETS)?.id === preset.id ? "plan-option active" : "plan-option"}
-          key={preset.id}
-          onClick={() => onQueue({ type: "SET_GAME_PLAN", programId, plan: preset.plan })}>
-          <strong>{preset.label}</strong>
-          <span className="effect">{preset.effect}</span>
-          <span className="tradeoff">{preset.tradeoff}</span>
-        </button>)}
-      </div>
-      <p className="muted">Fine-tune the individual calls on the Playbook tab.</p>
-    </article>
+    {/* The weekly offensive/defensive strategy presets used to live here. The
+        engine refuses SET_GAME_PLAN since the five-priorities rework — your
+        scheme is your game plan — so the pickers were dead controls that
+        queued commands the engine silently discarded. The preset data and the
+        emphasis matrix stay intact in the engine per the design note; only
+        the UI that could never do anything is gone. */}
   </div>;
 }
 
@@ -2237,7 +2307,7 @@ function WeekScouting({ game, pending, onQueue }: {
         return <div className={`dossier-row${dossier.week === game.state.week ? " now" : ""}${isTarget ? " targeted" : ""}`} key={dossier.opponentProgramId}>
           <div className="dossier-head">
             <p className="plan-label">
-              Week {dossier.week} · {opponent.abbreviation} · #{opponent.nationalRank} · {opponent.wins}–{opponent.losses}
+              Week {dossier.week} · {opponent.name} · #{opponent.nationalRank} · {opponent.wins}–{opponent.losses}
             </p>
             <span className={dossier.value >= 55 ? "dossier-value high" : "dossier-value"}>worth {dossier.value}</span>
           </div>
@@ -2249,13 +2319,13 @@ function WeekScouting({ game, pending, onQueue }: {
             )}
           </p>
           <p className="muted">
-            File: {dossier.points} point{dossier.points === 1 ? "" : "s"} · {dossier.confidence}% reliable ·
+            File: {dossier.points} point{dossier.points === 1 ? "" : "s"} · what it reports is about {dossier.confidence}% dependable ·
             {" "}{dossier.tiers.length > 0 ? dossier.tiers.map((tier) => SCOUTING_TIER_LABELS[tier]).join(", ") : "nothing readable yet"}
-            {nextTier ? ` · ${DOSSIER_THRESHOLDS[nextTier] - dossier.points} more opens ${SCOUTING_TIER_LABELS[nextTier].toLowerCase()}` : " · complete"}
+            {nextTier ? ` · ${DOSSIER_THRESHOLDS[nextTier] - dossier.points} more points open ${SCOUTING_TIER_LABELS[nextTier].toLowerCase()}` : " · complete"}
           </p>
           <button className={isTarget ? "focus-button picked" : "focus-button"}
             onClick={() => onQueue({ type: "SET_SCOUTING_TARGET", programId, opponentProgramId: dossier.opponentProgramId })}>
-            {isTarget ? "The film room is on this one" : `Put the film room on ${opponent.abbreviation}`}
+            {isTarget ? "The film room is on this one" : `Put the film room on ${opponent.name}`}
           </button>
         </div>;
       })}
@@ -2267,9 +2337,9 @@ function WeekScouting({ game, pending, onQueue }: {
       <h2>{game.state.programs[scouting.opponentProgramId]?.name}</h2>
       <p className="muted">
         {scouting.record} · #{scouting.nationalRank} · {scouting.reputation} — known without paying.
-        {" "}The file is {scouting.confidence}% reliable{scouting.filmGames === 0
-          ? " with no film on them yet."
-          : ` from ${scouting.filmGames} game${scouting.filmGames === 1 ? "" : "s"} of film.`}
+        {" "}What the file reports is about {scouting.confidence}% dependable{scouting.filmGames === 0
+          ? " — there is no film on them yet, so treat every number as a guess."
+          : `, read from ${scouting.filmGames} game${scouting.filmGames === 1 ? "" : "s"} of film — more film, sharper numbers.`}
       </p>
       {scouting.identity && <p className="scout-line">
         <span>Identity</span>
@@ -2394,8 +2464,7 @@ function WeekReport({ game }: { game: GameView }): ReactElement {
         <p><span>Recruiting</span><strong>+{payoff.recruitingPointsAdded} points on the trail</strong></p>
       </div>
       <p className="muted">
-        These are the numbers your week actually bought. A choice the game never mentions again is a choice that reads
-        as optional.
+        These are the numbers your week actually bought.
       </p>
     </article>}
     {!lastReport && <article className="panel">
@@ -2454,7 +2523,9 @@ function queuedRecruitingCost(command: GameCommand): number {
   return 0;
 }
 function formatRatingChanges(changes: Partial<Record<keyof Player["ratings"], number>>): string {
-  const names: Record<keyof Player["ratings"], string> = { technique: "TEC", strength: "STR", conditioning: "CON", injuryPrevention: "INJ", armStrength: "ARM" };
+  // Full words, not engine tokens — this string faces the player, and TEC/STR/CON
+  // was the last screen still speaking raw abbreviations.
+  const names: Record<keyof Player["ratings"], string> = { technique: "Technique", strength: "Strength", conditioning: "Conditioning", injuryPrevention: "Injury protection", armStrength: "Arm strength" };
   return (Object.entries(changes) as [keyof Player["ratings"], number][]).map(([rating, value]) => `${names[rating]} +${value}`).join(" · ");
 }
 function facilityBenefit(facility: FacilityType): string {

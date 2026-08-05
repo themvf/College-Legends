@@ -1,6 +1,9 @@
 import type { DevelopmentFocus, GamePlan, GameState, GameCommand, Position, Prospect, WeekFocus } from "@college-legends/model";
 import {
   focusCapacity,
+  freeNilCapacity,
+  nilAskingPrice,
+  nilState,
   pendingBoosterOffer,
   programUnitRatings,
   projectedGamePlan,
@@ -184,6 +187,26 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
       if (points >= cost) {
         commands.push({ type: "SEARCH_PROSPECTS", programId: program.id, searchType });
         points -= cost;
+      }
+    }
+
+    // NIL: rivals bid from the same donor ceiling the player has, priced off
+    // hype (the ask *is* hype — nobody reads the truth), spread across the
+    // openings they still have to fill. Offers only ever rise, so a rival never
+    // eats the withdrawal penalty. A system only the player pays for is a
+    // system the player should not pay for either.
+    let uncommittedCapacity = freeNilCapacity(state, program.id);
+    const openings = Math.max(1, projectedOpenings(state, program.id));
+    const nilOffers = nilState(state, program.id).offersByProspect;
+    for (const prospect of discovered.slice(0, 2)) {
+      const scouting = recruiting.scoutingByProspect[prospect.id]!;
+      if (scouting.evaluations.length === 0) continue;
+      const ask = nilAskingPrice(prospect, program);
+      const desired = Math.min(Math.round(uncommittedCapacity / openings / 50) * 50, ask);
+      const current = nilOffers[prospect.id] ?? 0;
+      if (desired >= ask * 0.3 && desired > current) {
+        commands.push({ type: "SET_NIL_OFFER", programId: program.id, prospectId: prospect.id, weeklyAmount: desired });
+        uncommittedCapacity -= desired - current;
       }
     }
 

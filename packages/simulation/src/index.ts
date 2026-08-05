@@ -36,6 +36,25 @@ import { activeSponsorship, advertisingReach, createSponsorshipProgramState, DEF
 import { MAXIMUM_REPS_PER_SIDE, planExecution, repsFatigue, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
 import { foldSeasonStats } from "./persistence.js";
 import { advertisingCredit, applyBooster, boosterDueThisWeek, buildBoosterOffer, takeawayMultiplier } from "./boosters.js";
+import { committedNilTotal, emptyNilState, freeNilCapacity, nilAskingPrice, nilScore, NIL_WITHDRAWAL_INTEREST_PENALTY } from "./nil.js";
+
+export {
+  committedNilTotal,
+  emptyNilState,
+  freeNilCapacity,
+  NIL_BASE_PRICE,
+  NIL_DOLLARS_PER_THOUSAND_FANS,
+  NIL_SCORE_CEILING,
+  NIL_TITLE_ANNUITY,
+  NIL_WITHDRAWAL_INTEREST_PENALTY,
+  nilAskingPrice,
+  nilAskingPriceRange,
+  nilPriorityWeight,
+  nilScore,
+  nilState,
+  reservedNilTotal,
+  weeklyDonorCapacity
+} from "./nil.js";
 
 export {
   advertisingCredit,
@@ -136,8 +155,6 @@ export {
   DEFENSIVE_SCHEMES,
   OFFENSIVE_SCHEME_BLURBS,
   OFFENSIVE_SCHEMES,
-  OFFENSIVE_PERSONNEL,
-  DEFENSIVE_PERSONNEL,
   personnelSummary,
   programRoster,
   rosterSchemeFit,
@@ -800,7 +817,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
     // content carried one set of development rates and every league ever created
     // carried another, so tuning the balance file changed nothing at all.
     identity: { rootSeed, balanceConfiguration: clone(DEFAULT_BALANCE), simulationVersion: "0.1.0" },
-    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, sponsorships: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, weekFocus: {}, scoutingTarget: {}, dossiers: {}, boosters: {}, staff: {}, depthCharts: {}, playerGameStats: [], playerSeasonStats: [], schedule: [], seasonHistory: [], eventHistory: []
+    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, sponsorships: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, weekFocus: {}, scoutingTarget: {}, dossiers: {}, boosters: {}, nil: {}, staff: {}, depthCharts: {}, playerGameStats: [], playerSeasonStats: [], schedule: [], seasonHistory: [], eventHistory: []
   };
   const rosterPositions = Object.entries(ROSTER_COMPOSITION).flatMap(([position, count]) =>
     Array.from({ length: count }, () => position as Position)
@@ -1289,6 +1306,7 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   state.developmentSpotlights ??= {};
   state.gamePlans ??= {};
   state.preparation ??= {};
+  state.nil ??= {};
   normalizePlayerHealthState(state);
   ensureSponsorshipOffers(state);
   const events: GameEvent[] = [];
@@ -1722,6 +1740,45 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         pointsSpent: points,
         totalInvestment: scouting.pursuitPoints
       });
+      continue;
+    }
+    if (command.type === "SET_NIL_OFFER") {
+      const prospect = state.prospects[command.prospectId];
+      const scouting = state.recruiting[program.id]?.scoutingByProspect[command.prospectId];
+      const amount = Math.max(0, Math.round(command.weeklyAmount));
+      if (!prospect || prospect.status !== "AVAILABLE" || !scouting) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Prospect is unavailable." });
+        continue;
+      }
+      // You cannot bid on a name you have never looked at.
+      if (amount > 0 && scouting.evaluations.length === 0) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Evaluate him at least once before putting money on the table." });
+        continue;
+      }
+      if (amount > 0 && projectedRecruitingOpenings(state, program.id) <= 0) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The projected incoming class is full." });
+        continue;
+      }
+      state.nil ??= {};
+      state.nil[program.id] ??= emptyNilState();
+      const nil = state.nil[program.id]!;
+      const current = nil.offersByProspect[command.prospectId] ?? 0;
+      // Raising is free; capacity is checked on the *increase* only, since the
+      // current offer already holds its reservation.
+      if (amount > current && amount - current > freeNilCapacity(state, program.id)) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Your donors cannot cover that offer. Capacity comes from fans, support, prestige, and titles — not the budget." });
+        continue;
+      }
+      // Pulling money back is remembered. A flat, deterministic interest cost —
+      // no roll — so lowering to a token amount is not a free withdrawal.
+      if (amount < current) {
+        prospect.interestByProgram[program.id] = Math.max(
+          0,
+          Number(((prospect.interestByProgram[program.id] ?? 0) - NIL_WITHDRAWAL_INTEREST_PENALTY).toFixed(3))
+        );
+      }
+      if (amount === 0) delete nil.offersByProspect[command.prospectId];
+      else nil.offersByProspect[command.prospectId] = amount;
       continue;
     }
     if (command.type === "SET_SCHEME") {
@@ -2238,7 +2295,8 @@ function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: 
     .filter((prospect) => prospect.status === "AVAILABLE")
     .map((prospect) => {
       const offeredBy = Object.keys(state.programs).filter((programId) =>
-        (state.recruiting[programId]?.scoutingByProspect[prospect.id]?.pursuitPoints ?? 0) > 0
+        ((state.recruiting[programId]?.scoutingByProspect[prospect.id]?.pursuitPoints ?? 0) > 0
+          || (state.nil?.[programId]?.offersByProspect[prospect.id] ?? 0) > 0)
         && projectedRecruitingOpenings(state, programId) > 0
       ).sort();
       const scores = Object.fromEntries(offeredBy.map((programId) => [programId, recruitingScore(state, prospect, programId, rng)]));
@@ -2259,6 +2317,27 @@ function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: 
     if (score < commitmentThreshold || score - (runnerUpScore ?? 0) < requiredLead) continue;
     contest.prospect.status = "COMMITTED";
     contest.prospect.signedProgramId = winnerProgramId;
+    // The winner's offer converts to a commitment and starts charging this
+    // week — settled decision: the drain begins at commitment, not enrollment.
+    // Keyed by prospect id until enrollment re-keys it to the player id.
+    // Every loser's offer dies with the contest, releasing its reservation.
+    const winningOffer = state.nil?.[winnerProgramId]?.offersByProspect[contest.prospect.id] ?? 0;
+    if (winningOffer > 0) {
+      const winnerNil = state.nil![winnerProgramId]!;
+      winnerNil.commitmentsByPlayer[contest.prospect.id] = winningOffer;
+      events.push({
+        type: "NIL_DEAL_SIGNED",
+        season: state.season,
+        week: state.week,
+        prospectId: contest.prospect.id,
+        programId: winnerProgramId,
+        weeklyAmount: winningOffer,
+        askingPrice: nilAskingPrice(contest.prospect, state.programs[winnerProgramId])
+      });
+    }
+    for (const programNil of Object.values(state.nil ?? {})) {
+      delete programNil.offersByProspect[contest.prospect.id];
+    }
     events.push({
       type: "RECRUITING_CONTEST_RESOLVED",
       season: state.season,
@@ -2288,6 +2367,11 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
   const staffBonus = staffContribution(state, programId, "RECRUIT") / 25;
   const exposureBonus = program.localPress / 50 + program.nationalPress / 20;
   const appealBonus = program.recruitAppeal + (prospect.homeDivisionId === program.divisionId ? program.homeRegionBias / 8 : 0);
+  // Money is a tiebreaker by design: nilScore saturates at NIL_SCORE_CEILING,
+  // under the fit and interest terms, so an offer decides close contests and
+  // never overcomes a prospect who does not want the program.
+  const nilOffer = state.nil?.[programId]?.offersByProspect[prospect.id] ?? 0;
+  const nilBonus = nilScore(nilOffer, nilAskingPrice(prospect, program), prospect);
   return Number((
     prospect.interestByProgram[programId]! * 0.3
     + prospectProgramFit(state, prospect, programId) * 0.35
@@ -2296,6 +2380,7 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
     + staffBonus
     + exposureBonus
     + appealBonus
+    + nilBonus
     + rng.between(`${prospect.id}:${programId}:decision-noise`, -2, 2)
   ).toFixed(3));
 }
@@ -3594,7 +3679,11 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
     }
     const revenue = program.weeklyRevenue + ticketRevenue + concessionRevenue + sponsorPayment.total;
     const staffPayroll = Object.values(state.staff).filter((staff) => staff.programId === program.id).reduce((sum, staff) => sum + staff.salary / 52, 0);
-    const expenses = Math.round(program.weeklyExpenses + staffPayroll + (playedAtHome ? program.advertisingSpend : 0));
+    // NIL commitments charge every week from the moment a recruit commits.
+    // They ride the finance line rather than emitting their own weekly event —
+    // the inbox lesson about the simulation talking to itself.
+    const nilSpend = committedNilTotal(state, program.id);
+    const expenses = Math.round(program.weeklyExpenses + staffPayroll + nilSpend + (playedAtHome ? program.advertisingSpend : 0));
     const net = Math.round(revenue - expenses);
     program.budget += net;
     events.push({
@@ -3604,6 +3693,7 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
       programId: program.id,
       revenue: Math.round(revenue),
       sponsorshipRevenue: sponsorPayment.total,
+      nilSpend,
       expenses,
       net
     });
@@ -4027,6 +4117,22 @@ function updateNationalRankings(state: GameState): void {
   ranked.forEach((program, index) => { program.nationalRank = index + 1; });
 }
 
+/** Deletes a departing player's NIL commitment and reports where the money went. */
+function endNilCommitment(
+  state: GameState,
+  programId: string | null,
+  playerId: string,
+  reason: "GRADUATED" | "ELIGIBILITY_EXHAUSTED" | "TRANSFER_PORTAL",
+  events: GameEvent[]
+): void {
+  if (!programId) return;
+  const nil = state.nil?.[programId];
+  const weeklyAmount = nil?.commitmentsByPlayer[playerId];
+  if (!nil || weeklyAmount === undefined) return;
+  delete nil.commitmentsByPlayer[playerId];
+  events.push({ type: "NIL_COMMITMENT_ENDED", season: state.season, playerId, programId, weeklyAmount, reason });
+}
+
 function rolloverSeason(state: GameState, events: GameEvent[]): void {
   finalizeSeason(state, events);
   // Fold the season that just finished. Per-game rows are the growth term in
@@ -4070,6 +4176,7 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
     if (player.eligibility.seasonsRemaining <= 0) {
       player.eligibility.rosterStatus = "GRADUATED";
       events.push({ type: "PLAYER_DEPARTED", season: state.season, playerId: player.id, reason: "ELIGIBILITY_EXHAUSTED" });
+      endNilCommitment(state, player.programId, player.id, "ELIGIBILITY_EXHAUSTED", events);
       continue;
     }
     const program = state.programs[player.programId]!;
@@ -4079,6 +4186,7 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
     if (portalRng.at(`${player.id}:transfer`) < transferRisk) {
       player.eligibility.rosterStatus = "PORTAL";
       events.push({ type: "PLAYER_DEPARTED", season: state.season, playerId: player.id, reason: "TRANSFER_PORTAL" });
+      endNilCommitment(state, player.programId, player.id, "TRANSFER_PORTAL", events);
     }
   }
   for (const program of Object.values(state.programs)) {
@@ -4097,12 +4205,29 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
       const playerId = `player:${prospect.id}`;
       state.players[playerId] = prospectToPlayer(prospect, playerId, program.id, state.season + 1);
       prospect.status = "ENROLLED";
+      // The NIL deal followed him to campus: re-key from prospect to player.
+      const nil = state.nil?.[program.id];
+      const committedNil = nil?.commitmentsByPlayer[prospect.id];
+      if (nil && committedNil !== undefined) {
+        delete nil.commitmentsByPlayer[prospect.id];
+        nil.commitmentsByPlayer[playerId] = committedNil;
+      }
       events.push({ type: "PROSPECT_ENROLLED", season: state.season + 1, prospectId: prospect.id, playerId, programId: program.id });
     }
     repairDepthChart(state, program.id);
   }
   for (const prospect of Object.values(state.prospects)) {
     if (prospect.status === "AVAILABLE") prospect.status = "WITHDRAWN";
+  }
+  // The class is settled. Offers on prospects nobody signed die with the board,
+  // and a commitment to a recruit who never made it to campus (class full) is
+  // void — the money only ever follows a man who actually enrolls.
+  for (const nil of Object.values(state.nil ?? {})) {
+    nil.offersByProspect = {};
+    for (const id of Object.keys(nil.commitmentsByPlayer)) {
+      const prospect = state.prospects[id];
+      if (prospect && prospect.status !== "ENROLLED") delete nil.commitmentsByPlayer[id];
+    }
   }
   state.season += 1; state.week = 1;
   for (const program of Object.values(state.programs)) { program.wins = 0; program.losses = 0; }

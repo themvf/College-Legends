@@ -459,8 +459,8 @@ export function weekPriorities(state: Readonly<GameState>, programId: string): W
       ownerName: executionOn.installerName,
       ownerRole: owner?.role ?? null,
       ownerNote: owner ? `coaches ${units.replace(/_/g, " ").toLowerCase()}` : "no coordinator in the chair",
-      baseline: `${Math.round(executionOff.expected * 100)}% of it holds up (${reps(off)} reps)`,
-      focused: `${Math.round(executionOn.expected * 100)}% of it holds up (${reps(on)} reps)`,
+      baseline: `${Math.round(executionOff.expected * 100)}% of it holds up (${reps(off)} rep${reps(off) === 1 ? "" : "s"})`,
+      focused: `${Math.round(executionOn.expected * 100)}% of it holds up (${reps(on)} rep${reps(on) === 1 ? "" : "s"})`,
       chosen: chosenSet.has(focus),
       stakes,
       stakesNote: !playingThisWeek
@@ -532,8 +532,13 @@ export function weekPriorities(state: Readonly<GameState>, programId: string): W
       ownerName: developOwner?.name ?? "Nobody",
       ownerRole: developOwner?.role ?? null,
       ownerNote: developOwner ? "takes the extra work" : "nobody has time for extra work",
-      baseline: growthNote(state, programId, developOff),
-      focused: growthNote(state, programId, developOn),
+      // Two different beneficiaries, named separately: the spotlight goes to
+      // one man, the coaching term lifts the whole roster. The old copy said
+      // "for everybody" on a card titled with one player's name.
+      baseline: `${growthNote(state, programId, developOff)} · no spotlight on anybody`,
+      focused: prospect
+        ? `${prospect.name} gets the full spotlight · ${growthNote(state, programId, developOn)}`
+        : growthNote(state, programId, developOn),
       chosen: chosenSet.has("DEVELOP"),
       stakes: Math.round(clamp(
         (prospect ? (prospect.potential - prospect.overall) * 2.1 : 0) + (15 - state.week) * 1.6,
@@ -578,7 +583,7 @@ function growthNote(state: Readonly<GameState>, programId: string, plan: WeekHou
     return total + focusWeight(member, "DEVELOP") * clamp((plan.byStaff[member.id]?.DEVELOP ?? 0) / Math.max(1, capacity), 0, 1);
   }, 0);
   const percent = contribution / 1.5;
-  return percent < 0.5 ? "no extra coaching" : `+${percent.toFixed(0)}% faster growth for everybody`;
+  return percent < 0.5 ? "no extra coaching" : `the whole roster grows +${percent.toFixed(0)}% faster`;
 }
 
 /** Recruiting points the week's hours would put on the board. */

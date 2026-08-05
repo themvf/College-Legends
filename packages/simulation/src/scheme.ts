@@ -9,6 +9,7 @@ import type {
   StaffMember,
   StaffRole
 } from "@college-legends/model";
+import { DEFENSIVE_SPOTS, OFFENSIVE_SPOTS } from "./rotation.js";
 
 const clamp = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value));
 
@@ -48,35 +49,22 @@ export const DEFENSIVE_SCHEME_BLURBS: Readonly<Record<DefensiveIdentity, string>
 };
 
 /**
- * The players a scheme actually puts into the Saturday rotation. The offense
- * deliberately totals twelve because the engine tracks a second back or
- * receiver as a rotating contributor; the defense fields the usual eleven.
+ * The players a scheme actually puts on the field — read from the rotation
+ * model, which is what the engine plays with on Saturday.
  *
- * This is the first, most legible part of scheme fit: an Air Raid asks for WR4
- * and a nickel defense asks for DB5 before any explicit fit formula is applied.
+ * This used to be a second, older table that predated the eleven-man rotation
+ * work and disagreed with it: the scheme-selection screen sold Spread tempo as
+ * a four-receiver offense while the drive loop and the depth chart fielded
+ * three. A player was promised one offense and given another. One source of
+ * truth now; `OFFENSIVE_SPOTS` in rotation.ts is it.
  */
-export const OFFENSIVE_PERSONNEL: Readonly<Record<OffensiveIdentity, Readonly<Partial<Record<Position, number>>>>> = {
-  POWER_RUN: { QB: 1, RB: 2, WR: 2, TE: 2, OL: 5 },
-  TRIPLE_OPTION: { QB: 1, RB: 3, WR: 2, TE: 1, OL: 5 },
-  PRO_BALANCED: { QB: 1, RB: 2, WR: 3, TE: 1, OL: 5 },
-  SPREAD_TEMPO: { QB: 1, RB: 1, WR: 4, TE: 1, OL: 5 },
-  AIR_RAID: { QB: 1, RB: 1, WR: 4, TE: 1, OL: 5 }
-};
-
-export const DEFENSIVE_PERSONNEL: Readonly<Record<DefensiveIdentity, Readonly<Partial<Record<Position, number>>>>> = {
-  BEND_DONT_BREAK: { DL: 3, LB: 3, DB: 5 },
-  FOUR_THREE_BASE: { DL: 4, LB: 3, DB: 4 },
-  ZONE_BLITZ: { DL: 3, LB: 4, DB: 4 },
-  NICKEL_PRESSURE: { DL: 4, LB: 2, DB: 5 }
-};
-
 export function schemePersonnel(
   side: "OFFENSE" | "DEFENSE",
   scheme: OffensiveIdentity | DefensiveIdentity
 ): Readonly<Partial<Record<Position, number>>> {
   return side === "OFFENSE"
-    ? OFFENSIVE_PERSONNEL[scheme as OffensiveIdentity]
-    : DEFENSIVE_PERSONNEL[scheme as DefensiveIdentity];
+    ? OFFENSIVE_SPOTS[scheme as OffensiveIdentity]
+    : DEFENSIVE_SPOTS[scheme as DefensiveIdentity];
 }
 
 export function personnelSummary(
