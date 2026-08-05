@@ -4,6 +4,41 @@ body { margin:0; min-width:320px; background:radial-gradient(circle at top right
 button { cursor:pointer; border:0; border-radius:.55rem; padding:.75rem 1rem; background:#e0b057; color:#172638; font:inherit; font-weight:800; }
 button:disabled { cursor:not-allowed; opacity:.55; }
 select { width:100%; min-height:2.35rem; border:1px solid #3a5b76; border-radius:.45rem; background:#071b31; color:#eaf2f8; padding:.4rem .55rem; font:inherit; }
+
+/* Every slider in the game — ticket price, marketing spend, NIL offers — was
+   the bare browser default: a hairline track and a thumb built for a mouse
+   cursor, easy to miss with a fingertip. The input's own box is taller than
+   the visible track so the tap target is generous even where the drawn
+   track stays thin; a size bump under 560px pushes the actual thumb toward
+   a real touch target. Per-context rules below (width, margin, flex) still
+   apply on top of this — only sizing and appearance live here. */
+input[type="range"] {
+  -webkit-appearance:none; appearance:none;
+  width:100%; height:2rem; margin:0; padding:0;
+  background:transparent; cursor:pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track { height:8px; border-radius:999px; background:#294864; }
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance:none; appearance:none;
+  width:26px; height:26px; margin-top:-9px; border-radius:50%;
+  background:#e0b057; border:3px solid #172638; box-shadow:0 1px 3px rgba(3,12,24,.5);
+}
+input[type="range"]::-moz-range-track { height:8px; border-radius:999px; background:#294864; }
+input[type="range"]::-moz-range-thumb {
+  width:26px; height:26px; border-radius:50%;
+  background:#e0b057; border:3px solid #172638; box-shadow:0 1px 3px rgba(3,12,24,.5);
+}
+input[type="range"]:disabled { cursor:not-allowed; opacity:.5; }
+input[type="range"]:disabled::-webkit-slider-thumb { background:#5b6f80; }
+input[type="range"]:disabled::-moz-range-thumb { background:#5b6f80; }
+input[type="range"]:focus-visible { outline:2px solid #e0b057; outline-offset:3px; border-radius:999px; }
+@media (max-width:560px) {
+  input[type="range"] { height:2.75rem; }
+  input[type="range"]::-webkit-slider-runnable-track { height:10px; }
+  input[type="range"]::-webkit-slider-thumb { width:32px; height:32px; margin-top:-11px; }
+  input[type="range"]::-moz-range-track { height:10px; }
+  input[type="range"]::-moz-range-thumb { width:32px; height:32px; }
+}
 h1,h2,p { margin-top:0; }
 h1 { letter-spacing:-.04em; font-size:clamp(2.4rem,6vw,5rem); margin-bottom:.45rem; }
 h2 { font-size:1.25rem; margin-bottom:.4rem; }
@@ -25,13 +60,36 @@ dd { margin:0; font-weight:700; text-align:right; }
 .dashboard-header p:not(.eyebrow) { color:#afc0cd; margin-bottom:0; }
 .week-action { text-align:right; display:grid; gap:.5rem; }
 .week-action span { font-size:.82rem; color:#b9c7d2; }
-.metrics { display:grid; grid-template-columns:repeat(7,1fr); gap:.8rem; margin-bottom:1rem; }
+.metrics { display:grid; grid-template-columns:repeat(6,1fr); gap:.8rem; margin-bottom:1rem; }
 .metrics article { padding:1rem; }
 .metrics p { color:#a9bac9; margin-bottom:.35rem; font-size:.8rem; }
 .metrics strong { font-size:1.35rem; }
-.game-nav { display:flex; gap:.5rem; overflow-x:auto; padding:.15rem 0 1rem; scrollbar-width:thin; }
+
+/* Five primary tabs, always visible, plus a "More" trigger for the rest — a
+   fifteen-item strip was more than a player could hold in their head at a
+   glance. .nav-row keeps the trigger and its menu outside the scrolling
+   .game-nav container, since an absolutely positioned menu inside an
+   overflow:auto ancestor gets clipped by that ancestor's scrollport. */
+.nav-row { display:flex; align-items:flex-start; gap:.5rem; padding-bottom:1rem; }
+.game-nav { display:flex; gap:.5rem; overflow-x:auto; flex:1 1 auto; min-width:0; padding:.15rem 0; scrollbar-width:thin; }
 .game-nav button { flex:0 0 auto; background:#102f4d; color:#b8c9d7; border:1px solid #315270; }
 .game-nav button.active { background:#e0b057; color:#172638; border-color:#e0b057; }
+.nav-more { position:relative; flex:0 0 auto; }
+.nav-more-toggle { background:#102f4d; color:#b8c9d7; border:1px solid #315270; white-space:nowrap; display:inline-flex; align-items:center; gap:.35rem; }
+.nav-more-toggle.active { background:#e0b057; color:#172638; border-color:#e0b057; }
+.nav-more-toggle span { font-size:.7rem; }
+.nav-more-menu {
+  position:absolute; top:calc(100% + .4rem); right:0; z-index:20;
+  display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.4rem;
+  width:max(19rem,min(90vw,22rem)); padding:.6rem;
+  background:#0f2d48; border:1px solid #315270; border-radius:.7rem;
+  box-shadow:0 12px 32px rgba(3,12,24,.45);
+}
+.nav-more-menu button { background:#102f4d; color:#b8c9d7; border:1px solid #294864; padding:.6rem .7rem; font-size:.82rem; text-align:left; }
+.nav-more-menu button.active { background:#e0b057; color:#172638; border-color:#e0b057; }
+@media (max-width:560px) {
+  .nav-more-menu { grid-template-columns:1fr; width:min(88vw,20rem); }
+}
 .overview-grid,.dashboard-grid,.finance-layout { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
 .dashboard-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
 .hero-panel,.span-two { grid-column:1/-1; }

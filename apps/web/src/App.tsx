@@ -133,6 +133,15 @@ const weekTabs: { id: WeekTab; label: string; detail: string }[] = [
 const careerOrder: CareerPath[] = ["DYNASTY_BUILDER", "PROGRAM_RISER", "CHAMPIONSHIP_MANDATE"];
 const positionOrder: Player["position"][] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
 const screens: Screen[] = ["DASHBOARD", "THIS_WEEK", "WEEKLY_RECAPS", "ROSTER", "DEPTH_CHART", "PLAYER_STATS", "HONORS", "DEVELOPMENT", "PLAYER_MEDIA", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
+/**
+ * Fifteen buttons in one strip was more than a player could hold in their
+ * head at a glance — the same complaint the dashboard rewrite made about the
+ * old status panels, just moved into the nav bar. These five are the screens
+ * that ask for a decision most weeks; everything else is read-only or
+ * occasional and lives behind "More" instead of competing for the same row.
+ */
+const PRIMARY_SCREENS: Screen[] = ["DASHBOARD", "THIS_WEEK", "ROSTER", "DEPTH_CHART", "RECRUITING"];
+const OVERFLOW_SCREENS: Screen[] = screens.filter((item) => !PRIMARY_SCREENS.includes(item));
 const developmentFocuses: DevelopmentFocus[] = ["BALANCED", "TECHNIQUE", "STRENGTH", "CONDITIONING"];
 const spotlightFocuses: Exclude<DevelopmentFocus, "BALANCED">[] = ["TECHNIQUE", "STRENGTH", "CONDITIONING"];
 const playerMediaActions: PlayerMediaAction[] = ["FOOTBALL_FOCUS", "MEDIA_DAY", "SOCIAL_MEDIA", "COMMUNITY_APPEARANCE"];
@@ -750,6 +759,60 @@ function NewGame({ busy, onStart, resumable, saved, onResume, onAbandon }: {
   </main>;
 }
 
+/**
+ * Five primary tabs plus a "More" menu for the rest. Opening a full section
+ * pushed the page content down rather than floating a dropdown that could
+ * clip against the viewport; this floats instead, anchored to the button, so
+ * the primary row never reflows just because the menu opened.
+ *
+ * If the active screen is one hiding behind "More", the trigger shows that
+ * screen's own name instead of the word "More" — losing your place behind an
+ * unlabeled button is exactly the confusion this nav exists to avoid.
+ */
+function ProgramNav({ screen, isReview, onNavigate }: {
+  screen: Screen; isReview: boolean; onNavigate: (screen: Screen) => void;
+}): ReactElement {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const activeOverflow = OVERFLOW_SCREENS.includes(screen);
+
+  useEffect(() => {
+    if (!open) return;
+    const onOutside = (event: MouseEvent): void => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onEscape = (event: KeyboardEvent): void => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onOutside);
+    document.addEventListener("keydown", onEscape);
+    return () => {
+      document.removeEventListener("mousedown", onOutside);
+      document.removeEventListener("keydown", onEscape);
+    };
+  }, [open]);
+
+  const screenLabel = (item: Screen): string => item === "RECRUITING" && isReview ? "Recruiting · Locked" : label(item);
+  const go = (item: Screen): void => { onNavigate(item); setOpen(false); };
+
+  return <div className="nav-row">
+    <nav className="game-nav" aria-label="Program sections">{PRIMARY_SCREENS.map((item) =>
+      <button className={screen === item ? "active" : ""} key={item} onClick={() => go(item)}>
+        {screenLabel(item)}
+      </button>)}</nav>
+    <div className="nav-more" ref={wrapRef}>
+      <button
+        className={activeOverflow ? "nav-more-toggle active" : "nav-more-toggle"}
+        aria-haspopup="true" aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}>
+        {activeOverflow ? screenLabel(screen) : "More"} <span aria-hidden="true">{open ? "▴" : "▾"}</span>
+      </button>
+      {open && <div className="nav-more-menu" role="menu">{OVERFLOW_SCREENS.map((item) =>
+        <button role="menuitem" className={screen === item ? "active" : ""} key={item} onClick={() => go(item)}>
+          {screenLabel(item)}
+        </button>)}</div>}
+    </div>
+  </div>;
+}
+
 function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, weekTab, onQueue, onBegin, onAdvance }: {
   game: GameView; screen: Screen; busy: boolean; error: string | undefined; pendingCommands: GameCommand[];
   onNavigate: (screen: Screen, tab?: WeekTab) => void; weekTab: WeekTab | undefined;
@@ -788,10 +851,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, wee
       <Metric label="National titles" value={`${program.championships}`} />
       <Metric label="Roster" value={`${roster.length}/${program.scholarshipLimit}`} />
     </section>
-    <nav className="game-nav" aria-label="Program sections">{screens.map((item) =>
-      <button className={screen === item ? "active" : ""} key={item} onClick={() => onNavigate(item)}>
-        {item === "RECRUITING" && isReview ? "Recruiting · Locked" : label(item)}
-      </button>)}</nav>
+    <ProgramNav screen={screen} isReview={isReview} onNavigate={onNavigate} />
     {screen === "DASHBOARD" && <ProgramDashboard game={game} roster={roster} onNavigate={onNavigate} />}
     {screen === "THIS_WEEK" && <WeekHub game={game} pending={pendingCommands} onQueue={onQueue} initialTab={weekTab} />}
     {screen === "WEEKLY_RECAPS" && <WeeklyRecaps game={game} />}
