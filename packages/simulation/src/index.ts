@@ -414,6 +414,23 @@ export const SIGNING_WEEK = 12;
  * them. A rival needs a real, stated edge to flip him, not a marginal one.
  */
 export const COMMITMENT_INERTIA_BONUS = 6;
+/**
+ * A season's worth of a division's earned standing decays by this fraction
+ * before that season's new contributors are added — slow, so a couple of
+ * quiet years does not erase what a program built.
+ */
+export const PIPELINE_DECAY_RATE = 0.85;
+/** What one qualifying contributor is worth, added at rollover. */
+export const PIPELINE_GAIN_PER_CONTRIBUTOR = 1;
+/**
+ * The ceiling on the pipeline bonus folded into `CLOSE_TO_HOME` — small on
+ * purpose, since the flat home-division bias is already 95 of a possible 100.
+ */
+export const PIPELINE_MAX_BONUS = 5;
+/** Games played this season at which a signed player counts as a real contributor. */
+export const PIPELINE_CONTRIBUTOR_GAMES = 6;
+/** Or a brand milestone reached without necessarily starting every week. */
+export const PIPELINE_CONTRIBUTOR_STARDOM = 30;
 
 /**
  * A visit pays more where the program actually fits what the recruit is
@@ -914,6 +931,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       recruitAppeal: character.recruitAppeal,
       donorCulture: character.donorCulture,
       homeRegionBias: character.homeRegionBias,
+      pipelineStrength: {},
       ticketPrice: tier === "POWER" ? 58 : tier === "MID" ? 42 : 28,
       advertisingSpend: 0,
       weeklyRevenue: tier === "POWER" ? 1_200_000 : tier === "MID" ? 520_000 : 210_000,
@@ -982,6 +1000,9 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
         id: playerId,
         name: nameFor(personOrdinal),
         programId: id,
+        // An opening roster is mostly local by simplifying assumption — there
+        // is no recruiting history to draw a real origin from.
+        homeDivisionId: state.programs[id]!.divisionId,
         position,
         overall: derivedOverall,
         // A struggling program has to be able to out-develop a rich one, so its
@@ -2610,7 +2631,7 @@ function scoutingQuality(state: Readonly<GameState>, programId: string): number 
   return clamp(25 + program.facilities.RECRUITING * 12 + staffContribution(state, programId, "RECRUIT") / 6, 25, 100);
 }
 
-function prospectProgramFit(state: Readonly<GameState>, prospect: Readonly<Prospect>, programId: string): number {
+export function prospectProgramFit(state: Readonly<GameState>, prospect: Readonly<Prospect>, programId: string): number {
   const program = state.programs[programId];
   if (!program) return 0;
   const rosterAtPosition = Object.values(state.players).filter((player) =>
@@ -2630,10 +2651,46 @@ function prospectProgramFit(state: Readonly<GameState>, prospect: Readonly<Prosp
     if (priority === "NATIONAL_EXPOSURE") return clamp(program.nationalPress + Math.max(0, 26 - program.nationalRank), 5, 100);
     if (priority === "ACADEMICS") return program.facilities.ACADEMICS * 20;
     if (priority === "FACILITIES") return (program.facilities.TRAINING + program.facilities.RECRUITING) * 10;
-    if (priority === "CLOSE_TO_HOME") return prospect.homeDivisionId === program.divisionId ? 95 : 30;
+    if (priority === "CLOSE_TO_HOME") {
+      if (prospect.homeDivisionId !== program.divisionId) return 30;
+      // A program that has actually developed players from this division
+      // earns a little more than the flat home-territory discount everyone
+      // gets — see `pipelineStrength` and `updatePipelineStrength`.
+      const pipelineBonus = Math.min(PIPELINE_MAX_BONUS, program.pipelineStrength[prospect.homeDivisionId] ?? 0);
+      return Math.min(100, 95 + pipelineBonus);
+    }
     return clamp(averageStardom + program.nationalPress * 0.45, 5, 100);
   };
   return prospect.priorities.reduce((sum, priority) => sum + priorityScore(priority), 0) / prospect.priorities.length;
+}
+
+/**
+ * Once a season, at rollover — not weekly, this is a slow-moving number.
+ * Every division a program has ever touched decays a little first, so a
+ * program that stops developing a territory slowly loses its edge there;
+ * then whoever became a real contributor this season adds to it. Must run
+ * before the eligibility loop resets `gamesPlayedThisSeason`.
+ */
+export function updatePipelineStrength(state: GameState): void {
+  for (const program of Object.values(state.programs)) {
+    const decayed: Partial<Record<DivisionId, number>> = {};
+    for (const [divisionId, strength] of Object.entries(program.pipelineStrength) as [DivisionId, number][]) {
+      const next = strength * PIPELINE_DECAY_RATE;
+      // Let a spent pipeline actually reach zero rather than lingering forever.
+      if (next > 0.05) decayed[divisionId] = next;
+    }
+    program.pipelineStrength = decayed;
+  }
+  for (const player of Object.values(state.players)) {
+    if (player.programId === null || player.eligibility.rosterStatus !== "SCHOLARSHIP") continue;
+    const contributed = player.eligibility.gamesPlayedThisSeason >= PIPELINE_CONTRIBUTOR_GAMES
+      || player.stardom >= PIPELINE_CONTRIBUTOR_STARDOM;
+    if (!contributed) continue;
+    const program = state.programs[player.programId];
+    if (!program) continue;
+    const divisionId = player.homeDivisionId;
+    program.pipelineStrength[divisionId] = (program.pipelineStrength[divisionId] ?? 0) + PIPELINE_GAIN_PER_CONTRIBUTOR;
+  }
 }
 
 function replenishRecruitingPoints(state: GameState, events: GameEvent[]): void {
@@ -2658,6 +2715,7 @@ function prospectToPlayer(prospect: Prospect, id: string, programId: string, sea
     id,
     name: prospect.name,
     programId,
+    homeDivisionId: prospect.homeDivisionId,
     position: prospect.position,
     overall: prospect.overall,
     potential: prospect.potential,
@@ -3179,6 +3237,7 @@ function ensureEmergencyQuarterbacks(state: GameState): void {
       id,
       name: fictionalPersonName(12_000 + index),
       programId: program.id,
+      homeDivisionId: program.divisionId,
       position: "QB",
       overall: computeOverall("QB", ratings),
       potential: computeOverall("QB", ratings),
@@ -4361,6 +4420,8 @@ function endNilCommitment(
 
 function rolloverSeason(state: GameState, events: GameEvent[]): void {
   finalizeSeason(state, events);
+  // Read before the eligibility loop below zeroes gamesPlayedThisSeason.
+  updatePipelineStrength(state);
   // Fold the season that just finished. Per-game rows are the growth term in
   // both memory and the save file — about 2,300 a week at full league size —
   // and nothing after the season is over reads them individually. Done before

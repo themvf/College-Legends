@@ -2,8 +2,7 @@
 
 ## Status (2026-08, shipped)
 
-The bug fix and slices A–C below are built and committed test-first. Slice D
-(pipelines) is still the sketch below — not started.
+The bug fix and slices A–D below are all built and committed test-first.
 
 Deviations from the plan, found while building it:
 
@@ -29,6 +28,21 @@ Deviations from the plan, found while building it:
   currently flip a rival's recruit in a way no rival will attempt back. Known
   and deliberately deferred rather than rushed into the riskiest slice of this
   spec; worth a follow-up once the flip mechanic itself has been played.
+- **Slice D needed a field the model didn't have.** "A signed prospect from
+  that division becomes a real contributor" requires knowing a *player's*
+  home division, and `Player` never carried one — only `Prospect` did, and
+  that information was dropped at enrollment. Added `Player.homeDivisionId`,
+  carried over from the prospect (or, for an opening roster with no
+  recruiting history, the player's own program's division as a simplifying
+  assumption). One small enum field per player; negligible against the
+  already-solved save-size budget.
+- **The pipeline counter is tracked per division generally, but only ever
+  read for a program's own division.** `prospectProgramFit`'s `CLOSE_TO_HOME`
+  branch returns flat 30 for any prospect outside `program.divisionId` before
+  it ever looks at `pipelineStrength` — so a program that happens to develop
+  an out-of-division signee banks a number nothing will ever read. Matches
+  the spec's own framing (`homeRegionBias` is a program's *own* territory);
+  left as-is rather than adding a guard that only ever prevents dead writes.
 
 ---
 
@@ -169,17 +183,45 @@ commitment currently do nothing (the recruit is gone from the market) and
 will now matter again as flip defense. Budget a measurement pass, not a
 guess, the same way the box-score and RNG work did.
 
-## Slice D — pipelines accumulate (smaller, lower priority)
+## Slice D — pipelines accumulate
 
-Sketch only; build after A–C prove out. `homeRegionBias` stays as the
-immediate discount it is today; alongside it, track a slowly-decaying
-per-program, per-division counter that rises when a signed prospect from that
-division becomes a real contributor (a started game, a brand milestone) and
-folds into `prospectProgramFit`'s `CLOSE_TO_HOME` term as a small bonus on top
-of the flat bias. No new UI required at this size — it shows up as a better
-`CLOSE_TO_HOME` number on recruits from a division a program has actually
-developed. Left unscoped in detail until A–C are measured, since it touches
-the same fit function three other slices already lean on.
+`homeRegionBias` stays exactly what it was: the immediate, flat discount every
+program gets in its own division from the moment the save begins. Alongside
+it, `Program.pipelineStrength: Partial<Record<DivisionId, number>>` is earned
+standing in that same division, built up one season at a time.
+
+**Once a season, at rollover, never weekly** — this is a slow-moving number,
+not something a single good week should move:
+
+```
+updatePipelineStrength(state):
+  for every program:
+    decay every division's stored value by PIPELINE_DECAY_RATE (0.85)
+    drop any value that decays below 0.05 — a spent pipeline reaches zero
+  for every scholarship player:
+    if gamesPlayedThisSeason >= PIPELINE_CONTRIBUTOR_GAMES (6)
+       or stardom >= PIPELINE_CONTRIBUTOR_STARDOM (30):
+      pipelineStrength[player.homeDivisionId] += PIPELINE_GAIN_PER_CONTRIBUTOR (1)
+```
+
+Read before the eligibility loop resets `gamesPlayedThisSeason`, same
+ordering constraint as the rest of rollover's season-boundary bookkeeping.
+Decay first, then add — a division that stops producing contributors erodes
+even in a season where an old contributor briefly still counts.
+
+Folds into `prospectProgramFit`'s `CLOSE_TO_HOME` branch as a bonus on top of
+the flat bias, capped low (`PIPELINE_MAX_BONUS`, 5) since the flat bias is
+already 95 of a possible 100:
+
+```
+CLOSE_TO_HOME fit =
+    30                                              if out of division
+    min(100, 95 + min(PIPELINE_MAX_BONUS, pipelineStrength[division]))  otherwise
+```
+
+No new UI, per the original sketch — it shows up as a better `CLOSE_TO_HOME`
+number on recruits from a division a program has actually developed talent
+from, on the same fit display three other slices already write to.
 
 ## Bug fix — the scholarship-limit orphan
 
@@ -249,15 +291,15 @@ on — no second scoring pass, no new market.
   test with visits and flips live, to confirm the new terms don't quietly
   hand the market back to whoever has the most points to spend.
 
-## Build order
+## Build order — all shipped, in this order
 
-1. **The orphan bug fix.** Isolated, no design risk, ship immediately.
-2. **Slice A — the real offer.** Small, and Slice B depends on it existing.
-3. **Slice B — visits.** The highest-fidelity, highest-payoff piece.
-4. **Slice C — verbal commitment and the signing week.** The largest change;
-   needs its own measurement pass once A and B are live, since it reopens
-   scoring on prospects the market currently treats as settled.
-5. **Slice D — pipelines.** After A–C are measured, not before.
+1. ~~The orphan bug fix.~~ Isolated, no design risk.
+2. ~~Slice A — the real offer.~~ Small, and Slice B depended on it existing.
+3. ~~Slice B — visits.~~ The highest-fidelity, highest-payoff piece.
+4. ~~Slice C — verbal commitment and the signing week.~~ The largest change;
+   reopened scoring on prospects the market previously treated as settled,
+   which is what surfaced the NIL-fallback gap noted above.
+5. ~~Slice D — pipelines.~~ Built last, after A–C were live, per the plan.
 
 The "one row: a range, a price, a percentage" presentation redesign discussed
 alongside this sits on top of all four slices — it is the legibility layer

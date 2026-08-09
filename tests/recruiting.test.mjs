@@ -6,7 +6,14 @@ import {
   createFictionalLeague,
   MAX_VISITS_PER_SEASON,
   NIL_WITHDRAWAL_INTEREST_PENALTY,
+  PIPELINE_CONTRIBUTOR_GAMES,
+  PIPELINE_CONTRIBUTOR_STARDOM,
+  PIPELINE_DECAY_RATE,
+  PIPELINE_GAIN_PER_CONTRIBUTOR,
+  PIPELINE_MAX_BONUS,
+  prospectProgramFit,
   SIGNING_WEEK,
+  updatePipelineStrength,
   visitScore
 } from "../packages/simulation/dist/index.js";
 
@@ -364,6 +371,102 @@ test("a career spanning a flip and a signing-week lock replays byte-identically"
     current = advanceWeek(current).state;
     for (let i = 0; i < 3; i += 1) current = advanceWeek(current).state;
     return current;
+  };
+  assert.deepEqual(run(), run());
+});
+
+test("the CLOSE_TO_HOME pipeline bonus is capped and never touches out-of-division fit", () => {
+  const state = activeLeague("recruiting-pipeline-fit", 24);
+  const programId = Object.keys(state.programs)[0];
+  const program = state.programs[programId];
+  const divisionId = program.divisionId;
+  const otherDivisionId = Object.values(state.programs).find((other) => other.divisionId !== divisionId).divisionId;
+
+  const prospect = availableProspects(state)[0];
+  prospect.homeDivisionId = divisionId;
+  prospect.priorities = ["CLOSE_TO_HOME"];
+
+  assert.equal(prospectProgramFit(state, prospect, programId), 95, "no pipeline yet, just the flat home-territory bias");
+
+  program.pipelineStrength[divisionId] = PIPELINE_MAX_BONUS + 20;
+  assert.equal(
+    prospectProgramFit(state, prospect, programId),
+    95 + PIPELINE_MAX_BONUS,
+    "the bonus must never exceed its cap, however large the stored counter gets"
+  );
+
+  prospect.homeDivisionId = otherDivisionId;
+  assert.equal(
+    prospectProgramFit(state, prospect, programId),
+    30,
+    "a home pipeline never leaks into a fit score for a prospect from somewhere else"
+  );
+});
+
+test("updatePipelineStrength grows from a real contributor and decays without one", () => {
+  const state = activeLeague("recruiting-pipeline-lifecycle", 4);
+  const programId = Object.keys(state.programs)[0];
+  const program = state.programs[programId];
+  const divisionId = program.divisionId;
+  const roster = Object.values(state.players).filter((player) =>
+    player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP");
+  const contributor = roster[0];
+  assert.ok(contributor);
+  // Isolate him: nobody else on the roster may accidentally also qualify.
+  for (const player of roster) {
+    player.eligibility.gamesPlayedThisSeason = 0;
+    player.stardom = 0;
+  }
+  contributor.homeDivisionId = divisionId;
+  contributor.eligibility.gamesPlayedThisSeason = PIPELINE_CONTRIBUTOR_GAMES;
+
+  updatePipelineStrength(state);
+  assert.equal(
+    program.pipelineStrength[divisionId],
+    PIPELINE_GAIN_PER_CONTRIBUTOR,
+    "exactly one contributor's worth, from a standing start"
+  );
+
+  // A quiet season: he's no longer on the field, nobody else qualifies either.
+  contributor.eligibility.gamesPlayedThisSeason = 0;
+  contributor.stardom = 0;
+  updatePipelineStrength(state);
+  const expected = PIPELINE_GAIN_PER_CONTRIBUTOR * PIPELINE_DECAY_RATE;
+  assert.ok(
+    Math.abs(program.pipelineStrength[divisionId] - expected) < 1e-6,
+    `a quiet season must decay what was already built, saw ${program.pipelineStrength[divisionId]} expected ${expected}`
+  );
+});
+
+test("a brand milestone counts as a contributor even without a heavy workload", () => {
+  const state = activeLeague("recruiting-pipeline-brand", 4);
+  const programId = Object.keys(state.programs)[0];
+  const program = state.programs[programId];
+  const divisionId = program.divisionId;
+  const roster = Object.values(state.players).filter((player) =>
+    player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP");
+  for (const player of roster) {
+    player.eligibility.gamesPlayedThisSeason = 0;
+    player.stardom = 0;
+  }
+  const star = roster[0];
+  star.homeDivisionId = divisionId;
+  star.stardom = PIPELINE_CONTRIBUTOR_STARDOM; // no games played this season at all
+
+  updatePipelineStrength(state);
+  assert.equal(program.pipelineStrength[divisionId], PIPELINE_GAIN_PER_CONTRIBUTOR);
+});
+
+test("pipeline growth persists through save round-trips deterministically", () => {
+  const run = () => {
+    const state = activeLeague("recruiting-pipeline-replay", 4);
+    const programId = Object.keys(state.programs)[0];
+    const roster = Object.values(state.players).filter((player) =>
+      player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP");
+    for (const player of roster) player.eligibility.gamesPlayedThisSeason = 0;
+    roster[0].eligibility.gamesPlayedThisSeason = PIPELINE_CONTRIBUTOR_GAMES;
+    updatePipelineStrength(state);
+    return state;
   };
   assert.deepEqual(run(), run());
 });

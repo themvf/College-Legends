@@ -559,6 +559,12 @@ export interface Player {
   id: PlayerId;
   name: string;
   programId: ProgramId | null;
+  /**
+   * Where he's from, carried over from the prospect he was (or, for an
+   * opening roster with no recruiting history, his own program's division).
+   * What `pipelineStrength` reads to credit a program for developing him.
+   */
+  homeDivisionId: DivisionId;
   position: Position;
   overall: number;
   potential: number;
@@ -741,6 +747,14 @@ export interface Program {
   donorCulture: number;
   /** Standing in this program's own division before any relationship is built. */
   homeRegionBias: number;
+  /**
+   * Earned standing in a division, division by division — rises slowly when a
+   * signed prospect from that division becomes a real contributor, decays
+   * slowly otherwise. `homeRegionBias` is the flat discount every program
+   * gets in its own territory; this is what a program has actually built
+   * there over time.
+   */
+  pipelineStrength: Partial<Record<DivisionId, number>>;
   /** Price of a home-game ticket. Demand falls as it rises above what the
    *  program's standing justifies, and goodwill falls with it. */
   ticketPrice: number;
