@@ -141,7 +141,10 @@ export function planExecution(
   const repsBonus = Math.sqrt(clamp(reps, 0, MAXIMUM_REPS_PER_SIDE) / MAXIMUM_REPS_PER_SIDE) * 0.26;
   // Reps still tire the roster, and now each one is worth more because there are
   // fewer of them to buy.
-  const centre = base + repsBonus + facility;
+  // A camp spent on the playbook is still paying for the first few weeks.
+  const camp = state.trainingCamp?.[programId];
+  const campBonus = camp && camp.weeksRemaining > 0 && camp.focus === "INSTALL" ? TRAINING_CAMP_INSTALL_BONUS : 0;
+  const centre = base + repsBonus + facility + campBonus;
   const width = clamp(0.32 - installer.rating / 100 * 0.16, 0.08, 0.32);
 
   const low = Number(clamp(centre - width / 2, 0.1, 0.99).toFixed(3));
@@ -261,6 +264,38 @@ export function staffSalary(rating: number, role: StaffRole): number {
   // Steep at the top: the difference between good and elite is a payroll decision.
   const base = 150_000 + Math.pow(Math.max(0, rating - 45), 2.6) * 40;
   return Math.round(base * roleWeight[role] / 1000) * 1000;
+}
+
+/**
+ * What is owed to a coach for ending his employment early. Priced off the
+ * salary he was on, so `staffSalary`'s steep-at-the-top shape carries through
+ * and firing an elite coach costs what it should — without a multi-year
+ * contract model the engine does not carry.
+ *
+ * Load-bearing rather than decorative: replacing a coach used to charge only
+ * the incoming man's signing cost, so an upgrade that was both better and
+ * affordable was free on the way out.
+ */
+/**
+ * How much of the new season camp still covers. Four weeks: long enough to
+ * matter, short enough that camp is a start rather than a season-long buff
+ * that makes the weekly priorities redundant.
+ */
+export const TRAINING_CAMP_WEEKS = 4;
+/**
+ * A head start on the playbook, against `planExecution`'s ~0.26 maximum from
+ * a full week of reps — worth roughly a third of a drilled week, for four
+ * weeks, and paid for in health.
+ */
+export const TRAINING_CAMP_INSTALL_BONUS = 0.05;
+/** Both directions of the same trade, sized to match the CONDITIONING focus. */
+export const TRAINING_CAMP_CONDITIONING_RISK = 0.85;
+export const TRAINING_CAMP_INSTALL_RISK = 1.15;
+
+export const BUYOUT_SALARY_FRACTION = 0.6;
+
+export function staffBuyout(outgoing: Readonly<Pick<StaffMember, "salary">>): number {
+  return Math.round(outgoing.salary * BUYOUT_SALARY_FRACTION);
 }
 
 /**

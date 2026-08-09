@@ -105,6 +105,7 @@ import {
   projectedDevelopmentPayoff,
   projectedRecruitingOpenings,
   prospectScoutingReport,
+  staffBuyout,
   recruitingEvaluationCost,
   recruitingSearchCost,
   visitScore,
@@ -587,14 +588,18 @@ function coachOptions({ member, candidates, identity, budget, onHire }: {
     runs: coachRuns(member.schemePreference, side),
     fitNote: side ? schemeFitLabel(memberFit) : null,
     fitWarning: Boolean(side) && memberFit < 0.9,
-    price: `${money(member.salary)} a year · already on staff, no buyout`,
+    price: `${money(member.salary)} a year · ${money(staffBuyout(member))} to let him go`,
     note: null,
     blocked: null,
     current: true,
     onPick: null
   };
+  // Replacing a post costs both halves: the incoming man's signing cost and
+  // what is owed to the man being let go. The card has to post the total the
+  // engine will actually charge.
+  const buyout = staffBuyout(member);
   return [incumbent, ...candidates.map((candidate) => {
-    const affordable = budget >= candidate.signingCost;
+    const affordable = budget >= candidate.signingCost + buyout;
     return {
       key: candidate.id,
       name: candidate.name,
@@ -607,9 +612,9 @@ function coachOptions({ member, candidates, identity, budget, onHire }: {
       runs: coachRuns(candidate.schemePreference, side),
       fitNote: side ? candidate.schemeFitNote : null,
       fitWarning: Boolean(side) && candidate.schemeFit < 0.9,
-      price: `${money(candidate.salary)} a year · ${money(candidate.signingCost)} to sign him`,
+      price: `${money(candidate.salary)} a year · ${money(candidate.signingCost)} to sign him${buyout > 0 ? ` + ${money(buyout)} buyout` : ""}`,
       note: `${candidate.rating >= member.rating ? "+" : ""}${candidate.rating - member.rating} on ${member.name}`,
-      blocked: candidate.unavailableReason ?? (affordable ? null : "You can't cover the signing cost."),
+      blocked: candidate.unavailableReason ?? (affordable ? null : "You can't cover the signing cost and the buyout."),
       current: false,
       onPick: () => onHire(candidate.id)
     } satisfies CoachOptionView;

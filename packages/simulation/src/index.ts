@@ -33,7 +33,7 @@ import {
   WORTH_SCOUTING
 } from "./department.js";
 import { activeSponsorship, advertisingReach, createSponsorshipProgramState, DEFENSIVE_PRESETS, developmentCandidates, fairTicketPrice, matchingPreset, MAXIMUM_TICKET_PRICE, MAXIMUM_WEEKLY_ADVERTISING, MINIMUM_TICKET_PRICE, OFFENSIVE_PRESETS, pricingGoodwill, projectGate, projectSponsorshipOffer, sponsorshipMarketValue, sponsorshipPayment } from "./business.js";
-import { MAXIMUM_REPS_PER_SIDE, planExecution, repsFatigue, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
+import { MAXIMUM_REPS_PER_SIDE, TRAINING_CAMP_CONDITIONING_RISK, TRAINING_CAMP_INSTALL_BONUS, TRAINING_CAMP_INSTALL_RISK, TRAINING_CAMP_WEEKS, planExecution, repsFatigue, staffBuyout, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
 import { foldSeasonStats } from "./persistence.js";
 import { advertisingCredit, applyBooster, boosterDueThisWeek, buildBoosterOffer, takeawayMultiplier } from "./boosters.js";
 import { committedNilTotal, emptyNilState, freeNilCapacity, nilAskingPrice, nilScore, reservedNilTotal, weeklyDonorCapacity, NIL_WITHDRAWAL_INTEREST_PENALTY } from "./nil.js";
@@ -157,7 +157,7 @@ export {
   ticketDemandMultiplier
 } from "./business.js";
 export type { GateProjection, SponsorshipPayment, SponsorshipProjection, StrategyPreset } from "./business.js";
-export { MAXIMUM_REPS_PER_SIDE, planExecution, planInstaller, repsFatigue, staffCard, staffModifiers, staffSalary } from "./installation.js";
+export { BUYOUT_SALARY_FRACTION, MAXIMUM_REPS_PER_SIDE, TRAINING_CAMP_CONDITIONING_RISK, TRAINING_CAMP_INSTALL_BONUS, TRAINING_CAMP_INSTALL_RISK, TRAINING_CAMP_WEEKS, planExecution, planInstaller, repsFatigue, staffBuyout, staffCard, staffModifiers, staffSalary } from "./installation.js";
 export {
   filmGamesAvailable,
   preparationWeeklyPoints,
@@ -1437,6 +1437,11 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   updateNationalRankings(state);
   if (state.week < 14) replenishRecruitingPoints(state, events);
   recordFocusPayoffs(state, focusInputs, events);
+  // Camp covers the opening weeks and then stops. Ticked once a week rather
+  // than held for the season, so it is a head start and not a standing buff.
+  for (const camp of Object.values(state.trainingCamp ?? {})) {
+    if (camp.weeksRemaining > 0) camp.weeksRemaining -= 1;
+  }
   state.week += 1;
   // Entering the offseason defers preparation to `completeOffseason`: there is
   // no schedule to prepare against until the new one is built.
@@ -2219,8 +2224,18 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: candidate.unavailableReason });
         continue;
       }
-      if (program.budget < candidate.signingCost) {
-        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The program cannot afford that signing cost." });
+      // Letting a coach go costs money, in every phase — the offseason is
+      // where firing becomes convenient, not where it becomes legal.
+      const buyoutCost = staffBuyout(outgoing);
+      if (program.budget < candidate.signingCost + buyoutCost) {
+        events.push({
+          type: "COMMAND_REJECTED",
+          programId: command.programId,
+          command,
+          reason: buyoutCost > 0
+            ? "The program cannot afford that signing cost on top of the buyout."
+            : "The program cannot afford that signing cost."
+        });
         continue;
       }
       const arrivingId = `${program.id}-staff-${candidate.id.replace(/[^A-Za-z0-9]/g, "-")}`;
@@ -2228,7 +2243,7 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "He already has the job." });
         continue;
       }
-      program.budget -= candidate.signingCost;
+      program.budget -= candidate.signingCost + buyoutCost;
       delete state.staff[command.staffId];
       state.staff[arrivingId] = {
         id: arrivingId,
@@ -2254,7 +2269,8 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         role: candidate.role,
         rating: candidate.rating,
         salary: candidate.salary,
-        signingCost: candidate.signingCost
+        signingCost: candidate.signingCost,
+        buyoutCost
       });
       continue;
     }
@@ -3316,7 +3332,8 @@ export function playerInjuryRisk(
     : developmentFocus === "CONDITIONING" ? 0.85
       : 1;
   const riskWithoutCoach = clamp(
-    0.018 * POSITION_INJURY_MULTIPLIER[player.position] * durabilityModifier * fatigueModifier * workloadModifier * trainingModifier,
+    0.018 * POSITION_INJURY_MULTIPLIER[player.position] * durabilityModifier * fatigueModifier * workloadModifier
+      * trainingModifier * trainingCampRiskMultiplier(state, player.programId),
     0.002,
     0.055
   );
@@ -4777,6 +4794,25 @@ function resolveOffseasonCommands(
       applyPortalBid(state, command, events);
       continue;
     }
+    // The coaching market is the one already built. This step is the
+    // scheduled appointment with it, so a player who never opens the staff
+    // screen mid-season still gets one guaranteed look a year.
+    if (command.type === "REPLACE_STAFF" && step === "COACHING") {
+      resolveCommands(state, [command], _rng.fork("coaching"), events);
+      continue;
+    }
+    if (command.type === "SET_TRAINING_CAMP_FOCUS" && step === "TRAINING_CAMP") {
+      state.trainingCamp ??= {};
+      state.trainingCamp[command.programId] = { focus: command.focus, weeksRemaining: TRAINING_CAMP_WEEKS };
+      events.push({
+        type: "TRAINING_CAMP_SET",
+        season: state.season,
+        programId: command.programId,
+        focus: command.focus,
+        weeks: TRAINING_CAMP_WEEKS
+      });
+      continue;
+    }
     events.push({
       type: "COMMAND_REJECTED",
       programId: command.programId,
@@ -4846,6 +4882,23 @@ function applyPortalBid(
     return;
   }
   listing.bidsByProgram[command.programId] = { points, weeklyNil };
+}
+
+/** The execution head start camp is still paying, if any. */
+export function trainingCampExecutionBonus(state: Readonly<GameState>, programId: string): number {
+  const camp = state.trainingCamp?.[programId];
+  if (!camp || camp.weeksRemaining <= 0 || camp.focus !== "INSTALL") return 0;
+  return TRAINING_CAMP_INSTALL_BONUS;
+}
+
+/** The injury-risk multiplier camp is still applying, if any. */
+export function trainingCampRiskMultiplier(state: Readonly<GameState>, programId: string | null): number {
+  if (!programId) return 1;
+  const camp = state.trainingCamp?.[programId];
+  if (!camp || camp.weeksRemaining <= 0) return 1;
+  if (camp.focus === "CONDITIONING") return TRAINING_CAMP_CONDITIONING_RISK;
+  if (camp.focus === "INSTALL") return TRAINING_CAMP_INSTALL_RISK;
+  return 1;
 }
 
 export const OFFSEASON_STEP_LABELS: Record<OffseasonStep, string> = {

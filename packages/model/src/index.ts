@@ -13,6 +13,13 @@ export type GamePhase = "ROSTER_REVIEW" | "REGULAR_SEASON" | "OFFSEASON";
  * what the engine did before the phase existed.
  */
 export type OffseasonStep = "PORTAL" | "SIGNING_DAY" | "COACHING" | "TRAINING_CAMP";
+/**
+ * What a program spends camp on. `BALANCED` is the default and the
+ * do-nothing outcome; the other two trade against each other rather than
+ * being upgrades — a head start on the playbook is bought with the health
+ * margin conditioning would have banked.
+ */
+export type TrainingCampFocus = "CONDITIONING" | "BALANCED" | "INSTALL";
 export type Position = "QB" | "RB" | "WR" | "TE" | "OL" | "DL" | "LB" | "DB" | "K" | "P";
 export type DevelopmentFocus = "BALANCED" | "TECHNIQUE" | "STRENGTH" | "CONDITIONING";
 export type DevelopmentSpotlightTarget =
@@ -878,6 +885,11 @@ export interface GameState {
   nil: Record<ProgramId, NilProgramState>;
   /** Players open to bids in the offseason portal window. Empty outside it. */
   portal?: Record<PlayerId, PortalListingState>;
+  /**
+   * What camp bought, and how much of the new season it still covers. Ticks
+   * down weekly; a program that took the default carries nothing.
+   */
+  trainingCamp?: Record<ProgramId, { focus: TrainingCampFocus; weeksRemaining: number }>;
   staff: Record<string, StaffMember>;
   depthCharts: Record<ProgramId, DepthChart>;
   playerGameStats: PlayerGameStatLine[];
@@ -972,7 +984,13 @@ export type GameCommand =
    * engine treats it as the same market, played in the other direction.
    * `points: 0, weeklyNil: 0` withdraws.
    */
-  | { type: "BID_PORTAL_PLAYER"; programId: ProgramId; playerId: PlayerId; points: number; weeklyNil: number };
+  | { type: "BID_PORTAL_PLAYER"; programId: ProgramId; playerId: PlayerId; points: number; weeklyNil: number }
+  /**
+   * How the program spends camp, set once in the training-camp step and
+   * applied to the season about to start. A trade rather than an upgrade:
+   * conditioning buys health at the cost of a head start on the playbook.
+   */
+  | { type: "SET_TRAINING_CAMP_FOCUS"; programId: ProgramId; focus: TrainingCampFocus };
 
 export type GameEvent =
   | {
@@ -1214,7 +1232,7 @@ export type GameEvent =
   | { type: "SCHEME_SET"; season: Season; week: number; programId: ProgramId; scheme: SchemeIdentity }
   | { type: "SCOUTING_ALLOCATED"; season: Season; week: number; programId: ProgramId; opponentProgramId: ProgramId; points: number; totalPoints: number; tiers: ScoutingTier[] }
   | { type: "PRACTICE_REPS_SET"; season: Season; week: number; programId: ProgramId; side: "OFFENSE" | "DEFENSE"; reps: number; pointsSpent: number; expectedExecution: number }
-  | { type: "STAFF_REPLACED"; season: Season; week: number; programId: ProgramId; departingStaffId: string; arrivingStaffId: string; name: string; role: StaffRole; rating: number; salary: number; signingCost: number }
+  | { type: "STAFF_REPLACED"; season: Season; week: number; programId: ProgramId; departingStaffId: string; arrivingStaffId: string; name: string; role: StaffRole; rating: number; salary: number; signingCost: number; buyoutCost: number }
   | { type: "TICKET_PRICE_SET"; season: Season; week: number; programId: ProgramId; price: number; fairPrice: number }
   | { type: "ADVERTISING_SET"; season: Season; week: number; programId: ProgramId; spend: number }
   | {
@@ -1263,6 +1281,7 @@ export type GameEvent =
     }
   /** Nobody bid enough. His career at this level is over rather than left hanging. */
   | { type: "PORTAL_PLAYER_UNCLAIMED"; season: Season; playerId: PlayerId; previousProgramId: ProgramId }
+  | { type: "TRAINING_CAMP_SET"; season: Season; programId: ProgramId; focus: TrainingCampFocus; weeks: number }
   /** One offseason step closed. `nextStep` is null when the offseason itself ends. */
   | { type: "OFFSEASON_STEP_COMPLETED"; season: Season; step: OffseasonStep; nextStep: OffseasonStep | null }
   | { type: "BOOSTER_OFFERED"; season: Season; week: number; programId: ProgramId; options: BoosterOption[] }
