@@ -1,11 +1,11 @@
 # The offseason phase — spec
 
-## Status (2026-08, building)
+## Status (2026-08, built)
 
-Slices 1 and 2 are built and committed test-first on
-`claude/offseason-phase`: the phase itself with its four ordered steps, and
-the portal window. Slices 3 (buyout, coaching checkpoint, training camp) and
-4 (the AI offseason planner) are the sections below, not yet built.
+All four slices are built and committed test-first on
+`claude/offseason-phase`: the phase with its four ordered steps, the portal
+window, buyouts and the coaching checkpoint and training camp, and the AI
+offseason planner. 150 tests pass.
 
 **Deviations from the plan, found while building it:**
 
@@ -37,8 +37,26 @@ the portal window. Slices 3 (buyout, coaching checkpoint, training camp) and
   one function to branch on which pool it is scoring.
 - **The web prototype auto-runs the offseason.** No offseason screens exist
   yet, so the worker steps through with the do-nothing defaults rather than
-  stranding a player on a phase with no UI. Marked in the worker for
-  replacement.
+  stranding a player on a phase with no UI. Rivals still plan normally, so the
+  league moves around a human who currently cannot act. Marked in the worker
+  for replacement — **this is the largest thing still missing**, and until it
+  lands the human player is the only program not participating in his own
+  offseason.
+- **The staff card was posting a number the engine no longer charged.** It
+  read "already on staff, no buyout" and priced a hire at the signing cost
+  alone. Adding the buyout to the engine without fixing the card would have
+  been exactly the "card that disagrees with the engine" failure the
+  payoffs-are-visible invariant exists to prevent, so the card posts the
+  total and the affordability gate checks it.
+- **The AI coaching threshold was set by measurement, not by feel.** At the
+  first-guess +8 rating gap a 24-program league changed **41 coaches in two
+  seasons** — nearly one per program per year, the "decline caused by drift"
+  §15 explicitly rules out. The market re-rolls annually and is generous:
+  2.58 posts per program have a +6 upgrade available in any given year. At
+  +15, plus a rule that a rival never trades a coordinator who coaches the
+  program's scheme for a better-rated one who does not, it measures **0.18
+  changes per program per year** — a post turning over about every five
+  seasons.
 
 **Measured at 72 programs, one season — this settles Open question 1:**
 
@@ -326,9 +344,19 @@ justify it.
 ## Constants ledger
 
 All hypotheses, committed-test-tuned like every other constant in this
-codebase: `BUYOUT_SALARY_FRACTION` 0.6 · portal overall curve shape TBD by
-measurement, same method `prospectHype`'s curve was calibrated with ·
-retention effect curve shares `nilScore`'s diminishing-returns shape.
+codebase, listed so tuning changes one place:
+
+| constant | value | what it prices |
+|---|---|---|
+| `BUYOUT_SALARY_FRACTION` | 0.6 | What is owed a coach let go early, off his salary |
+| `PORTAL_INCUMBENT_BONUS` | 4 | The relationship a program already has with a man it is losing. Under a recruit's inertia of 6 on purpose |
+| `PORTAL_MINIMUM_POINTS` | 5 | A bid has to be real; without a floor everybody blankets every listing |
+| `PORTAL_COMMITMENT_THRESHOLD` | 58 | Below this nobody wanted him enough |
+| portal price curve | `(overall − 40)/25` ^2.6 | Convex in production, mirroring the hype curve's shape |
+| `TRAINING_CAMP_WEEKS` | 4 | How long camp still covers. A head start, not a season buff |
+| `TRAINING_CAMP_INSTALL_BONUS` | 0.05 | Against `planExecution`'s ~0.26 maximum from a full week of reps |
+| `TRAINING_CAMP_CONDITIONING_RISK` / `_INSTALL_RISK` | 0.85 / 1.15 | Both directions of the same trade, matched to the CONDITIONING focus |
+| `AI_COACHING_UPGRADE_THRESHOLD` | 15 | Set by measurement — see the deviations above |
 
 ## Tests
 
@@ -357,20 +385,29 @@ retention effect curve shares `nilScore`'s diminishing-returns shape.
 Matching `PROGRAM_IDENTITY_AND_ECONOMY.md` §16's own honesty about what
 this pass does not settle:
 
-1. **How many portal players actually enter a 72-program league in one
-   offseason**, and whether the current `transferRisk` formula produces a
-   pool worth a whole step of attention or a scarce trickle. Needs
-   measurement before `portalAskingPrice` can be tuned at all.
-2. **Whether retention and portal bidding should share one Recruiting Point
-   budget or a separate offseason allotment.** Sharing is simpler and
-   consistent with "one pool, not a second currency"; separate would stop a
-   program that spent its whole season pool from being locked out of the
-   one moment it might matter most.
+1. ~~How many portal players actually enter a 72-program league in one
+   offseason.~~ **Measured — 281 a year, 3.9 per program.** What it opened
+   instead: the pool's *quality* is too flat for the portal to be "the
+   climb" §12 describes. A median transfer is a 61-overall depth piece and
+   only 22 a year are the 80+ starters that thesis is about. Fixing that
+   means reweighting `transferRisk` toward players who are actually good,
+   which is a balance change to a formula that predates this work.
+2. **Whether the portal should share the season's Recruiting Point budget or
+   get its own allotment.** Built as sharing, which is simpler and consistent
+   with "one pool, not a second currency" — but it means a program that spent
+   everything chasing high-schoolers is locked out of the window where it
+   could have replaced them, and it never finds that out until the window
+   opens. Worth watching once the offseason has screens.
 3. **Whether training camp's `INSTALL` option should persist into week 1's
    install band or simply be consumed by it.** Affects whether a strong
    camp is a one-week bump or a lasting head start.
-4. **How this interacts with career-ending departures mid-list** — a coach
-   fired in `COACHING` after a portal target already committed to play for
-   him. Likely resolved by the fact that a program, not a coach, holds the
-   NIL commitment and the roster spot, but worth a dedicated test once both
-   systems are live together.
+4. **A coach fired in `COACHING` after a portal target already signed to
+   play for him.** Resolved in practice by ordering — the portal closes two
+   steps before the coaching market opens, and a program rather than a coach
+   holds the roster spot and the NIL commitment — so nothing breaks. Whether
+   it *should* cost something is a design question this slice does not
+   answer.
+
+5. **The offseason has no screens.** The engine is complete and the AI plays
+   it; the human currently cannot. This is the next piece of work, not an
+   open design question — see the deviation note above.

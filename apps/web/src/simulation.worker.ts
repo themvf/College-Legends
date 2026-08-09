@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import type { CareerPath, GameCommand, GameEvent, GameState, ProgramId } from "@college-legends/model";
 import { CAREER_PATHS } from "@college-legends/content";
-import { planWeeklyCommands } from "@college-legends/ai";
+import { planOffseasonCommands, planWeeklyCommands } from "@college-legends/ai";
 import { advanceOffseasonStep, advanceWeek, beginSeason, createFictionalLeague, decodeSave, encodeSave, prepareWeek, programPreviews } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 import { deleteSave, readSave, savedBytes, storageAvailable, writeSave } from "./storage.js";
@@ -119,7 +119,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       // flow when the offseason UI lands.
       const offseasonEvents: GameEvent[] = [];
       while (activeState.phase === "OFFSEASON") {
-        const step = advanceOffseasonStep(activeState);
+        const step = advanceOffseasonStep(activeState, planOffseasonCommands(activeState, request.playerProgramId));
         activeState = step.state;
         offseasonEvents.push(...step.events);
       }

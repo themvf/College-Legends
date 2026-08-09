@@ -1,4 +1,4 @@
-import type { DevelopmentFocus, GamePlan, GameState, GameCommand, Position, Prospect, WeekFocus } from "@college-legends/model";
+import type { DevelopmentFocus, GamePlan, GameState, GameCommand, Player, PortalListingState, Position, Prospect, WeekFocus } from "@college-legends/model";
 import {
   focusCapacity,
   freeNilCapacity,
@@ -8,7 +8,12 @@ import {
   pendingBoosterOffer,
   programUnitRatings,
   projectedGamePlan,
+  coachSchemeFit,
+  portalAskingPrice,
   scoutingBoard,
+  staffBuyout,
+  staffCandidatesFor,
+  PORTAL_MINIMUM_POINTS,
   VISIT_COST,
   WORTH_SCOUTING
 } from "@college-legends/simulation";
@@ -287,4 +292,147 @@ function prospectValue(state: Readonly<GameState>, prospect: Prospect, programId
     && player.eligibility.seasonsRemaining > 1
   ).length <= 2 ? 7 : 0;
   return prospect.hype * 0.65 + prospect.interestByProgram[programId]! * 0.25 + localBonus + needBonus;
+}
+
+/**
+ * What rivals do between seasons. Without this, seventy-one of seventy-two
+ * programs stand still every year — nobody bids on the portal, nobody keeps
+ * the player they are about to lose, nobody ever changes a coach — and the
+ * one active program collects every transfer in the league unopposed. A
+ * system only the player pays for is a system the player should not pay for
+ * either, which is the same standard every recruiting slice was held to.
+ *
+ * Returns commands for the step that is actually open, so the caller can hand
+ * this straight to `advanceOffseasonStep` the way it hands `planWeeklyCommands`
+ * to `advanceWeek`.
+ */
+export function planOffseasonCommands(state: Readonly<GameState>, excludedProgramId?: string): GameCommand[] {
+  if (state.phase !== "OFFSEASON" || !state.offseasonStep) return [];
+  const step = state.offseasonStep;
+  return Object.values(state.programs).flatMap((program) => {
+    if (program.id === excludedProgramId) return [];
+    if (step === "PORTAL") return planPortalBids(state, program.id);
+    if (step === "COACHING") return planCoachingChange(state, program.id);
+    if (step === "TRAINING_CAMP") return [planTrainingCamp(state, program.id)];
+    return [];
+  });
+}
+
+/**
+ * A rival's portal window. Two things it must get right: keeping a man it is
+ * about to lose is worth more than a stranger of the same quality, and the
+ * points it bids have to fit inside the pool it actually has.
+ */
+function planPortalBids(state: Readonly<GameState>, programId: string): GameCommand[] {
+  const openings = projectedOpenings(state, programId);
+  if (openings <= 0) return [];
+  const recruiting = state.recruiting[programId];
+  const program = state.programs[programId];
+  if (!recruiting || !program) return [];
+
+  const listings = Object.entries(state.portal ?? {})
+    .map(([playerId, listing]) => ({ playerId, listing, player: state.players[playerId] }))
+    .filter((entry) => Boolean(entry.player))
+    .sort((left, right) =>
+      portalTargetValue(state, programId, left.player!, left.listing)
+        - portalTargetValue(state, programId, right.player!, right.listing) > 0 ? -1 : 1);
+
+  const commands: GameCommand[] = [];
+  let points = recruiting.points;
+  let capacity = freeNilCapacity(state, programId);
+  // Chase as many as the class has room for, best first, and stop when the
+  // pool runs out — the same shape as the in-season recruiting planner.
+  for (const { playerId, player, listing } of listings.slice(0, Math.min(openings, 3))) {
+    if (points < PORTAL_MINIMUM_POINTS) break;
+    const value = portalTargetValue(state, programId, player!, listing);
+    // Bidding on everybody is not a strategy. Only chase somebody who is
+    // actually better than what walks in as a freshman.
+    if (value < 60) continue;
+    const bidPoints = Math.min(points, listing.previousProgramId === programId ? 30 : 20);
+    const ask = portalAskingPrice(player!);
+    const weeklyNil = Math.min(capacity, ask);
+    commands.push({
+      type: "BID_PORTAL_PLAYER",
+      programId,
+      playerId,
+      points: bidPoints,
+      weeklyNil: weeklyNil >= ask * 0.3 ? Math.round(weeklyNil / 50) * 50 : 0
+    });
+    points -= bidPoints;
+    if (weeklyNil >= ask * 0.3) capacity -= weeklyNil;
+  }
+  return commands;
+}
+
+/**
+ * How badly a rival wants a transfer. Reads his real `overall` rather than a
+ * consensus number, and that is correct rather than a leak: a portal player
+ * has played real games on television, so there is nothing hidden to scout.
+ * Keeping your own man is worth more than signing a stranger of equal quality.
+ */
+function portalTargetValue(
+  state: Readonly<GameState>,
+  programId: string,
+  player: Player,
+  listing: PortalListingState
+): number {
+  const retentionBonus = listing.previousProgramId === programId ? 10 : 0;
+  const needBonus = Object.values(state.players).filter((other) =>
+    other.programId === programId
+    && other.position === player.position
+    && other.eligibility.rosterStatus === "SCHOLARSHIP"
+    && other.eligibility.seasonsRemaining > 1
+  ).length <= 2 ? 8 : 0;
+  return player.overall * 0.7 + (listing.interestByProgram[programId] ?? 0) * 0.2 + retentionBonus + needBonus;
+}
+
+/**
+ * How much better a candidate has to be before a rival will pay a buyout to
+ * make the change. Set by measurement, not by feel: the market re-rolls every
+ * season and is generous, so at +8 a 24-program league changed 41 coaches in
+ * two seasons — nearly one per program per year, which is exactly the
+ * "decline caused by drift" PROGRAM_IDENTITY_AND_ECONOMY.md rules out. At +15
+ * only about half a post per program is even eligible in a given year.
+ */
+const AI_COACHING_UPGRADE_THRESHOLD = 15;
+
+/**
+ * A rival changes a coach only when the upgrade clearly justifies the buyout
+ * plus the signing fee, and never trades a coordinator who coaches the
+ * program's scheme for a better-rated one who does not — a higher rating that
+ * installs someone else's playbook is not an upgrade.
+ *
+ * At most one post a year. The budget test is deliberately weak because the
+ * economy has no real drain yet (finding 3); the rating gap and the scheme-fit
+ * rule are what actually hold churn down.
+ */
+function planCoachingChange(state: Readonly<GameState>, programId: string): GameCommand[] {
+  const program = state.programs[programId];
+  if (!program) return [];
+  const posts = Object.values(state.staff)
+    .filter((member) => member.programId === programId)
+    .sort((left, right) => left.id.localeCompare(right.id));
+  for (const member of posts) {
+    const buyout = staffBuyout(member);
+    const incumbentFit = coachSchemeFit(member, program.schemeIdentity);
+    const candidate = staffCandidatesFor(state, programId, member.id)
+      .filter((option) => !option.unavailableReason && option.schemeFit >= incumbentFit)
+      .sort((left, right) => right.rating - left.rating)[0];
+    if (!candidate) continue;
+    if (candidate.rating - member.rating < AI_COACHING_UPGRADE_THRESHOLD) continue;
+    if (program.budget < (candidate.signingCost + buyout) * 3) continue;
+    return [{ type: "REPLACE_STAFF", programId, staffId: member.id, candidateId: candidate.id }];
+  }
+  return [];
+}
+
+/**
+ * Camp follows the roster. A thin, banged-up squad protects itself; a program
+ * with depth to spare spends the week on the playbook instead.
+ */
+function planTrainingCamp(state: Readonly<GameState>, programId: string): GameCommand {
+  const roster = Object.values(state.players).filter((player) =>
+    player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP");
+  const thin = roster.length < state.programs[programId]!.scholarshipLimit * 0.85;
+  return { type: "SET_TRAINING_CAMP_FOCUS", programId, focus: thin ? "CONDITIONING" : "INSTALL" };
 }

@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { GameEvent } from "@college-legends/model";
 import { summarize } from "@college-legends/analytics";
-import { planWeeklyCommands } from "@college-legends/ai";
+import { planOffseasonCommands, planWeeklyCommands } from "@college-legends/ai";
 import { advanceOffseasonStep, advanceWeek, beginSeason, createFictionalLeague } from "@college-legends/simulation";
 
 const args = new Map<string, string>();
@@ -17,10 +17,9 @@ let state = beginSeason(createFictionalLeague(seed));
 const events: GameEvent[] = [];
 const initialSeason = state.season;
 while (state.season < initialSeason + seasons) {
-  // A career alternates weeks with offseason steps. The headless runner takes
-  // no offseason decisions yet — see the AI offseason planner.
+  // A career alternates weeks with offseason steps, and rivals plan for both.
   const result = state.phase === "OFFSEASON"
-    ? advanceOffseasonStep(state)
+    ? advanceOffseasonStep(state, planOffseasonCommands(state))
     : advanceWeek(state, planWeeklyCommands(state));
   state = result.state;
   events.push(...result.events);
