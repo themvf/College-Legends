@@ -400,6 +400,20 @@ export const VISIT_COST = 20;
  * pursuit points, never worthless either.
  */
 export const VISIT_BASE_BONUS = 6;
+/**
+ * A verbal commitment is contestable before this week, echoing the real
+ * early-signing window landing before the season's back half. At this week,
+ * every still-`COMMITTED` prospect locks to `SIGNED` and a first commitment
+ * made at or after this week signs immediately — there is no more time left
+ * to flip him anyway.
+ */
+export const SIGNING_WEEK = 12;
+/**
+ * The real social and emotional cost of backing out on a program, added only
+ * to the incumbent's own score in a contest for a man already `COMMITTED` to
+ * them. A rival needs a real, stated edge to flip him, not a marginal one.
+ */
+export const COMMITMENT_INERTIA_BONUS = 6;
 
 /**
  * A visit pays more where the program actually fits what the recruit is
@@ -1365,6 +1379,7 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   const rng = new AddressableRng(state.identity.rootSeed).fork(String(state.season), String(state.week));
   resolveCommands(state, commands, rng.fork("commands"), events);
   resolveRecruitingMarket(state, rng.fork("recruiting-market"), events);
+  resolveSigningWeek(state, events);
   recoverPlayers(state);
   developPlayers(state, rng.fork("development"), events);
   applyPracticeFatigue(state);
@@ -1721,7 +1736,10 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       const prospect = state.prospects[command.prospectId];
       const recruiting = state.recruiting[program.id]!;
       const scouting = recruiting.scoutingByProspect[command.prospectId];
-      if (!prospect || prospect.status !== "AVAILABLE" || !scouting) {
+      // A verbal commitment is still contestable — see SIGNING_WEEK — so a
+      // recruit stays reachable up to that point, whoever he is currently
+      // committed to.
+      if (!prospect || (prospect.status !== "AVAILABLE" && prospect.status !== "COMMITTED") || !scouting) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Discover this available prospect before evaluating him." });
         continue;
       }
@@ -1752,7 +1770,10 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       const prospect = state.prospects[command.prospectId];
       const recruiting = state.recruiting[program.id]!;
       const scouting = recruiting.scoutingByProspect[command.prospectId];
-      if (!prospect || prospect.status !== "AVAILABLE" || !scouting) {
+      // A verbal commitment is still contestable — see SIGNING_WEEK — so a
+      // recruit stays reachable up to that point, whoever he is currently
+      // committed to.
+      if (!prospect || (prospect.status !== "AVAILABLE" && prospect.status !== "COMMITTED") || !scouting) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Prospect is unavailable." });
         continue;
       }
@@ -1790,7 +1811,10 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       const prospect = state.prospects[command.prospectId];
       const recruiting = state.recruiting[program.id]!;
       const scouting = recruiting.scoutingByProspect[command.prospectId];
-      if (!prospect || prospect.status !== "AVAILABLE" || !scouting) {
+      // A verbal commitment is still contestable — see SIGNING_WEEK — so a
+      // recruit stays reachable up to that point, whoever he is currently
+      // committed to.
+      if (!prospect || (prospect.status !== "AVAILABLE" && prospect.status !== "COMMITTED") || !scouting) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Prospect is unavailable." });
         continue;
       }
@@ -1824,7 +1848,10 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       const prospect = state.prospects[command.prospectId];
       const recruiting = state.recruiting[program.id]!;
       const scouting = recruiting.scoutingByProspect[command.prospectId];
-      if (!prospect || prospect.status !== "AVAILABLE" || !scouting) {
+      // A verbal commitment is still contestable — see SIGNING_WEEK — so a
+      // recruit stays reachable up to that point, whoever he is currently
+      // committed to.
+      if (!prospect || (prospect.status !== "AVAILABLE" && prospect.status !== "COMMITTED") || !scouting) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Prospect is unavailable." });
         continue;
       }
@@ -1865,7 +1892,10 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       const prospect = state.prospects[command.prospectId];
       const scouting = state.recruiting[program.id]?.scoutingByProspect[command.prospectId];
       const amount = Math.max(0, Math.round(command.weeklyAmount));
-      if (!prospect || prospect.status !== "AVAILABLE" || !scouting) {
+      // A verbal commitment is still contestable — see SIGNING_WEEK — so a
+      // recruit stays reachable up to that point, whoever he is currently
+      // committed to.
+      if (!prospect || (prospect.status !== "AVAILABLE" && prospect.status !== "COMMITTED") || !scouting) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Prospect is unavailable." });
         continue;
       }
@@ -2412,12 +2442,16 @@ function resolveProspectSearch(
  * never become hidden recruiting rules.
  */
 function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
+  // A verbal commitment stays in the market — and therefore contestable —
+  // until the signing week. After that, only a fresh (never-committed)
+  // prospect can still be in this pool, and he signs immediately: see below.
   const contests = Object.values(state.prospects)
-    .filter((prospect) => prospect.status === "AVAILABLE")
+    .filter((prospect) => prospect.status === "AVAILABLE" || (prospect.status === "COMMITTED" && state.week < SIGNING_WEEK))
     .map((prospect) => {
       const offeredBy = Object.keys(state.programs).filter((programId) =>
         ((state.recruiting[programId]?.scoutingByProspect[prospect.id]?.pursuitPoints ?? 0) > 0
           || (state.nil?.[programId]?.offersByProspect[prospect.id] ?? 0) > 0
+          || (state.nil?.[programId]?.commitmentsByPlayer[prospect.id] ?? 0) > 0
           || (state.recruiting[programId]?.offeredProspectIds.includes(prospect.id) ?? false))
         && projectedRecruitingOpenings(state, programId) > 0
       ).sort();
@@ -2437,7 +2471,19 @@ function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: 
     const commitmentThreshold = Math.max(58, 82 - state.week * 2);
     const requiredLead = state.week >= 12 ? 0 : 4;
     if (score < commitmentThreshold || score - (runnerUpScore ?? 0) < requiredLead) continue;
-    contest.prospect.status = "COMMITTED";
+
+    const previousProgramId = contest.prospect.signedProgramId;
+    // Nothing changed: the incumbent simply re-won his own recruit this week.
+    if (contest.prospect.status === "COMMITTED" && previousProgramId === winnerProgramId) continue;
+    const isFlip = contest.prospect.status === "COMMITTED" && previousProgramId !== null && previousProgramId !== winnerProgramId;
+    if (isFlip) {
+      // He stops costing the program he left the moment he leaves it.
+      const previousNil = state.nil?.[previousProgramId!];
+      if (previousNil) delete previousNil.commitmentsByPlayer[contest.prospect.id];
+    }
+
+    const signsImmediately = state.week >= SIGNING_WEEK;
+    contest.prospect.status = signsImmediately ? "SIGNED" : "COMMITTED";
     contest.prospect.signedProgramId = winnerProgramId;
     // The winner's offer converts to a commitment and starts charging this
     // week — settled decision: the drain begins at commitment, not enrollment.
@@ -2469,16 +2515,46 @@ function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: 
       winnerProgramId,
       scores: contest.scores
     });
-    events.push({
-      type: "PROSPECT_COMMITTED",
-      season: state.season,
-      week: state.week,
-      prospectId: contest.prospect.id,
-      programId: winnerProgramId,
-      score,
-      runnerUpProgramId,
-      runnerUpScore
-    });
+    if (isFlip) {
+      events.push({
+        type: "PROSPECT_FLIPPED",
+        season: state.season,
+        week: state.week,
+        prospectId: contest.prospect.id,
+        fromProgramId: previousProgramId!,
+        toProgramId: winnerProgramId,
+        score
+      });
+    } else {
+      events.push({
+        type: "PROSPECT_COMMITTED",
+        season: state.season,
+        week: state.week,
+        prospectId: contest.prospect.id,
+        programId: winnerProgramId,
+        score,
+        runnerUpProgramId,
+        runnerUpScore
+      });
+    }
+    if (signsImmediately) {
+      events.push({ type: "PROSPECT_SIGNED", season: state.season, week: state.week, prospectId: contest.prospect.id, programId: winnerProgramId });
+    }
+  }
+}
+
+/**
+ * Every prospect still verbally `COMMITTED` at the signing week locks to
+ * `SIGNED` — no more flips, whoever ranks where. A prospect who commits for
+ * the first time at or after this week never passes through `COMMITTED` at
+ * all; see the `signsImmediately` branch in `resolveRecruitingMarket`.
+ */
+function resolveSigningWeek(state: GameState, events: GameEvent[]): void {
+  if (state.week !== SIGNING_WEEK) return;
+  for (const prospect of Object.values(state.prospects)) {
+    if (prospect.status !== "COMMITTED") continue;
+    prospect.status = "SIGNED";
+    events.push({ type: "PROSPECT_SIGNED", season: state.season, week: state.week, prospectId: prospect.id, programId: prospect.signedProgramId! });
   }
 }
 
@@ -2493,8 +2569,12 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
   const appealBonus = program.recruitAppeal + (prospect.homeDivisionId === program.divisionId ? program.homeRegionBias / 8 : 0);
   // Money is a tiebreaker by design: nilScore saturates at NIL_SCORE_CEILING,
   // under the fit and interest terms, so an offer decides close contests and
-  // never overcomes a prospect who does not want the program.
-  const nilOffer = state.nil?.[programId]?.offersByProspect[prospect.id] ?? 0;
+  // never overcomes a prospect who does not want the program. A live offer is
+  // read first; once he is committed here the same dollars live in
+  // `commitmentsByPlayer` instead, and must still count toward keeping him.
+  const nilOffer = state.nil?.[programId]?.offersByProspect[prospect.id]
+    ?? state.nil?.[programId]?.commitmentsByPlayer[prospect.id]
+    ?? 0;
   const nilBonus = nilScore(nilOffer, nilAskingPrice(prospect, program), prospect);
   // A bare offer is a small, flat signal — not a substitute for actually
   // pursuing him. See OFFER_SCORE_BONUS for how it is sized against the rest.
@@ -2502,6 +2582,12 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
   // Reuses the same fit the roster requirement reads: a visit pays more where
   // the program actually has what he's looking for.
   const visitBonus = totalVisitScore(fit, scouting?.visitsUsed ?? 0);
+  // The real cost of backing out on a program, added only for whoever he is
+  // currently verbally committed to. A rival needs a real, stated edge to
+  // flip him — not a marginal one.
+  const commitmentInertia = prospect.status === "COMMITTED" && prospect.signedProgramId === programId
+    ? COMMITMENT_INERTIA_BONUS
+    : 0;
   return Number((
     prospect.interestByProgram[programId]! * 0.3
     + fit * 0.35
@@ -2513,6 +2599,7 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
     + nilBonus
     + offerBonus
     + visitBonus
+    + commitmentInertia
     + rng.between(`${prospect.id}:${programId}:decision-noise`, -2, 2)
   ).toFixed(3));
 }
@@ -4330,7 +4417,10 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
   }
   for (const program of Object.values(state.programs)) {
     const commitments = Object.values(state.prospects)
-      .filter((prospect) => prospect.status === "COMMITTED" && prospect.signedProgramId === program.id)
+      // Everyone still COMMITTED should already be SIGNED by the signing
+      // week; SIGNED is the real gate and COMMITTED stays only as a safety
+      // net so nobody is ever lost to an ordering surprise.
+      .filter((prospect) => (prospect.status === "SIGNED" || prospect.status === "COMMITTED") && prospect.signedProgramId === program.id)
       .sort((left, right) => {
         const leftPoints = state.recruiting[program.id]?.scoutingByProspect[left.id]?.pursuitPoints ?? 0;
         const rightPoints = state.recruiting[program.id]?.scoutingByProspect[right.id]?.pursuitPoints ?? 0;

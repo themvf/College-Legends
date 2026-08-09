@@ -109,6 +109,7 @@ import {
   recruitingSearchCost,
   visitScore,
   MAX_VISITS_PER_SEASON,
+  SIGNING_WEEK,
   VISIT_COST,
   SEASON_AWARD_LABELS,
   SEASON_AWARD_TYPES,
@@ -1628,16 +1629,23 @@ function Recruiting({ game, locked, incomingOpenings, pending, onQueue }: {
   const pointsAvailable = Math.max(0, recruiting.points - queuedSpend);
   const prospects = recruiting.discoveredProspectIds
     .map((prospectId) => game.state.prospects[prospectId])
-    .filter((prospect) => prospect && (prospect.status === "AVAILABLE" || prospect.signedProgramId === program.id))
+    .filter((prospect) => prospect && (
+      prospect.status === "AVAILABLE"
+      || prospect.signedProgramId === program.id
+      // A verbal commitment elsewhere is still a flip target up to the signing week.
+      || (prospect.status === "COMMITTED" && game.state.week < SIGNING_WEEK)
+    ))
     .sort((left, right) => {
       const leftReport = prospectScoutingReport(game.state, program.id, left!);
       const rightReport = prospectScoutingReport(game.state, program.id, right!);
-      return Number(right!.status === "COMMITTED") - Number(left!.status === "COMMITTED")
+      const leftMine = left!.signedProgramId === program.id ? 1 : 0;
+      const rightMine = right!.signedProgramId === program.id ? 1 : 0;
+      return rightMine - leftMine
         || rightReport.pursuitPoints - leftReport.pursuitPoints
         || left!.name.localeCompare(right!.name);
     });
   const commitments = Object.values(game.state.prospects).filter((prospect) =>
-    prospect.status === "COMMITTED" && prospect.signedProgramId === program.id
+    (prospect.status === "COMMITTED" || prospect.status === "SIGNED") && prospect.signedProgramId === program.id
   );
   const queueSearch = (searchType: RecruitingSearchType): void => {
     if (searchType === "POSITION") {
@@ -1696,9 +1704,17 @@ function Recruiting({ game, locked, incomingOpenings, pending, onQueue }: {
         );
         const currentlyOffered = recruiting.offeredProspectIds.includes(prospect!.id);
         const offered = queuedOffer ? queuedOffer.extend : currentlyOffered;
-        const committed = prospect!.status === "COMMITTED";
-        return <article className={`panel prospect-card ${committed ? "committed" : ""}`} key={prospect!.id}>
-          <header><div><p className="eyebrow">{prospect!.reputation} · {prospect!.homeStateCode}</p><h2>{prospect!.name}</h2><p>{prospect!.position} · Scouted {report.scoutingPercent}%</p></div><strong>{committed ? "COMMITTED" : report.pursuitPoints ? `${report.pursuitPoints} PTS` : "NEW"}</strong></header>
+        const isMine = prospect!.signedProgramId === program.id;
+        const committedElsewhere = prospect!.status === "COMMITTED" && !isMine;
+        // Verbal until the signing week — still a flip target for a rival,
+        // still worth defending for the incumbent. Locked means the actions
+        // are gone for good.
+        const locked = prospect!.status === "SIGNED" || prospect!.status === "ENROLLED";
+        const badge = locked ? "SIGNED"
+          : prospect!.status === "COMMITTED" ? (isMine ? "YOUR COMMIT" : `FLIP TARGET (${game.state.programs[prospect!.signedProgramId!]?.abbreviation ?? "?"})`)
+          : report.pursuitPoints ? `${report.pursuitPoints} PTS` : "NEW";
+        return <article className={`panel prospect-card ${locked ? "committed" : ""}`} key={prospect!.id}>
+          <header><div><p className="eyebrow">{prospect!.reputation} · {prospect!.homeStateCode}</p><h2>{prospect!.name}</h2><p>{prospect!.position} · Scouted {report.scoutingPercent}%</p></div><strong>{badge}</strong></header>
           <div className="intel-grid">
             <p><span>Overall</span><strong>{report.overall}</strong></p>
             <p><span>Potential</span><strong>{report.potential}</strong></p>
@@ -1709,7 +1725,8 @@ function Recruiting({ game, locked, incomingOpenings, pending, onQueue }: {
           </div>
           {report.priorities.length > 0 && <div className="recruit-fit"><span>Priorities</span><strong>{report.priorities.map(label).join(" · ")}</strong><span>Program fit</span><strong>{report.fitScore}/100</strong></div>}
           {report.competition.length > 0 && <div className="competition"><span>Competition</span>{report.competition.map((entry) => <small key={entry.programId}>{game.state.programs[entry.programId]?.abbreviation}: {entry.points} pts</small>)}</div>}
-          {!committed && <><div className="offer-actions">
+          {committedElsewhere && <p className="muted">Verbally committed elsewhere — still contestable until the signing week.</p>}
+          {!locked && <><div className="offer-actions">
             <span>{offered ? "Scholarship offered" : "No offer extended"}</span>
             <button
               disabled={!offered && incomingOpenings <= 0}
@@ -1743,7 +1760,7 @@ function Recruiting({ game, locked, incomingOpenings, pending, onQueue }: {
             </div>;
           })()}
           <NilOfferControl game={game} prospect={prospect!} pending={pending} onQueue={onQueue} disabled={incomingOpenings <= 0} /></>}
-          {committed && (game.state.nil?.[program.id]?.commitmentsByPlayer[prospect!.id] ?? 0) > 0 &&
+          {isMine && (game.state.nil?.[program.id]?.commitmentsByPlayer[prospect!.id] ?? 0) > 0 &&
             <p className="muted">NIL deal: {money(game.state.nil![program.id]!.commitmentsByPlayer[prospect!.id]!)} a week, charged until he leaves the program.</p>}
         </article>;
       })}</div>}
@@ -1860,8 +1877,12 @@ function eventRelevantToProgram(event: GameEvent, game: GameView): boolean {
     return game.state.players[event.playerId]?.programId === programId;
   }
   if (event.type === "RECRUITING_CONTEST_RESOLVED") return event.offeredBy.includes(programId);
-  if (event.type === "PROSPECT_COMMITTED" || event.type === "NIL_DEAL_SIGNED") {
+  if (event.type === "PROSPECT_COMMITTED" || event.type === "NIL_DEAL_SIGNED" || event.type === "PROSPECT_SIGNED") {
     return event.programId === programId || game.state.recruiting[programId]?.discoveredProspectIds.includes(event.prospectId) === true;
+  }
+  if (event.type === "PROSPECT_FLIPPED") {
+    return event.toProgramId === programId || event.fromProgramId === programId
+      || game.state.recruiting[programId]?.discoveredProspectIds.includes(event.prospectId) === true;
   }
   if (event.type === "NIL_COMMITMENT_ENDED") return event.programId === programId;
   if (event.type === "PROSPECTS_DISCOVERED" || event.type === "PROSPECT_EVALUATED" || event.type === "RECRUITING_INVESTMENT"
@@ -1889,6 +1910,7 @@ function eventIcon(event: GameEvent): string {
   if (event.type === "FACILITY_UPGRADED") return "▲";
   if (event.type === "PROSPECT_SIGNED" || event.type === "PROSPECT_COMMITTED" || event.type === "PROSPECT_ENROLLED") return "★";
   if (event.type === "PROSPECT_COMMITMENT_VOIDED") return "★";
+  if (event.type === "PROSPECT_FLIPPED") return "⇄";
   if (event.type === "PROSPECTS_DISCOVERED" || event.type === "PROSPECT_EVALUATED") return "⌕";
   if (event.type === "RECRUITING_INVESTMENT" || event.type === "RECRUITING_POINTS_ADDED" || event.type === "PROSPECT_OFFERED" || event.type === "RECRUITING_VISIT_SCHEDULED") return "R";
   if (event.type === "PLAYER_BRAND_UPDATED" || event.type === "PLAYER_MEDIA_ACTION_SET") return "✦";
@@ -1965,6 +1987,7 @@ function eventText(event: GameEvent, game: GameView): string {
   if (event.type === "PROSPECT_OFFERED") return event.extended
     ? `Scholarship offered to ${game.state.prospects[event.prospectId]?.name ?? "a prospect"}.`
     : `Scholarship offer to ${game.state.prospects[event.prospectId]?.name ?? "a prospect"} rescinded.`;
+  if (event.type === "PROSPECT_FLIPPED") return `${game.state.prospects[event.prospectId]?.name ?? "A recruit"} flipped from ${game.state.programs[event.fromProgramId]?.name ?? "his old commitment"} to ${game.state.programs[event.toProgramId]?.name ?? "a new one"}.`;
   if (event.type === "RECRUITING_VISIT_SCHEDULED") return `Home visit with ${game.state.prospects[event.prospectId]?.name ?? "a prospect"} worth +${event.bonus.toFixed(1)} · ${event.visitsRemainingThisSeason} visit${event.visitsRemainingThisSeason === 1 ? "" : "s"} left this season.`;
   if (event.type === "PROSPECT_COMMITTED") return `${game.state.prospects[event.prospectId]?.name ?? "Prospect"} committed to ${game.state.programs[event.programId]?.name}; he will enroll next season.`;
   if (event.type === "PROSPECT_ENROLLED") return `${game.state.prospects[event.prospectId]?.name ?? "Freshman"} joined ${game.state.programs[event.programId]?.name}.`;

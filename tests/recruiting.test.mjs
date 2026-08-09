@@ -6,6 +6,7 @@ import {
   createFictionalLeague,
   MAX_VISITS_PER_SEASON,
   NIL_WITHDRAWAL_INTEREST_PENALTY,
+  SIGNING_WEEK,
   visitScore
 } from "../packages/simulation/dist/index.js";
 
@@ -247,6 +248,121 @@ test("a career with visit commands replays byte-identically", () => {
       { type: "SCHEDULE_VISIT", programId, prospectId: prospect.id }
     ]);
     current = advanceWeek(current.state);
+    return current;
+  };
+  assert.deepEqual(run(), run());
+});
+
+test("a rival with a real edge can flip a verbal commitment before the signing week", () => {
+  const state = activeLeague("recruiting-flip");
+  const [programA, programB] = Object.keys(state.programs);
+  const prospect = availableProspects(state)[0];
+  discover(state, programA, prospect.id);
+  discover(state, programB, prospect.id);
+  prospect.interestByProgram[programA] = 60;
+  prospect.interestByProgram[programB] = 60;
+
+  // Program A wins him early with a heavy pursuit-point push.
+  state.recruiting[programA].scoutingByProspect[prospect.id].pursuitPoints = 100;
+  let current = advanceWeek(state);
+  const committed = current.events.find((event) => event.type === "PROSPECT_COMMITTED" && event.prospectId === prospect.id);
+  assert.ok(committed, "program A must land the commitment first");
+  assert.equal(committed.programId, programA);
+  assert.equal(current.state.prospects[prospect.id].status, "COMMITTED");
+  assert.ok(current.state.week < SIGNING_WEEK, "the flip window must still be open");
+
+  // Program B builds an overwhelming edge — enough to clear A's score, A's
+  // commitment inertia, and the required lead all at once.
+  current.state.recruiting[programB].scoutingByProspect[prospect.id].pursuitPoints = 500;
+  const flipped = advanceWeek(current.state);
+  const flip = flipped.events.find((event) => event.type === "PROSPECT_FLIPPED" && event.prospectId === prospect.id);
+  assert.ok(flip, "an overwhelming edge must be able to flip a verbal commitment");
+  assert.equal(flip.fromProgramId, programA);
+  assert.equal(flip.toProgramId, programB);
+  assert.equal(flipped.state.prospects[prospect.id].signedProgramId, programB);
+  assert.equal(flipped.state.prospects[prospect.id].status, "COMMITTED");
+});
+
+test("an unopposed commitment does not re-fire every week it stands", () => {
+  const state = activeLeague("recruiting-no-noop");
+  const programId = Object.keys(state.programs)[0];
+  const prospect = availableProspects(state)[0];
+  discover(state, programId, prospect.id);
+  state.recruiting[programId].scoutingByProspect[prospect.id].pursuitPoints = 100;
+  let current = advanceWeek(state);
+  assert.ok(current.events.some((event) => event.type === "PROSPECT_COMMITTED" && event.prospectId === prospect.id));
+  // Two more quiet weeks with nothing changed for anyone.
+  for (let i = 0; i < 2; i += 1) {
+    current = advanceWeek(current.state);
+    assert.ok(
+      !current.events.some((event) =>
+        (event.type === "PROSPECT_COMMITTED" || event.type === "PROSPECT_FLIPPED") && event.prospectId === prospect.id),
+      "a stable commitment must not re-announce itself"
+    );
+  }
+});
+
+test("the signing week locks a verbal commitment for good", () => {
+  const state = activeLeague("recruiting-signing-lock");
+  const [programA, programB] = Object.keys(state.programs);
+  const prospect = availableProspects(state)[0];
+  discover(state, programA, prospect.id);
+  discover(state, programB, prospect.id);
+  state.recruiting[programA].scoutingByProspect[prospect.id].pursuitPoints = 100;
+
+  let current = advanceWeek(state).state;
+  assert.equal(current.prospects[prospect.id].status, "COMMITTED");
+
+  let signedEvent = null;
+  while (current.week <= 13 && !signedEvent) {
+    const result = advanceWeek(current);
+    signedEvent = result.events.find((event) => event.type === "PROSPECT_SIGNED" && event.prospectId === prospect.id);
+    current = result.state;
+  }
+  assert.ok(signedEvent, "the signing week must lock him in");
+  assert.equal(signedEvent.programId, programA);
+  assert.equal(current.prospects[prospect.id].status, "SIGNED");
+
+  // A wildly overwhelming late offer from program B must not be able to touch him.
+  current.recruiting[programB].scoutingByProspect[prospect.id].pursuitPoints = 1000;
+  const afterSigning = advanceWeek(current);
+  assert.ok(
+    !afterSigning.events.some((event) => event.type === "PROSPECT_FLIPPED" && event.prospectId === prospect.id),
+    "a signed prospect can never be contested again"
+  );
+  assert.equal(afterSigning.state.prospects[prospect.id].signedProgramId, programA);
+  assert.equal(afterSigning.state.prospects[prospect.id].status, "SIGNED");
+});
+
+test("a first commitment made at or after the signing week signs immediately", () => {
+  let state = activeLeague("recruiting-late-sign");
+  const programId = Object.keys(state.programs)[0];
+  // Fast-forward to the signing week with nobody committed to anything.
+  while (state.week < SIGNING_WEEK) state = advanceWeek(state).state;
+  assert.equal(state.week, SIGNING_WEEK);
+  const prospect = availableProspects(state)[0];
+  discover(state, programId, prospect.id);
+  state.recruiting[programId].scoutingByProspect[prospect.id].pursuitPoints = 100;
+  const result = advanceWeek(state);
+  const committed = result.events.find((event) => event.type === "PROSPECT_COMMITTED" && event.prospectId === prospect.id);
+  const signed = result.events.find((event) => event.type === "PROSPECT_SIGNED" && event.prospectId === prospect.id);
+  assert.ok(committed, "the news that he committed is still reported");
+  assert.ok(signed, "and he signs in the same week — there is no flip window left");
+  assert.equal(result.state.prospects[prospect.id].status, "SIGNED");
+});
+
+test("a career spanning a flip and a signing-week lock replays byte-identically", () => {
+  const run = () => {
+    const state = activeLeague("recruiting-flip-replay");
+    const [programA, programB] = Object.keys(state.programs);
+    const prospect = availableProspects(state)[0];
+    discover(state, programA, prospect.id);
+    discover(state, programB, prospect.id);
+    state.recruiting[programA].scoutingByProspect[prospect.id].pursuitPoints = 100;
+    let current = advanceWeek(state).state;
+    current.recruiting[programB].scoutingByProspect[prospect.id].pursuitPoints = 500;
+    current = advanceWeek(current).state;
+    for (let i = 0; i < 3; i += 1) current = advanceWeek(current).state;
     return current;
   };
   assert.deepEqual(run(), run());

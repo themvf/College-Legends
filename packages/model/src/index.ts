@@ -621,7 +621,12 @@ export interface Prospect {
   priorities: RecruitPriority[];
   /** A prospect's private fit with each school, generated from the save seed. */
   interestByProgram: Record<ProgramId, number>;
-  status: "AVAILABLE" | "COMMITTED" | "ENROLLED" | "WITHDRAWN";
+  /**
+   * `COMMITTED` is verbal and contestable — a rival can still flip him — until
+   * the signing week, when he becomes `SIGNED` and can never be contested
+   * again. `ENROLLED` is a season later, once he actually joins the roster.
+   */
+  status: "AVAILABLE" | "COMMITTED" | "SIGNED" | "ENROLLED" | "WITHDRAWN";
   signedProgramId: ProgramId | null;
 }
 
@@ -999,7 +1004,12 @@ export type GameEvent =
       winnerProgramId: ProgramId;
       scores: Record<ProgramId, number>;
     }
-  | { type: "PROSPECT_SIGNED"; season: Season; week: number; prospectId: ProspectId; playerId: PlayerId; programId: ProgramId }
+  /**
+   * He can never be contested again after this — the signing week lock, or an
+   * immediate sign for a first commitment made after that week. Enrollment is
+   * a season later and has its own event; there is no player yet here.
+   */
+  | { type: "PROSPECT_SIGNED"; season: Season; week: number; prospectId: ProspectId; programId: ProgramId }
   | {
       type: "PROSPECTS_DISCOVERED";
       season: Season;
@@ -1054,6 +1064,16 @@ export type GameEvent =
       score: number;
       runnerUpProgramId: ProgramId | null;
       runnerUpScore: number | null;
+    }
+  /** A rival won a verbal commitment away from its incumbent before the signing week. */
+  | {
+      type: "PROSPECT_FLIPPED";
+      season: Season;
+      week: number;
+      prospectId: ProspectId;
+      fromProgramId: ProgramId;
+      toProgramId: ProgramId;
+      score: number;
     }
   | { type: "PROSPECT_ENROLLED"; season: Season; prospectId: ProspectId; playerId: PlayerId; programId: ProgramId }
   /**

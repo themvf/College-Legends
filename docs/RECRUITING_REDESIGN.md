@@ -1,5 +1,37 @@
 # Recruiting: a real offer, a visit, and a signing period — spec
 
+## Status (2026-08, shipped)
+
+The bug fix and slices A–C below are built and committed test-first. Slice D
+(pipelines) is still the sketch below — not started.
+
+Deviations from the plan, found while building it:
+
+- **`recruitingScore`'s NIL term had a latent gap the plan didn't anticipate.**
+  Once a prospect commits, his weekly dollars move from `offersByProspect` to
+  `commitmentsByPlayer` (settled behavior from `NIL_RECRUITING.md`). Making
+  `COMMITTED` contestable again meant that gap became live: the incumbent's
+  own NIL score would have silently dropped to zero the week after commitment,
+  even though he is still being paid. Fixed by having `recruitingScore` read
+  `commitmentsByPlayer` as a fallback when there is no live offer.
+- **The eligibility gate broadened on all five recruiting commands, not just
+  three.** `EVALUATE_PROSPECT` and `SET_NIL_OFFER` needed the same
+  `AVAILABLE`-or-`COMMITTED` broadening as `OFFER_PROSPECT`,
+  `INVEST_RECRUITING_POINTS`, and `SCHEDULE_VISIT` — a rival scouting or
+  bidding on a flip target needs the same access a first-time pursuit does.
+- **The rollover enrollment filter reads `SIGNED` and, defensively,
+  `COMMITTED`.** Everyone should be `SIGNED` by rollover; the fallback is a
+  safety net against an ordering surprise, not a sign the sweep is expected to
+  miss anyone.
+- **The AI does not yet attempt a flip.** It still only pursues `AVAILABLE`
+  prospects. Its own commitments are still defended automatically —
+  `COMMITMENT_INERTIA_BONUS` requires no action — but a human player can
+  currently flip a rival's recruit in a way no rival will attempt back. Known
+  and deliberately deferred rather than rushed into the riskiest slice of this
+  spec; worth a follow-up once the flip mechanic itself has been played.
+
+---
+
 Follows the 2026-08 audit recorded in `NIL_RECRUITING.md`'s "Status against
 the full redesign" section, which measured the current recruiting market
 against the real NCAA process and EA Sports College Football's Dynasty mode.
