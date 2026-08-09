@@ -75,8 +75,27 @@ a POWER program's ~$130K donor capacity. Two things follow, both deferred
 rather than blind-tuned: the `transferRisk` formula produces too flat a
 quality distribution for the portal to be the fast climb §12 describes, and
 `portalAskingPrice` is priced far under what scarcity at the top should cost.
-Both are balance hypotheses; neither is worth moving before the AI bids
-(slice 4) and the market has real competition in it.
+Both are balance hypotheses that predate this work; neither is worth moving
+until the offseason has screens and the market has a human in it.
+
+**Five seasons, 24 programs, before and after — the defect this phase exists
+to fix:**
+
+| | before | after |
+|---|---|---|
+| players stuck in `PORTAL` forever | **389** | **0** |
+| every listing accounted for | — | 389 = 28 signed + 361 unclaimed |
+| smallest roster in the league | 18 | 21 |
+| coach changes over five seasons | 0 | 21 |
+
+Nobody is stranded any more, and roster minimums moved the right way, since
+a transfer can now actually be signed by somebody. But **only 7% of listings
+found a home** (28 of 389), which is the quality problem above seen from the
+other side: most of what enters the portal is not worth a bid from anyone.
+The shrinking-roster problem is *not* caused by this work — it is worse on
+the baseline — and traces to rival programs under-recruiting by roughly
+seven signees a year against natural attrition. Logged here because the
+measurement surfaced it, not because this slice introduced it.
 
 ## Why
 
