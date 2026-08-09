@@ -651,6 +651,36 @@ export interface ProspectScoutingState {
   visitsUsed?: number;
 }
 
+/**
+ * What every contested recruit has in common, whether he is a high-school
+ * prospect or a player in the transfer portal. `prospectProgramFit` and the
+ * market's scoring read this rather than `Prospect`, so one formula serves
+ * both pools and the two can never drift apart.
+ */
+export interface Recruitable {
+  id: string;
+  position: Position;
+  overall: number;
+  homeDivisionId: DivisionId;
+  priorities: RecruitPriority[];
+  interestByProgram: Record<ProgramId, number>;
+}
+
+/**
+ * A player who entered the portal and is open to bids — including from the
+ * program he just left, which is what makes retention the same market played
+ * in the other direction rather than a second system.
+ */
+export interface PortalListingState {
+  /** The program he is leaving. Gets an incumbency term when it bids to keep him. */
+  previousProgramId: ProgramId;
+  /** Drawn the same way a prospect's are; what he is looking for in a new home. */
+  priorities: RecruitPriority[];
+  interestByProgram: Record<ProgramId, number>;
+  /** Weekly dollars bid, by program. Cleared when the window resolves. */
+  bidsByProgram: Record<ProgramId, { points: number; weeklyNil: number }>;
+}
+
 export interface RecruitingProgramState {
   points: number;
   weeklyPoints: number;
@@ -846,6 +876,8 @@ export interface GameState {
   boosters: Record<ProgramId, BoosterProgramState>;
   /** NIL offers and commitments per program. The capacity ceiling is derived, never stored. */
   nil: Record<ProgramId, NilProgramState>;
+  /** Players open to bids in the offseason portal window. Empty outside it. */
+  portal?: Record<PlayerId, PortalListingState>;
   staff: Record<string, StaffMember>;
   depthCharts: Record<ProgramId, DepthChart>;
   playerGameStats: PlayerGameStatLine[];
@@ -931,7 +963,16 @@ export type GameCommand =
    * defaults — there is no maintenance chore and no punishment for not
    * reading a screen.
    */
-  | { type: "CONTINUE_OFFSEASON"; programId: ProgramId };
+  | { type: "CONTINUE_OFFSEASON"; programId: ProgramId }
+  /**
+   * A bid on a player in the portal, valid only during the portal step. One
+   * bid per program per player — re-bidding replaces rather than stacks, so
+   * the amount is always absolute and command order cannot decide a winner.
+   * A program bidding on a player it is losing is a retention offer; the
+   * engine treats it as the same market, played in the other direction.
+   * `points: 0, weeklyNil: 0` withdraws.
+   */
+  | { type: "BID_PORTAL_PLAYER"; programId: ProgramId; playerId: PlayerId; points: number; weeklyNil: number };
 
 export type GameEvent =
   | {
@@ -1202,6 +1243,26 @@ export type GameEvent =
   | { type: "SEASON_STATS_ARCHIVED"; season: Season; week: number; players: number; rowsFolded: number }
   /** The season is over and the offseason has opened on its first step. */
   | { type: "OFFSEASON_BEGAN"; season: Season; step: OffseasonStep }
+  /** Somebody entered the portal and can be bid on, by anybody. */
+  | { type: "PORTAL_PLAYER_LISTED"; season: Season; playerId: PlayerId; previousProgramId: ProgramId; askingPrice: number }
+  /**
+   * The window closed and he chose. `retained` marks the case where the
+   * program he was leaving won him back.
+   */
+  | {
+      type: "PORTAL_PLAYER_SIGNED";
+      season: Season;
+      playerId: PlayerId;
+      programId: ProgramId;
+      previousProgramId: ProgramId;
+      retained: boolean;
+      score: number;
+      runnerUpProgramId: ProgramId | null;
+      runnerUpScore: number | null;
+      weeklyNil: number;
+    }
+  /** Nobody bid enough. His career at this level is over rather than left hanging. */
+  | { type: "PORTAL_PLAYER_UNCLAIMED"; season: Season; playerId: PlayerId; previousProgramId: ProgramId }
   /** One offseason step closed. `nextStep` is null when the offseason itself ends. */
   | { type: "OFFSEASON_STEP_COMPLETED"; season: Season; step: OffseasonStep; nextStep: OffseasonStep | null }
   | { type: "BOOSTER_OFFERED"; season: Season; week: number; programId: ProgramId; options: BoosterOption[] }

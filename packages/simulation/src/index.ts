@@ -1,4 +1,4 @@
-import type { OffseasonStep, WeekFocus, AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, InjurySeverity, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, PlayerInjury, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffFocus, StaffMember, StaffRole, OpponentDossier } from "@college-legends/model";
+import type { OffseasonStep, PortalListingState, Recruitable, WeekFocus, AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, InjurySeverity, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, PlayerInjury, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffFocus, StaffMember, StaffRole, OpponentDossier } from "@college-legends/model";
 import { DEFAULT_BALANCE, FICTIONAL_PROGRAMS, fictionalPersonName, PROGRAM_CHARACTERS } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
 import { attributeByRole, attributesFor, computeOverall, ratingByRole, type AttributeDefinition } from "./attributes.js";
@@ -36,7 +36,17 @@ import { activeSponsorship, advertisingReach, createSponsorshipProgramState, DEF
 import { MAXIMUM_REPS_PER_SIDE, planExecution, repsFatigue, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
 import { foldSeasonStats } from "./persistence.js";
 import { advertisingCredit, applyBooster, boosterDueThisWeek, buildBoosterOffer, takeawayMultiplier } from "./boosters.js";
-import { committedNilTotal, emptyNilState, freeNilCapacity, nilAskingPrice, nilScore, NIL_WITHDRAWAL_INTEREST_PENALTY } from "./nil.js";
+import { committedNilTotal, emptyNilState, freeNilCapacity, nilAskingPrice, nilScore, reservedNilTotal, weeklyDonorCapacity, NIL_WITHDRAWAL_INTEREST_PENALTY } from "./nil.js";
+import {
+  portalAskingPrice,
+  portalNilScore,
+  portalPriorityWeight,
+  portalRecruitable,
+  reservedPortalNil,
+  PORTAL_COMMITMENT_THRESHOLD,
+  PORTAL_INCUMBENT_BONUS,
+  PORTAL_MINIMUM_POINTS
+} from "./portal.js";
 
 export {
   committedNilTotal,
@@ -55,6 +65,18 @@ export {
   reservedNilTotal,
   weeklyDonorCapacity
 } from "./nil.js";
+
+export {
+  portalAskingPrice,
+  portalListings,
+  portalNilScore,
+  portalPriorityWeight,
+  portalRecruitable,
+  reservedPortalNil,
+  PORTAL_COMMITMENT_THRESHOLD,
+  PORTAL_INCUMBENT_BONUS,
+  PORTAL_MINIMUM_POINTS
+} from "./portal.js";
 
 export {
   advertisingCredit,
@@ -2633,7 +2655,12 @@ function scoutingQuality(state: Readonly<GameState>, programId: string): number 
   return clamp(25 + program.facilities.RECRUITING * 12 + staffContribution(state, programId, "RECRUIT") / 6, 25, 100);
 }
 
-export function prospectProgramFit(state: Readonly<GameState>, prospect: Readonly<Prospect>, programId: string): number {
+/**
+ * How well a program serves what this recruit is actually looking for. Reads
+ * `Recruitable`, not `Prospect`, so a portal player is scored by exactly the
+ * same formula as a high-school signee — one implementation, two pools.
+ */
+export function prospectProgramFit(state: Readonly<GameState>, prospect: Readonly<Recruitable>, programId: string): number {
   const program = state.programs[programId];
   if (!program) return 0;
   const rosterAtPosition = Object.values(state.players).filter((player) =>
@@ -4478,6 +4505,7 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
       endNilCommitment(state, player.programId, player.id, "TRANSFER_PORTAL", events);
     }
   }
+  openPortalWindow(state, new AddressableRng(state.identity.rootSeed).fork("portal-listings", String(state.season)), events);
   // The season is finished and every departure is settled. The rest of what
   // used to happen here — enrolling the incoming class, generating next
   // year's board, rebuilding the schedule — now waits until the offseason's
@@ -4485,6 +4513,135 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
   state.phase = "OFFSEASON";
   state.offseasonStep = OFFSEASON_STEPS[0];
   events.push({ type: "OFFSEASON_BEGAN", season: state.season, step: OFFSEASON_STEPS[0] });
+}
+
+/**
+ * Everyone who just entered the portal becomes a listing anybody can bid on,
+ * including the program he is leaving. Interest is drawn the same
+ * addressable way a prospect's is, so the same seed always meets the same
+ * market.
+ */
+function openPortalWindow(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
+  state.portal = {};
+  const programIds = Object.keys(state.programs).sort();
+  for (const player of Object.values(state.players).sort((left, right) => left.id.localeCompare(right.id))) {
+    if (player.eligibility.rosterStatus !== "PORTAL" || player.programId === null) continue;
+    const priorities = [...RECRUIT_PRIORITIES]
+      .sort((left, right) => rng.at(`${player.id}:priority:${left}`) - rng.at(`${player.id}:priority:${right}`))
+      .slice(0, 3);
+    state.portal[player.id] = {
+      previousProgramId: player.programId,
+      priorities,
+      interestByProgram: Object.fromEntries(programIds.map((programId) => [
+        programId,
+        Number(rng.between(`${player.id}:${programId}:interest`, 35, 88).toFixed(3))
+      ])),
+      bidsByProgram: {}
+    };
+    events.push({
+      type: "PORTAL_PLAYER_LISTED",
+      season: state.season,
+      playerId: player.id,
+      previousProgramId: player.programId,
+      askingPrice: portalAskingPrice(player)
+    });
+  }
+}
+
+/**
+ * One shot, all bids together — the same order-independent resolution the
+ * recruiting market uses, minus the multi-week contest. Whoever ranks first
+ * above the threshold takes him; if that is the program he was leaving, he was
+ * retained. Anybody nobody wanted leaves the level entirely rather than
+ * lingering in `PORTAL` forever, which is the defect this window exists to fix.
+ */
+function resolvePortalMarket(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
+  const listings = Object.entries(state.portal ?? {}).sort(([left], [right]) => left.localeCompare(right));
+  for (const [playerId, listing] of listings) {
+    const player = state.players[playerId];
+    if (!player) continue;
+    const bidders = Object.keys(listing.bidsByProgram).sort();
+    const scores = Object.fromEntries(bidders.map((programId) => [
+      programId,
+      portalBidScore(state, player, listing, programId, rng)
+    ]));
+    const ranked = [...bidders].sort((left, right) => scores[right]! - scores[left]! || left.localeCompare(right));
+    const winnerProgramId = ranked[0];
+    const score = winnerProgramId ? scores[winnerProgramId]! : 0;
+    if (!winnerProgramId || score < PORTAL_COMMITMENT_THRESHOLD) {
+      player.eligibility.rosterStatus = "DEPARTED";
+      events.push({
+        type: "PORTAL_PLAYER_UNCLAIMED",
+        season: state.season,
+        playerId,
+        previousProgramId: listing.previousProgramId
+      });
+      continue;
+    }
+    const runnerUpProgramId = ranked[1] ?? null;
+    const weeklyNil = listing.bidsByProgram[winnerProgramId]?.weeklyNil ?? 0;
+    const retained = winnerProgramId === listing.previousProgramId;
+    // A transfer keeps whatever eligibility he had left — the one real way he
+    // differs from a freshman, and the reason the portal is the fast climb.
+    player.programId = winnerProgramId;
+    player.eligibility.rosterStatus = "SCHOLARSHIP";
+    if (weeklyNil > 0) {
+      state.nil ??= {};
+      state.nil[winnerProgramId] ??= emptyNilState();
+      state.nil[winnerProgramId]!.commitmentsByPlayer[playerId] = weeklyNil;
+    }
+    events.push({
+      type: "PORTAL_PLAYER_SIGNED",
+      season: state.season,
+      playerId,
+      programId: winnerProgramId,
+      previousProgramId: listing.previousProgramId,
+      retained,
+      score,
+      runnerUpProgramId,
+      runnerUpScore: runnerUpProgramId ? scores[runnerUpProgramId]! : null,
+      weeklyNil
+    });
+  }
+  state.portal = {};
+  for (const programId of Object.keys(state.programs)) repairDepthChart(state, programId);
+}
+
+/**
+ * The same shape as `recruitingScore`, on the same coefficients, reading the
+ * same `prospectProgramFit`. What it drops are the terms a one-shot window
+ * has no room for — a standing offer, accumulated visits, a verbal commitment
+ * to defend — and what it adds is the incumbent's existing relationship.
+ */
+function portalBidScore(
+  state: GameState,
+  player: Readonly<Player>,
+  listing: Readonly<PortalListingState>,
+  programId: string,
+  rng: AddressableRng
+): number {
+  const program = state.programs[programId];
+  if (!program) return 0;
+  const bid = listing.bidsByProgram[programId] ?? { points: 0, weeklyNil: 0 };
+  const recruitable = portalRecruitable(player, listing);
+  const facilityBonus = Math.max(0, program.facilities.RECRUITING - 1) * 2;
+  const staffBonus = staffContribution(state, programId, "RECRUIT") / 25;
+  const exposureBonus = program.localPress / 50 + program.nationalPress / 20;
+  const appealBonus = program.recruitAppeal + (player.homeDivisionId === program.divisionId ? program.homeRegionBias / 8 : 0);
+  const nilBonus = portalNilScore(bid.weeklyNil, portalAskingPrice(player), portalPriorityWeight(listing));
+  const incumbentBonus = programId === listing.previousProgramId ? PORTAL_INCUMBENT_BONUS : 0;
+  return Number((
+    listing.interestByProgram[programId]! * 0.3
+    + prospectProgramFit(state, recruitable, programId) * 0.35
+    + bid.points * 0.75
+    + facilityBonus
+    + staffBonus
+    + exposureBonus
+    + appealBonus
+    + nilBonus
+    + incumbentBonus
+    + rng.between(`${player.id}:${programId}:decision-noise`, -2, 2)
+  ).toFixed(3));
 }
 
 /**
@@ -4585,6 +4742,7 @@ export function advanceOffseasonStep(input: Readonly<GameState>, commands: reado
   const events: GameEvent[] = [];
   const rng = new AddressableRng(state.identity.rootSeed).fork("offseason", String(state.season), step);
   resolveOffseasonCommands(state, step, commands, rng.fork("commands"), events);
+  if (step === "PORTAL") resolvePortalMarket(state, rng.fork("portal-market"), events);
   const nextIndex = OFFSEASON_STEPS.indexOf(step) + 1;
   const nextStep = OFFSEASON_STEPS[nextIndex] ?? null;
   events.push({ type: "OFFSEASON_STEP_COMPLETED", season: state.season, step, nextStep });
@@ -4611,8 +4769,14 @@ function resolveOffseasonCommands(
   _rng: AddressableRng,
   events: GameEvent[]
 ): void {
-  for (const command of commands) {
+  // Sorted so a program cannot change the outcome by ordering its own bids.
+  const ordered = [...commands].sort((left, right) => offseasonArbitrationKey(left).localeCompare(offseasonArbitrationKey(right)));
+  for (const command of ordered) {
     if (command.type === "CONTINUE_OFFSEASON") continue;
+    if (command.type === "BID_PORTAL_PLAYER" && step === "PORTAL") {
+      applyPortalBid(state, command, events);
+      continue;
+    }
     events.push({
       type: "COMMAND_REJECTED",
       programId: command.programId,
@@ -4620,6 +4784,68 @@ function resolveOffseasonCommands(
       reason: `That decision cannot be made during ${OFFSEASON_STEP_LABELS[step]}.`
     });
   }
+}
+
+function offseasonArbitrationKey(command: GameCommand): string {
+  if (command.type === "BID_PORTAL_PLAYER") return `${command.programId}:0:${command.playerId}`;
+  return `${command.programId}:9:${command.type}`;
+}
+
+/**
+ * Records one program's bid on one portal player. Absolute, not additive: a
+ * second bid replaces the first, so no amount of re-sending changes what the
+ * market sees. Nothing is charged here — the window resolves together, and
+ * only the winner pays.
+ */
+function applyPortalBid(
+  state: GameState,
+  command: Extract<GameCommand, { type: "BID_PORTAL_PLAYER" }>,
+  events: GameEvent[]
+): void {
+  const reject = (reason: string): void => {
+    events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason });
+  };
+  const listing = state.portal?.[command.playerId];
+  const player = state.players[command.playerId];
+  if (!listing || !player) { reject("That player is not in the portal."); return; }
+  const recruiting = state.recruiting[command.programId];
+  const program = state.programs[command.programId];
+  if (!recruiting || !program) { reject("Program does not exist."); return; }
+
+  const points = Math.trunc(command.points);
+  const weeklyNil = Math.max(0, Math.round(command.weeklyNil));
+  if (points === 0 && weeklyNil === 0) {
+    delete listing.bidsByProgram[command.programId];
+    return;
+  }
+  if (points < PORTAL_MINIMUM_POINTS) {
+    reject(`A serious bid starts at ${PORTAL_MINIMUM_POINTS} Recruiting Points.`);
+    return;
+  }
+  // A program can only take him if it will have room for him.
+  if (projectedRecruitingOpenings(state, command.programId) <= 0) {
+    reject("The projected roster is full.");
+    return;
+  }
+  const existing = listing.bidsByProgram[command.programId];
+  const otherPoints = Object.values(state.portal ?? {})
+    .reduce((sum, other) => sum + (other === listing ? 0 : other.bidsByProgram[command.programId]?.points ?? 0), 0);
+  if (points + otherPoints > recruiting.points) {
+    reject("Not enough Recruiting Points to cover every bid you have out.");
+    return;
+  }
+  // Committed dollars plus every live bid must stay inside the donor ceiling,
+  // exactly as a recruiting offer must — the same portfolio decision.
+  const reservedElsewhere = reservedPortalNil(state, command.programId) - (existing?.weeklyNil ?? 0);
+  const available = weeklyDonorCapacity(program)
+    - committedNilTotal(state, command.programId)
+    - reservedNilTotal(state, command.programId)
+    - reservedElsewhere;
+  if (weeklyNil > available) {
+    reject("Your donors cannot cover that offer alongside the money already promised.");
+    return;
+  }
+  listing.bidsByProgram[command.programId] = { points, weeklyNil };
 }
 
 export const OFFSEASON_STEP_LABELS: Record<OffseasonStep, string> = {

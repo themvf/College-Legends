@@ -1,5 +1,65 @@
 # The offseason phase — spec
 
+## Status (2026-08, building)
+
+Slices 1 and 2 are built and committed test-first on
+`claude/offseason-phase`: the phase itself with its four ordered steps, and
+the portal window. Slices 3 (buyout, coaching checkpoint, training camp) and
+4 (the AI offseason planner) are the sections below, not yet built.
+
+**Deviations from the plan, found while building it:**
+
+- **The portal is one bid command, not the recruiting market's four.** The
+  spec said to reuse `OFFER_PROSPECT` / `INVEST_RECRUITING_POINTS` /
+  `SCHEDULE_VISIT` / a NIL offer. Those four are interesting across fourteen
+  weeks *because* they interact over time — an offer opens the door, visits
+  compound, money breaks a tie at the end. Compressed into a single-shot
+  window they are four sliders with no reason not to max all of them.
+  `BID_PORTAL_PLAYER { points, weeklyNil }` is the same decision with the
+  ceremony removed, and it keeps the part the spec actually cared about: the
+  *scoring* is shared, not duplicated.
+- **Retention is a bid on your own player, not a pre-placed offer.** The plan
+  had `RETAIN_PLAYER` placed one offseason and applied at the next rollover's
+  transfer roll — a season-long standing decision made with no information.
+  Instead, a player who enters the portal can be bid on by anyone *including
+  the program he is leaving*, which is what really happens, needs no second
+  mechanism, and gives the decision full information: you know who left before
+  you decide who to fight for. `PORTAL_INCUMBENT_BONUS` (4, against a
+  recruit's inertia of 6) prices the existing relationship — deliberately
+  smaller, because a man who has already decided to leave is harder to hold
+  than one who merely verballed elsewhere.
+- **`Recruitable` narrowed one function, not two.** `prospectProgramFit` now
+  reads the shared interface and serves both pools unchanged.
+  `recruitingScore` did *not* generalize: half its terms (a standing offer,
+  accumulated visits, a verbal commitment to defend) have no meaning in a
+  one-shot window. `portalBidScore` is a sibling on the same coefficients
+  reading the same fit function, which keeps the two honest without forcing
+  one function to branch on which pool it is scoring.
+- **The web prototype auto-runs the offseason.** No offseason screens exist
+  yet, so the worker steps through with the do-nothing defaults rather than
+  stranding a player on a phase with no UI. Marked in the worker for
+  replacement.
+
+**Measured at 72 programs, one season — this settles Open question 1:**
+
+| | |
+|---|---|
+| scholarship players | 6,120 |
+| portal listings after one season | **281**, or 3.9 per program |
+| overall: under 60 / 60–70 / 70–80 / 80+ | 123 / 80 / 56 / **22** |
+| asking price: min / median / max | $100 / $300 / $2,550 a week |
+
+So the pool is real — a step's worth of attention, not a trickle — but it is
+mostly fringe: **the median transfer is a 61-overall depth piece.** Only 22
+players a year across the whole league are the 80+ starters the "portal is
+the climb" thesis is about, and at $2,550 a week even those are cheap against
+a POWER program's ~$130K donor capacity. Two things follow, both deferred
+rather than blind-tuned: the `transferRisk` formula produces too flat a
+quality distribution for the portal to be the fast climb §12 describes, and
+`portalAskingPrice` is priced far under what scarcity at the top should cost.
+Both are balance hypotheses; neither is worth moving before the AI bids
+(slice 4) and the market has real competition in it.
+
 ## Why
 
 `rolloverSeason` (`packages/simulation/src/index.ts:4421`) runs entirely

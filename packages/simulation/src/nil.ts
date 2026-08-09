@@ -77,7 +77,7 @@ export function nilAskingPrice(prospect: Readonly<Prospect>, program?: Readonly<
  * on a kid choosing home or the classroom — the low-tier strategy stays
  * "serve the priorities you can serve", not "outbid".
  */
-export function nilPriorityWeight(prospect: Readonly<Prospect>): number {
+export function nilPriorityWeight(prospect: Readonly<Pick<Prospect, "priorities">>): number {
   if (prospect.priorities.includes("PERSONAL_STARDOM")) return 1.35;
   if (prospect.priorities.includes("CLOSE_TO_HOME") || prospect.priorities.includes("ACADEMICS")) return 0.65;
   return 1.0;
