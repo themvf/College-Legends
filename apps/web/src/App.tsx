@@ -1688,6 +1688,11 @@ function Recruiting({ game, locked, incomingOpenings, pending, onQueue }: {
         const pendingEvaluations = pending.filter((command): command is Extract<GameCommand, { type: "EVALUATE_PROSPECT" }> =>
           command.type === "EVALUATE_PROSPECT" && command.prospectId === prospect!.id
         ).map((command) => command.evaluation);
+        const queuedOffer = pending.find((command): command is Extract<GameCommand, { type: "OFFER_PROSPECT" }> =>
+          command.type === "OFFER_PROSPECT" && command.prospectId === prospect!.id
+        );
+        const currentlyOffered = recruiting.offeredProspectIds.includes(prospect!.id);
+        const offered = queuedOffer ? queuedOffer.extend : currentlyOffered;
         const committed = prospect!.status === "COMMITTED";
         return <article className={`panel prospect-card ${committed ? "committed" : ""}`} key={prospect!.id}>
           <header><div><p className="eyebrow">{prospect!.reputation} · {prospect!.homeStateCode}</p><h2>{prospect!.name}</h2><p>{prospect!.position} · Scouted {report.scoutingPercent}%</p></div><strong>{committed ? "COMMITTED" : report.pursuitPoints ? `${report.pursuitPoints} PTS` : "NEW"}</strong></header>
@@ -1701,7 +1706,16 @@ function Recruiting({ game, locked, incomingOpenings, pending, onQueue }: {
           </div>
           {report.priorities.length > 0 && <div className="recruit-fit"><span>Priorities</span><strong>{report.priorities.map(label).join(" · ")}</strong><span>Program fit</span><strong>{report.fitScore}/100</strong></div>}
           {report.competition.length > 0 && <div className="competition"><span>Competition</span>{report.competition.map((entry) => <small key={entry.programId}>{game.state.programs[entry.programId]?.abbreviation}: {entry.points} pts</small>)}</div>}
-          {!committed && <><div className="evaluation-actions">{recruitingEvaluations.map((evaluation) => {
+          {!committed && <><div className="offer-actions">
+            <span>{offered ? "Scholarship offered" : "No offer extended"}</span>
+            <button
+              disabled={!offered && incomingOpenings <= 0}
+              onClick={() => onQueue({ type: "OFFER_PROSPECT", programId: program.id, prospectId: prospect!.id, extend: !offered })}
+            >
+              {offered ? "Rescind offer" : "Offer scholarship"}
+            </button>
+          </div>
+          <div className="evaluation-actions">{recruitingEvaluations.map((evaluation) => {
             const complete = game.state.recruiting[program.id]!.scoutingByProspect[prospect!.id]!.evaluations.includes(evaluation);
             const queued = pendingEvaluations.includes(evaluation);
             const cost = recruitingEvaluationCost(evaluation);
@@ -1709,7 +1723,7 @@ function Recruiting({ game, locked, incomingOpenings, pending, onQueue }: {
               {complete ? `${label(evaluation)} ✓` : queued ? `${label(evaluation)} queued` : `${label(evaluation)} · ${cost}`}
             </button>;
           })}</div>
-          <div className="pursuit-actions"><span>{incomingOpenings > 0 ? "Entice him to join" : "Incoming class full"}</span>{[5, 10, 20].map((points) => <button disabled={incomingOpenings <= 0 || pointsAvailable < points} key={points} onClick={() => onQueue({ type: "INVEST_RECRUITING_POINTS", programId: program.id, prospectId: prospect!.id, points })}>+{points}</button>)}{queuedInvestment && <strong>+{queuedInvestment.points} queued</strong>}</div>
+          <div className="pursuit-actions"><span>{!offered ? "Offer him first" : incomingOpenings > 0 ? "Entice him to join" : "Incoming class full"}</span>{[5, 10, 20].map((points) => <button disabled={!offered || incomingOpenings <= 0 || pointsAvailable < points} key={points} onClick={() => onQueue({ type: "INVEST_RECRUITING_POINTS", programId: program.id, prospectId: prospect!.id, points })}>+{points}</button>)}{queuedInvestment && <strong>+{queuedInvestment.points} queued</strong>}</div>
           <NilOfferControl game={game} prospect={prospect!} pending={pending} onQueue={onQueue} disabled={incomingOpenings <= 0} /></>}
           {committed && (game.state.nil?.[program.id]?.commitmentsByPlayer[prospect!.id] ?? 0) > 0 &&
             <p className="muted">NIL deal: {money(game.state.nil![program.id]!.commitmentsByPlayer[prospect!.id]!)} a week, charged until he leaves the program.</p>}
@@ -1855,6 +1869,7 @@ function eventIcon(event: GameEvent): string {
   if (event.type === "SPONSORSHIP_ACCEPTED" || event.type === "SPONSORSHIP_PAYMENT") return "＄";
   if (event.type === "FACILITY_UPGRADED") return "▲";
   if (event.type === "PROSPECT_SIGNED" || event.type === "PROSPECT_COMMITTED" || event.type === "PROSPECT_ENROLLED") return "★";
+  if (event.type === "PROSPECT_COMMITMENT_VOIDED") return "★";
   if (event.type === "PROSPECTS_DISCOVERED" || event.type === "PROSPECT_EVALUATED") return "⌕";
   if (event.type === "RECRUITING_INVESTMENT" || event.type === "RECRUITING_POINTS_ADDED") return "R";
   if (event.type === "PLAYER_BRAND_UPDATED" || event.type === "PLAYER_MEDIA_ACTION_SET") return "✦";
@@ -1930,6 +1945,7 @@ function eventText(event: GameEvent, game: GameView): string {
   if (event.type === "RECRUITING_INVESTMENT") return `${event.pointsSpent} points invested in ${game.state.prospects[event.prospectId]?.name ?? "prospect"} · ${event.totalInvestment} total.`;
   if (event.type === "PROSPECT_COMMITTED") return `${game.state.prospects[event.prospectId]?.name ?? "Prospect"} committed to ${game.state.programs[event.programId]?.name}; he will enroll next season.`;
   if (event.type === "PROSPECT_ENROLLED") return `${game.state.prospects[event.prospectId]?.name ?? "Freshman"} joined ${game.state.programs[event.programId]?.name}.`;
+  if (event.type === "PROSPECT_COMMITMENT_VOIDED") return `${game.state.prospects[event.prospectId]?.name ?? "A committed recruit"}'s class filled before he could enroll; the commitment is void.`;
   if (event.type === "RECRUITING_POINTS_ADDED") return `Scouting generated ${event.pointsAdded} points · ${event.pointsAvailable} available for next week.`;
   if (event.type === "COMMAND_REJECTED") return event.reason;
   if (event.type === "PLAYER_DEPARTED") return `${game.state.players[event.playerId]?.name ?? "Player"} left the program.`;
@@ -2579,7 +2595,6 @@ function queuedRecruitingCost(command: GameCommand): number {
   if (command.type === "SEARCH_PROSPECTS") return recruitingSearchCost(command.searchType);
   if (command.type === "EVALUATE_PROSPECT") return recruitingEvaluationCost(command.evaluation);
   if (command.type === "INVEST_RECRUITING_POINTS") return command.points;
-  if (command.type === "OFFER_PROSPECT") return 10;
   return 0;
 }
 function formatRatingChanges(changes: Partial<Record<keyof Player["ratings"], number>>): string {

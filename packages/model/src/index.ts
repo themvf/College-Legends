@@ -636,6 +636,12 @@ export interface RecruitingProgramState {
   weeklyPoints: number;
   discoveredProspectIds: ProspectId[];
   scoutingByProspect: Record<ProspectId, ProspectScoutingState>;
+  /**
+   * Prospects this program has extended a scholarship offer to. Durable and
+   * free to give — it is a signal, not a spend — and a prerequisite for
+   * pursuing him further. Persists until he resolves off the board.
+   */
+  offeredProspectIds: ProspectId[];
 }
 
 /**
@@ -831,7 +837,12 @@ export interface BalanceConfiguration {
 }
 
 export type GameCommand =
-  | { type: "OFFER_PROSPECT"; programId: ProgramId; prospectId: ProspectId }
+  /**
+   * A real, durable scholarship offer — not a disguised pursuit-point spend.
+   * Free to extend; a prerequisite for investing pursuit points or scheduling
+   * a visit. `extend: false` rescinds it, which the prospect remembers.
+   */
+  | { type: "OFFER_PROSPECT"; programId: ProgramId; prospectId: ProspectId; extend: boolean }
   | { type: "SEARCH_PROSPECTS"; programId: ProgramId; searchType: RecruitingSearchType; position?: Position }
   | { type: "EVALUATE_PROSPECT"; programId: ProgramId; prospectId: ProspectId; evaluation: RecruitingEvaluation }
   | { type: "INVEST_RECRUITING_POINTS"; programId: ProgramId; prospectId: ProspectId; points: number }
@@ -997,6 +1008,14 @@ export type GameEvent =
       pointsSpent: number;
     }
   | {
+      type: "PROSPECT_OFFERED";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      prospectId: ProspectId;
+      extended: boolean;
+    }
+  | {
       type: "RECRUITING_INVESTMENT";
       season: Season;
       week: number;
@@ -1016,6 +1035,12 @@ export type GameEvent =
       runnerUpScore: number | null;
     }
   | { type: "PROSPECT_ENROLLED"; season: Season; prospectId: ProspectId; playerId: PlayerId; programId: ProgramId }
+  /**
+   * A verbal commitment that never became a roster spot because the class
+   * filled before he got there. He is not signed anywhere else — the
+   * commitment is simply void, resolved rather than left dangling.
+   */
+  | { type: "PROSPECT_COMMITMENT_VOIDED"; season: Season; prospectId: ProspectId; programId: ProgramId; reason: "CLASS_FULL" }
   | {
       type: "NIL_DEAL_SIGNED";
       season: Season;

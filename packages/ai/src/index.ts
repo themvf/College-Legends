@@ -220,6 +220,11 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
         commands.push({ type: "EVALUATE_PROSPECT", programId: program.id, prospectId: prospect.id, evaluation: "PROJECTION" });
         points -= 12;
       }
+      // A real offer is free and a prerequisite for pursuing him further —
+      // extend it before spending anything on him.
+      if (!recruiting.offeredProspectIds.includes(prospect.id)) {
+        commands.push({ type: "OFFER_PROSPECT", programId: program.id, prospectId: prospect.id, extend: true });
+      }
       const investment = Math.min(points, scouting.pursuitPoints > 0 ? 10 : 15);
       if (investment >= 5) {
         commands.push({ type: "INVEST_RECRUITING_POINTS", programId: program.id, prospectId: prospect.id, points: investment });

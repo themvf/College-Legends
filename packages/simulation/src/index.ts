@@ -383,6 +383,13 @@ const RECRUIT_PRIORITIES: readonly RecruitPriority[] = [
   "CLOSE_TO_HOME",
   "PERSONAL_STARDOM"
 ];
+/**
+ * What a bare scholarship offer is worth in `recruitingScore` — small on
+ * purpose. It is a signal that you want him, not a substitute for pursuit
+ * points, a visit, or NIL money: pursuit points alone contribute up to
+ * ~18.75 at the cap, NIL up to 14, fit up to 35.
+ */
+export const OFFER_SCORE_BONUS = 3;
 
 export function recruitingSearchCost(searchType: RecruitingSearchType): number {
   return RECRUITING_SEARCH_COSTS[searchType];
@@ -884,7 +891,8 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       points: 0,
       weeklyPoints: 0,
       discoveredProspectIds: [],
-      scoutingByProspect: {}
+      scoutingByProspect: {},
+      offeredProspectIds: []
     };
     state.developmentSpotlights[id] = null;
     state.gamePlans[id] = { ...DEFAULT_GAME_PLAN };
@@ -1712,7 +1720,7 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       });
       continue;
     }
-    if (command.type === "INVEST_RECRUITING_POINTS" || command.type === "OFFER_PROSPECT") {
+    if (command.type === "OFFER_PROSPECT") {
       const prospect = state.prospects[command.prospectId];
       const recruiting = state.recruiting[program.id]!;
       const scouting = recruiting.scoutingByProspect[command.prospectId];
@@ -1720,11 +1728,53 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Prospect is unavailable." });
         continue;
       }
+      const alreadyOffered = recruiting.offeredProspectIds.includes(command.prospectId);
+      if (command.extend) {
+        if (alreadyOffered) continue;
+        if (projectedRecruitingOpenings(state, program.id) <= 0) {
+          events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The projected incoming class is full." });
+          continue;
+        }
+        recruiting.offeredProspectIds.push(command.prospectId);
+        recruiting.offeredProspectIds.sort();
+      } else {
+        if (!alreadyOffered) continue;
+        recruiting.offeredProspectIds = recruiting.offeredProspectIds.filter((id) => id !== command.prospectId);
+        // Rescinding is remembered, the same flat, deterministic way NIL
+        // withdrawal already is. Whatever pursuit points or NIL dollars are
+        // already on the table stay — this only closes the door to more.
+        prospect.interestByProgram[program.id] = Math.max(
+          0,
+          Number(((prospect.interestByProgram[program.id] ?? 0) - NIL_WITHDRAWAL_INTEREST_PENALTY).toFixed(3))
+        );
+      }
+      events.push({
+        type: "PROSPECT_OFFERED",
+        season: state.season,
+        week: state.week,
+        programId: program.id,
+        prospectId: prospect.id,
+        extended: command.extend
+      });
+      continue;
+    }
+    if (command.type === "INVEST_RECRUITING_POINTS") {
+      const prospect = state.prospects[command.prospectId];
+      const recruiting = state.recruiting[program.id]!;
+      const scouting = recruiting.scoutingByProspect[command.prospectId];
+      if (!prospect || prospect.status !== "AVAILABLE" || !scouting) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Prospect is unavailable." });
+        continue;
+      }
+      if (!recruiting.offeredProspectIds.includes(command.prospectId)) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Offer him a scholarship before you pitch him further." });
+        continue;
+      }
       if (projectedRecruitingOpenings(state, program.id) <= 0) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The projected incoming class is full." });
         continue;
       }
-      const points = command.type === "OFFER_PROSPECT" ? 10 : Math.trunc(command.points);
+      const points = Math.trunc(command.points);
       if (points < 1 || points > 25 || recruiting.points < points) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Choose an investment of 1–25 available Recruiting Points." });
         continue;
@@ -2233,8 +2283,9 @@ function applyRedshirtCommand(
 function commandArbitrationKey(command: GameCommand): string {
   if (command.type === "SEARCH_PROSPECTS") return `${command.programId}:0:${command.searchType}:${command.position ?? ""}`;
   if (command.type === "EVALUATE_PROSPECT") return `${command.programId}:1:${command.prospectId}:${command.evaluation}`;
-  if (command.type === "INVEST_RECRUITING_POINTS") return `${command.programId}:2:${command.prospectId}:${String(command.points).padStart(2, "0")}`;
-  if (command.type === "OFFER_PROSPECT") return `${command.programId}:2:${command.prospectId}:10`;
+  // An offer must resolve before anything that requires one, in the same week.
+  if (command.type === "OFFER_PROSPECT") return `${command.programId}:2:${command.prospectId}:${command.extend ? 1 : 0}`;
+  if (command.type === "INVEST_RECRUITING_POINTS") return `${command.programId}:3:${command.prospectId}:${String(command.points).padStart(2, "0")}`;
   return `${command.programId}:9:${command.type}:${JSON.stringify(command)}`;
 }
 
@@ -2296,7 +2347,8 @@ function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: 
     .map((prospect) => {
       const offeredBy = Object.keys(state.programs).filter((programId) =>
         ((state.recruiting[programId]?.scoutingByProspect[prospect.id]?.pursuitPoints ?? 0) > 0
-          || (state.nil?.[programId]?.offersByProspect[prospect.id] ?? 0) > 0)
+          || (state.nil?.[programId]?.offersByProspect[prospect.id] ?? 0) > 0
+          || (state.recruiting[programId]?.offeredProspectIds.includes(prospect.id) ?? false))
         && projectedRecruitingOpenings(state, programId) > 0
       ).sort();
       const scores = Object.fromEntries(offeredBy.map((programId) => [programId, recruitingScore(state, prospect, programId, rng)]));
@@ -2372,6 +2424,9 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
   // never overcomes a prospect who does not want the program.
   const nilOffer = state.nil?.[programId]?.offersByProspect[prospect.id] ?? 0;
   const nilBonus = nilScore(nilOffer, nilAskingPrice(prospect, program), prospect);
+  // A bare offer is a small, flat signal — not a substitute for actually
+  // pursuing him. See OFFER_SCORE_BONUS for how it is sized against the rest.
+  const offerBonus = state.recruiting[programId]?.offeredProspectIds.includes(prospect.id) ? OFFER_SCORE_BONUS : 0;
   return Number((
     prospect.interestByProgram[programId]! * 0.3
     + prospectProgramFit(state, prospect, programId) * 0.35
@@ -2381,6 +2436,7 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
     + exposureBonus
     + appealBonus
     + nilBonus
+    + offerBonus
     + rng.between(`${prospect.id}:${programId}:decision-noise`, -2, 2)
   ).toFixed(3));
 }
@@ -2536,10 +2592,14 @@ function initializeRecruitingBoards(state: GameState, rng: AddressableRng): void
       points: 0,
       weeklyPoints: 0,
       discoveredProspectIds: [],
-      scoutingByProspect: {}
+      scoutingByProspect: {},
+      offeredProspectIds: []
     };
     recruiting.discoveredProspectIds = [];
     recruiting.scoutingByProspect = {};
+    // A new class every season; last season's offers named prospects who are
+    // already resolved one way or another.
+    recruiting.offeredProspectIds = [];
     state.recruiting[program.id] = recruiting;
     const initialBoard = [...available]
       .sort((left, right) => {
@@ -4201,7 +4261,13 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
       const scholarships = Object.values(state.players).filter((player) =>
         player.programId === program.id && player.eligibility.rosterStatus === "SCHOLARSHIP"
       ).length;
-      if (scholarships >= program.scholarshipLimit) break;
+      if (scholarships >= program.scholarshipLimit) {
+        // The class filled before he got here. Resolve him rather than leave
+        // him stuck in COMMITTED forever — a real, if unhappy, outcome.
+        prospect.status = "WITHDRAWN";
+        events.push({ type: "PROSPECT_COMMITMENT_VOIDED", season: state.season, prospectId: prospect.id, programId: program.id, reason: "CLASS_FULL" });
+        continue;
+      }
       const playerId = `player:${prospect.id}`;
       state.players[playerId] = prospectToPlayer(prospect, playerId, program.id, state.season + 1);
       prospect.status = "ENROLLED";
