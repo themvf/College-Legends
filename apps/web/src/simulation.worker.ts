@@ -1,8 +1,8 @@
 /// <reference lib="webworker" />
-import type { CareerPath, GameCommand, GameState, ProgramId } from "@college-legends/model";
+import type { CareerPath, GameCommand, GameEvent, GameState, ProgramId } from "@college-legends/model";
 import { CAREER_PATHS } from "@college-legends/content";
 import { planWeeklyCommands } from "@college-legends/ai";
-import { advanceWeek, beginSeason, createFictionalLeague, decodeSave, encodeSave, prepareWeek, programPreviews } from "@college-legends/simulation";
+import { advanceOffseasonStep, advanceWeek, beginSeason, createFictionalLeague, decodeSave, encodeSave, prepareWeek, programPreviews } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 import { deleteSave, readSave, savedBytes, storageAvailable, writeSave } from "./storage.js";
 
@@ -110,6 +110,22 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       const result = prepareWeek(activeState, request.commands);
       activeState = result.state;
       reply({ type: "COMPLETE", requestId: request.requestId, state: activeState, events: result.events });
+      return;
+    }
+    if (activeState.phase === "OFFSEASON") {
+      // No offseason screens exist yet, so the prototype runs the steps through
+      // with the engine's do-nothing defaults rather than stranding the player
+      // on a phase they cannot advance. Replace this with the real step-by-step
+      // flow when the offseason UI lands.
+      const offseasonEvents: GameEvent[] = [];
+      while (activeState.phase === "OFFSEASON") {
+        const step = advanceOffseasonStep(activeState);
+        activeState = step.state;
+        offseasonEvents.push(...step.events);
+      }
+      activeProgramId = request.playerProgramId;
+      autosave(activeState, activeProgramId);
+      reply({ type: "COMPLETE", requestId: request.requestId, state: activeState, events: offseasonEvents });
       return;
     }
     const aiCommands = planWeeklyCommands(activeState, request.playerProgramId);

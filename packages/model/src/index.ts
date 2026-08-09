@@ -5,7 +5,14 @@ export type Season = number;
 
 export type CareerPath = "DYNASTY_BUILDER" | "PROGRAM_RISER" | "CHAMPIONSHIP_MANDATE";
 export type RosterStatus = "SCHOLARSHIP" | "WALK_ON" | "PORTAL" | "DEPARTED" | "GRADUATED";
-export type GamePhase = "ROSTER_REVIEW" | "REGULAR_SEASON";
+export type GamePhase = "ROSTER_REVIEW" | "REGULAR_SEASON" | "OFFSEASON";
+/**
+ * The offseason resolves in fixed order, in lockstep across the whole league —
+ * the same model a week already uses. Every step is skippable with
+ * `CONTINUE_OFFSEASON`, so a program that engages with none of it experiences
+ * what the engine did before the phase existed.
+ */
+export type OffseasonStep = "PORTAL" | "SIGNING_DAY" | "COACHING" | "TRAINING_CAMP";
 export type Position = "QB" | "RB" | "WR" | "TE" | "OL" | "DL" | "LB" | "DB" | "K" | "P";
 export type DevelopmentFocus = "BALANCED" | "TECHNIQUE" | "STRENGTH" | "CONDITIONING";
 export type DevelopmentSpotlightTarget =
@@ -807,6 +814,8 @@ export interface GameState {
   season: Season;
   week: number;
   phase: GamePhase;
+  /** Which offseason step is open. Null in every other phase. */
+  offseasonStep?: OffseasonStep | null;
   programs: Record<ProgramId, Program>;
   players: Record<PlayerId, Player>;
   prospects: Record<ProspectId, Prospect>;
@@ -915,7 +924,14 @@ export type GameCommand =
   | { type: "SET_SCHEME"; programId: ProgramId; scheme: Partial<SchemeIdentity> }
   | { type: "ALLOCATE_SCOUTING"; programId: ProgramId; opponentProgramId: ProgramId; points: number }
   | { type: "REPLACE_STAFF"; programId: ProgramId; staffId: string; candidateId: string }
-  | { type: "SCHEDULE_MARQUEE_HOME_GAME"; programId: ProgramId; opponentProgramId: ProgramId };
+  | { type: "SCHEDULE_MARQUEE_HOME_GAME"; programId: ProgramId; opponentProgramId: ProgramId }
+  /**
+   * Take no action in the open offseason step. Every step is skippable, so a
+   * program that sends only this all offseason gets the engine's own sane
+   * defaults — there is no maintenance chore and no punishment for not
+   * reading a screen.
+   */
+  | { type: "CONTINUE_OFFSEASON"; programId: ProgramId };
 
 export type GameEvent =
   | {
@@ -1184,6 +1200,10 @@ export type GameEvent =
     }
   | { type: "PREP_POINTS_ADDED"; season: Season; week: number; programId: ProgramId; pointsAdded: number }
   | { type: "SEASON_STATS_ARCHIVED"; season: Season; week: number; players: number; rowsFolded: number }
+  /** The season is over and the offseason has opened on its first step. */
+  | { type: "OFFSEASON_BEGAN"; season: Season; step: OffseasonStep }
+  /** One offseason step closed. `nextStep` is null when the offseason itself ends. */
+  | { type: "OFFSEASON_STEP_COMPLETED"; season: Season; step: OffseasonStep; nextStep: OffseasonStep | null }
   | { type: "BOOSTER_OFFERED"; season: Season; week: number; programId: ProgramId; options: BoosterOption[] }
   | {
       type: "BOOSTER_RESOLVED";

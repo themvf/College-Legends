@@ -1,4 +1,4 @@
-import type { WeekFocus, AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, InjurySeverity, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, PlayerInjury, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffFocus, StaffMember, StaffRole, OpponentDossier } from "@college-legends/model";
+import type { OffseasonStep, WeekFocus, AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, InjurySeverity, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, PlayerInjury, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffFocus, StaffMember, StaffRole, OpponentDossier } from "@college-legends/model";
 import { DEFAULT_BALANCE, FICTIONAL_PROGRAMS, fictionalPersonName, PROGRAM_CHARACTERS } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
 import { attributeByRole, attributesFor, computeOverall, ratingByRole, type AttributeDefinition } from "./attributes.js";
@@ -1416,8 +1416,10 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   if (state.week < 14) replenishRecruitingPoints(state, events);
   recordFocusPayoffs(state, focusInputs, events);
   state.week += 1;
+  // Entering the offseason defers preparation to `completeOffseason`: there is
+  // no schedule to prepare against until the new one is built.
   if (state.week > 14) rolloverSeason(state, events);
-  refreshPreparation(state, events);
+  else refreshPreparation(state, events);
   state.eventHistory.push(...events);
   if (state.eventHistory.length > 10_000) state.eventHistory = state.eventHistory.slice(-10_000);
   return { state, events };
@@ -4476,6 +4478,21 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
       endNilCommitment(state, player.programId, player.id, "TRANSFER_PORTAL", events);
     }
   }
+  // The season is finished and every departure is settled. The rest of what
+  // used to happen here — enrolling the incoming class, generating next
+  // year's board, rebuilding the schedule — now waits until the offseason's
+  // last step, because the portal can still change who is on this roster.
+  state.phase = "OFFSEASON";
+  state.offseasonStep = OFFSEASON_STEPS[0];
+  events.push({ type: "OFFSEASON_BEGAN", season: state.season, step: OFFSEASON_STEPS[0] });
+}
+
+/**
+ * The offseason's closing act: what `rolloverSeason` used to do inline. Runs
+ * once, after the final step, when the roster is settled and it is finally
+ * safe to enroll a class against a known scholarship count.
+ */
+function completeOffseason(state: GameState, events: GameEvent[]): void {
   for (const program of Object.values(state.programs)) {
     const commitments = Object.values(state.prospects)
       // Everyone still COMMITTED should already be SIGNED by the signing
@@ -4542,4 +4559,72 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
   }
   buildSeasonSchedule(state);
   refreshSponsorshipOffers(state);
+  state.phase = "REGULAR_SEASON";
+  state.offseasonStep = null;
+  // Deferred out of `advanceWeek` for the whole offseason: preparation is for
+  // the week about to be played, and until now there was no schedule to
+  // prepare against.
+  refreshPreparation(state, events);
 }
+
+/** Fixed order. The offseason ends when the last one resolves. */
+export const OFFSEASON_STEPS = ["PORTAL", "SIGNING_DAY", "COACHING", "TRAINING_CAMP"] as const satisfies readonly OffseasonStep[];
+
+/**
+ * Resolves the open offseason step for the whole league and moves everyone to
+ * the next one together — the same lockstep model a week already uses. This
+ * is deliberately not `advanceWeek`: no games are played, and the commands
+ * that are valid differ step by step.
+ */
+export function advanceOffseasonStep(input: Readonly<GameState>, commands: readonly GameCommand[] = []): SimulationResult {
+  const state = clone<GameState>(input);
+  if (state.phase !== "OFFSEASON" || !state.offseasonStep) {
+    throw new Error("There is no offseason step open.");
+  }
+  const step = state.offseasonStep;
+  const events: GameEvent[] = [];
+  const rng = new AddressableRng(state.identity.rootSeed).fork("offseason", String(state.season), step);
+  resolveOffseasonCommands(state, step, commands, rng.fork("commands"), events);
+  const nextIndex = OFFSEASON_STEPS.indexOf(step) + 1;
+  const nextStep = OFFSEASON_STEPS[nextIndex] ?? null;
+  events.push({ type: "OFFSEASON_STEP_COMPLETED", season: state.season, step, nextStep });
+  if (nextStep) {
+    state.offseasonStep = nextStep;
+  } else {
+    completeOffseason(state, events);
+  }
+  state.eventHistory.push(...events);
+  if (state.eventHistory.length > 10_000) state.eventHistory = state.eventHistory.slice(-10_000);
+  return { state, events };
+}
+
+/**
+ * Every step is skippable, so the only universally valid command is the one
+ * that declines to act. Anything else is refused with the reason and the step
+ * it does belong to — a command sent to the wrong step is a mistake worth
+ * naming rather than silently dropping.
+ */
+function resolveOffseasonCommands(
+  state: GameState,
+  step: OffseasonStep,
+  commands: readonly GameCommand[],
+  _rng: AddressableRng,
+  events: GameEvent[]
+): void {
+  for (const command of commands) {
+    if (command.type === "CONTINUE_OFFSEASON") continue;
+    events.push({
+      type: "COMMAND_REJECTED",
+      programId: command.programId,
+      command,
+      reason: `That decision cannot be made during ${OFFSEASON_STEP_LABELS[step]}.`
+    });
+  }
+}
+
+export const OFFSEASON_STEP_LABELS: Record<OffseasonStep, string> = {
+  PORTAL: "the transfer portal",
+  SIGNING_DAY: "signing day",
+  COACHING: "the coaching market",
+  TRAINING_CAMP: "training camp"
+};
