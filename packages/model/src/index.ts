@@ -629,6 +629,8 @@ export interface ProspectScoutingState {
   evaluations: RecruitingEvaluation[];
   /** Persistent staff investment that remains with the recruit until he commits. */
   pursuitPoints: number;
+  /** Home visits this program has spent on him this season. Diminishing per repeat. */
+  visitsUsed?: number;
 }
 
 export interface RecruitingProgramState {
@@ -642,6 +644,8 @@ export interface RecruitingProgramState {
    * pursuing him further. Persists until he resolves off the board.
    */
   offeredProspectIds: ProspectId[];
+  /** Home visits used this season, shared across every prospect on the board. */
+  visitsUsedThisSeason: number;
 }
 
 /**
@@ -843,6 +847,13 @@ export type GameCommand =
    * a visit. `extend: false` rescinds it, which the prospect remembers.
    */
   | { type: "OFFER_PROSPECT"; programId: ProgramId; prospectId: ProspectId; extend: boolean }
+  /**
+   * A home visit — the highest-leverage single recruiting action. Requires an
+   * active offer, costs Recruiting Points, and pays more where the program
+   * actually fits what he's looking for. Capped per season across the whole
+   * board and diminishing per repeat visit to the same recruit.
+   */
+  | { type: "SCHEDULE_VISIT"; programId: ProgramId; prospectId: ProspectId }
   | { type: "SEARCH_PROSPECTS"; programId: ProgramId; searchType: RecruitingSearchType; position?: Position }
   | { type: "EVALUATE_PROSPECT"; programId: ProgramId; prospectId: ProspectId; evaluation: RecruitingEvaluation }
   | { type: "INVEST_RECRUITING_POINTS"; programId: ProgramId; prospectId: ProspectId; points: number }
@@ -1014,6 +1025,16 @@ export type GameEvent =
       programId: ProgramId;
       prospectId: ProspectId;
       extended: boolean;
+    }
+  | {
+      type: "RECRUITING_VISIT_SCHEDULED";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      prospectId: ProspectId;
+      visitNumber: number;
+      bonus: number;
+      visitsRemainingThisSeason: number;
     }
   | {
       type: "RECRUITING_INVESTMENT";

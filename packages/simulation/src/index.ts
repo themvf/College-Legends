@@ -390,6 +390,33 @@ const RECRUIT_PRIORITIES: readonly RecruitPriority[] = [
  * ~18.75 at the cap, NIL up to 14, fit up to 35.
  */
 export const OFFER_SCORE_BONUS = 3;
+/** A handful of visit weekends a year, shared across the whole board. */
+export const MAX_VISITS_PER_SEASON = 6;
+/** Priced above a single evaluation, below a full pursuit-points push. */
+export const VISIT_COST = 20;
+/**
+ * What a visit is worth at the low end (poor fit) rising toward the high end
+ * (excellent fit) — see `visitScore`. Never dominates just buying more
+ * pursuit points, never worthless either.
+ */
+export const VISIT_BASE_BONUS = 6;
+
+/**
+ * A visit pays more where the program actually fits what the recruit is
+ * looking for, and each repeat visit to the same man is worth half the last —
+ * nobody should spend the whole season's cap chasing one recruit.
+ */
+export function visitScore(fit: number, visitsAlreadyUsed: number): number {
+  const perVisit = VISIT_BASE_BONUS * (0.5 + clamp(fit, 0, 100) / 200);
+  return Number((perVisit * 0.5 ** visitsAlreadyUsed).toFixed(3));
+}
+
+/** Every visit paid for so far, summed — what `recruitingScore` actually reads. */
+export function totalVisitScore(fit: number, visitsUsed: number): number {
+  let total = 0;
+  for (let visit = 0; visit < visitsUsed; visit += 1) total += visitScore(fit, visit);
+  return Number(total.toFixed(3));
+}
 
 export function recruitingSearchCost(searchType: RecruitingSearchType): number {
   return RECRUITING_SEARCH_COSTS[searchType];
@@ -892,7 +919,8 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       weeklyPoints: 0,
       discoveredProspectIds: [],
       scoutingByProspect: {},
-      offeredProspectIds: []
+      offeredProspectIds: [],
+      visitsUsedThisSeason: 0
     };
     state.developmentSpotlights[id] = null;
     state.gamePlans[id] = { ...DEFAULT_GAME_PLAN };
@@ -1792,6 +1820,47 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       });
       continue;
     }
+    if (command.type === "SCHEDULE_VISIT") {
+      const prospect = state.prospects[command.prospectId];
+      const recruiting = state.recruiting[program.id]!;
+      const scouting = recruiting.scoutingByProspect[command.prospectId];
+      if (!prospect || prospect.status !== "AVAILABLE" || !scouting) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Prospect is unavailable." });
+        continue;
+      }
+      if (!recruiting.offeredProspectIds.includes(command.prospectId)) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Offer him a scholarship before you schedule a visit." });
+        continue;
+      }
+      if (projectedRecruitingOpenings(state, program.id) <= 0) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The projected incoming class is full." });
+        continue;
+      }
+      if (recruiting.visitsUsedThisSeason >= MAX_VISITS_PER_SEASON) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Every visit weekend this season is already spent." });
+        continue;
+      }
+      if (recruiting.points < VISIT_COST) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Not enough Recruiting Points to schedule a visit." });
+        continue;
+      }
+      const visitsAlreadyUsed = scouting.visitsUsed ?? 0;
+      const bonus = visitScore(prospectProgramFit(state, prospect, program.id), visitsAlreadyUsed);
+      recruiting.points -= VISIT_COST;
+      recruiting.visitsUsedThisSeason += 1;
+      scouting.visitsUsed = visitsAlreadyUsed + 1;
+      events.push({
+        type: "RECRUITING_VISIT_SCHEDULED",
+        season: state.season,
+        week: state.week,
+        programId: program.id,
+        prospectId: prospect.id,
+        visitNumber: scouting.visitsUsed,
+        bonus,
+        visitsRemainingThisSeason: MAX_VISITS_PER_SEASON - recruiting.visitsUsedThisSeason
+      });
+      continue;
+    }
     if (command.type === "SET_NIL_OFFER") {
       const prospect = state.prospects[command.prospectId];
       const scouting = state.recruiting[program.id]?.scoutingByProspect[command.prospectId];
@@ -2286,6 +2355,7 @@ function commandArbitrationKey(command: GameCommand): string {
   // An offer must resolve before anything that requires one, in the same week.
   if (command.type === "OFFER_PROSPECT") return `${command.programId}:2:${command.prospectId}:${command.extend ? 1 : 0}`;
   if (command.type === "INVEST_RECRUITING_POINTS") return `${command.programId}:3:${command.prospectId}:${String(command.points).padStart(2, "0")}`;
+  if (command.type === "SCHEDULE_VISIT") return `${command.programId}:4:${command.prospectId}`;
   return `${command.programId}:9:${command.type}:${JSON.stringify(command)}`;
 }
 
@@ -2414,7 +2484,9 @@ function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: 
 
 function recruitingScore(state: GameState, prospect: Prospect, programId: string, rng: AddressableRng): number {
   const program = state.programs[programId]!;
-  const pursuitPoints = state.recruiting[programId]?.scoutingByProspect[prospect.id]?.pursuitPoints ?? 0;
+  const scouting = state.recruiting[programId]?.scoutingByProspect[prospect.id];
+  const pursuitPoints = scouting?.pursuitPoints ?? 0;
+  const fit = prospectProgramFit(state, prospect, programId);
   const facilityBonus = Math.max(0, program.facilities.RECRUITING - 1) * 2;
   const staffBonus = staffContribution(state, programId, "RECRUIT") / 25;
   const exposureBonus = program.localPress / 50 + program.nationalPress / 20;
@@ -2427,9 +2499,12 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
   // A bare offer is a small, flat signal — not a substitute for actually
   // pursuing him. See OFFER_SCORE_BONUS for how it is sized against the rest.
   const offerBonus = state.recruiting[programId]?.offeredProspectIds.includes(prospect.id) ? OFFER_SCORE_BONUS : 0;
+  // Reuses the same fit the roster requirement reads: a visit pays more where
+  // the program actually has what he's looking for.
+  const visitBonus = totalVisitScore(fit, scouting?.visitsUsed ?? 0);
   return Number((
     prospect.interestByProgram[programId]! * 0.3
-    + prospectProgramFit(state, prospect, programId) * 0.35
+    + fit * 0.35
     + pursuitPoints * 0.75
     + facilityBonus
     + staffBonus
@@ -2437,6 +2512,7 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
     + appealBonus
     + nilBonus
     + offerBonus
+    + visitBonus
     + rng.between(`${prospect.id}:${programId}:decision-noise`, -2, 2)
   ).toFixed(3));
 }
@@ -2593,13 +2669,16 @@ function initializeRecruitingBoards(state: GameState, rng: AddressableRng): void
       weeklyPoints: 0,
       discoveredProspectIds: [],
       scoutingByProspect: {},
-      offeredProspectIds: []
+      offeredProspectIds: [],
+      visitsUsedThisSeason: 0
     };
     recruiting.discoveredProspectIds = [];
     recruiting.scoutingByProspect = {};
     // A new class every season; last season's offers named prospects who are
-    // already resolved one way or another.
+    // already resolved one way or another, and this year's visit weekends
+    // haven't been spent yet.
     recruiting.offeredProspectIds = [];
+    recruiting.visitsUsedThisSeason = 0;
     state.recruiting[program.id] = recruiting;
     const initialBoard = [...available]
       .sort((left, right) => {

@@ -2,12 +2,14 @@ import type { DevelopmentFocus, GamePlan, GameState, GameCommand, Position, Pros
 import {
   focusCapacity,
   freeNilCapacity,
+  MAX_VISITS_PER_SEASON,
   nilAskingPrice,
   nilState,
   pendingBoosterOffer,
   programUnitRatings,
   projectedGamePlan,
   scoutingBoard,
+  VISIT_COST,
   WORTH_SCOUTING
 } from "@college-legends/simulation";
 
@@ -222,8 +224,16 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
       }
       // A real offer is free and a prerequisite for pursuing him further —
       // extend it before spending anything on him.
-      if (!recruiting.offeredProspectIds.includes(prospect.id)) {
+      const offered = recruiting.offeredProspectIds.includes(prospect.id);
+      if (!offered) {
         commands.push({ type: "OFFER_PROSPECT", programId: program.id, prospectId: prospect.id, extend: true });
+      }
+      // The highest-leverage single action, spent on the board's top target
+      // only, and only once he is actually offered. A system only the player
+      // pays for is a system the player should not pay for either.
+      if (offered && prospect === discovered[0] && recruiting.visitsUsedThisSeason < MAX_VISITS_PER_SEASON && points >= VISIT_COST) {
+        commands.push({ type: "SCHEDULE_VISIT", programId: program.id, prospectId: prospect.id });
+        points -= VISIT_COST;
       }
       const investment = Math.min(points, scouting.pursuitPoints > 0 ? 10 : 15);
       if (investment >= 5) {

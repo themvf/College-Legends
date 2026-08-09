@@ -107,6 +107,9 @@ import {
   prospectScoutingReport,
   recruitingEvaluationCost,
   recruitingSearchCost,
+  visitScore,
+  MAX_VISITS_PER_SEASON,
+  VISIT_COST,
   SEASON_AWARD_LABELS,
   SEASON_AWARD_TYPES,
   seasonAwardRace,
@@ -1724,6 +1727,21 @@ function Recruiting({ game, locked, incomingOpenings, pending, onQueue }: {
             </button>;
           })}</div>
           <div className="pursuit-actions"><span>{!offered ? "Offer him first" : incomingOpenings > 0 ? "Entice him to join" : "Incoming class full"}</span>{[5, 10, 20].map((points) => <button disabled={!offered || incomingOpenings <= 0 || pointsAvailable < points} key={points} onClick={() => onQueue({ type: "INVEST_RECRUITING_POINTS", programId: program.id, prospectId: prospect!.id, points })}>+{points}</button>)}{queuedInvestment && <strong>+{queuedInvestment.points} queued</strong>}</div>
+          {(() => {
+            const visitsUsed = game.state.recruiting[program.id]!.scoutingByProspect[prospect!.id]?.visitsUsed ?? 0;
+            const visitsRemaining = MAX_VISITS_PER_SEASON - recruiting.visitsUsedThisSeason;
+            const queuedVisit = pending.some((command) => command.type === "SCHEDULE_VISIT" && command.prospectId === prospect!.id);
+            const preview = report.fitScore !== null ? visitScore(report.fitScore, visitsUsed) : null;
+            return <div className="visit-actions">
+              <span>{!offered ? "Offer him first" : visitsRemaining <= 0 ? "No visit weekends left this season" : `Worth this program's season: ${visitsRemaining}/${MAX_VISITS_PER_SEASON} left`}</span>
+              <button
+                disabled={!offered || visitsRemaining <= 0 || pointsAvailable < VISIT_COST || queuedVisit}
+                onClick={() => onQueue({ type: "SCHEDULE_VISIT", programId: program.id, prospectId: prospect!.id })}
+              >
+                {queuedVisit ? "Visit queued" : `Schedule a visit · ${VISIT_COST} pts${preview !== null ? ` · worth +${preview.toFixed(1)}` : ""}`}
+              </button>
+            </div>;
+          })()}
           <NilOfferControl game={game} prospect={prospect!} pending={pending} onQueue={onQueue} disabled={incomingOpenings <= 0} /></>}
           {committed && (game.state.nil?.[program.id]?.commitmentsByPlayer[prospect!.id] ?? 0) > 0 &&
             <p className="muted">NIL deal: {money(game.state.nil![program.id]!.commitmentsByPlayer[prospect!.id]!)} a week, charged until he leaves the program.</p>}
@@ -1848,6 +1866,7 @@ function eventRelevantToProgram(event: GameEvent, game: GameView): boolean {
   if (event.type === "NIL_COMMITMENT_ENDED") return event.programId === programId;
   if (event.type === "PROSPECTS_DISCOVERED" || event.type === "PROSPECT_EVALUATED" || event.type === "RECRUITING_INVESTMENT"
     || event.type === "RECRUITING_POINTS_ADDED" || event.type === "PROSPECT_ENROLLED"
+    || event.type === "PROSPECT_OFFERED" || event.type === "RECRUITING_VISIT_SCHEDULED" || event.type === "PROSPECT_COMMITMENT_VOIDED"
     || event.type === "SPONSORSHIP_ACCEPTED" || event.type === "SPONSORSHIP_PAYMENT"
     || event.type === "COMMAND_REJECTED") {
     return event.programId === programId;
@@ -1871,7 +1890,7 @@ function eventIcon(event: GameEvent): string {
   if (event.type === "PROSPECT_SIGNED" || event.type === "PROSPECT_COMMITTED" || event.type === "PROSPECT_ENROLLED") return "★";
   if (event.type === "PROSPECT_COMMITMENT_VOIDED") return "★";
   if (event.type === "PROSPECTS_DISCOVERED" || event.type === "PROSPECT_EVALUATED") return "⌕";
-  if (event.type === "RECRUITING_INVESTMENT" || event.type === "RECRUITING_POINTS_ADDED") return "R";
+  if (event.type === "RECRUITING_INVESTMENT" || event.type === "RECRUITING_POINTS_ADDED" || event.type === "PROSPECT_OFFERED" || event.type === "RECRUITING_VISIT_SCHEDULED") return "R";
   if (event.type === "PLAYER_BRAND_UPDATED" || event.type === "PLAYER_MEDIA_ACTION_SET") return "✦";
   if (event.type === "COMMAND_REJECTED") return "!";
   return "✓";
@@ -1943,6 +1962,10 @@ function eventText(event: GameEvent, game: GameView): string {
   if (event.type === "PROSPECTS_DISCOVERED") return `${event.prospectIds.length} new prospects found through ${label(event.searchType)} scouting for ${event.pointsSpent} points.`;
   if (event.type === "PROSPECT_EVALUATED") return `${label(event.evaluation)} report unlocked for ${game.state.prospects[event.prospectId]?.name ?? "prospect"} at a cost of ${event.pointsSpent} points.`;
   if (event.type === "RECRUITING_INVESTMENT") return `${event.pointsSpent} points invested in ${game.state.prospects[event.prospectId]?.name ?? "prospect"} · ${event.totalInvestment} total.`;
+  if (event.type === "PROSPECT_OFFERED") return event.extended
+    ? `Scholarship offered to ${game.state.prospects[event.prospectId]?.name ?? "a prospect"}.`
+    : `Scholarship offer to ${game.state.prospects[event.prospectId]?.name ?? "a prospect"} rescinded.`;
+  if (event.type === "RECRUITING_VISIT_SCHEDULED") return `Home visit with ${game.state.prospects[event.prospectId]?.name ?? "a prospect"} worth +${event.bonus.toFixed(1)} · ${event.visitsRemainingThisSeason} visit${event.visitsRemainingThisSeason === 1 ? "" : "s"} left this season.`;
   if (event.type === "PROSPECT_COMMITTED") return `${game.state.prospects[event.prospectId]?.name ?? "Prospect"} committed to ${game.state.programs[event.programId]?.name}; he will enroll next season.`;
   if (event.type === "PROSPECT_ENROLLED") return `${game.state.prospects[event.prospectId]?.name ?? "Freshman"} joined ${game.state.programs[event.programId]?.name}.`;
   if (event.type === "PROSPECT_COMMITMENT_VOIDED") return `${game.state.prospects[event.prospectId]?.name ?? "A committed recruit"}'s class filled before he could enroll; the commitment is void.`;
