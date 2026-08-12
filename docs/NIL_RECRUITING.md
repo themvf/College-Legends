@@ -245,3 +245,43 @@ file: `NIL_DOLLARS_PER_THOUSAND_FANS` $700 · `NIL_TITLE_ANNUITY` $4K ·
 `NIL_BASE_PRICE` $400 · position premiums QB 1.5 / WR·DL 1.2 / K·P 0.4 ·
 `NIL_SCORE_CEILING` 14 · priority weights 1.35 / 0.65 · withdrawal interest
 penalty 6 (flat, deterministic).
+
+## Status against the full redesign (2026-08 audit)
+
+NIL shipped as its own slice, as planned above. Measured against the real
+NCAA process and EA Sports College Football's Dynasty mode before scoping the
+next slice, four things already have real parity and four do not.
+
+**Already solid, no work needed:** `SEARCH_PROSPECTS`'s four types map
+directly to real recruiting-service board-building; `EVALUATE_PROSPECT`'s six
+types map to EA's scouting reveal (attributes, ceiling, motivations); prospect
+`priorities` already *are* motivations/deal-breakers, read by
+`prospectProgramFit`; and the coach trait system already prices a recruiting
+specialist (the Closer) the way EA prices staff efficiency.
+
+**Not built, and this is where the next slice goes — see
+`RECRUITING_REDESIGN.md`:**
+
+1. **`OFFER_PROSPECT` isn't a real offer.** It's a hardcoded alias for
+   `INVEST_RECRUITING_POINTS { points: 10 }` (`index.ts:1715-1727`) — the same
+   code path, the same command-arbitration bucket. Extending a scholarship
+   offer carries no meaning of its own, which it does in both the real process
+   and EA.
+2. **No visits.** The only levers on a prospect are a flat points number and
+   an NIL dollar amount. Real recruiting's official visit — and EA's
+   visit-mapped-to-motivations mechanic — has no equivalent action here at
+   all.
+3. **Commitment is instant and permanent.** `resolveRecruitingMarket` drops a
+   prospect from every future week's contest the moment he hits `COMMITTED`
+   (`index.ts:2295`) — no flip risk, no signing period. The model even defines
+   a `PROSPECT_SIGNED` event with a live UI render branch
+   (`App.tsx:1857,1927`) that the simulation never emits; the real transition
+   is the quieter `PROSPECT_ENROLLED`, fired once at rollover.
+4. **Pipelines are one static number.** `homeRegionBias` doesn't accumulate —
+   there's no memory of a program's recruiting relationship with a school or
+   region strengthening over time.
+
+A fifth item is a plain bug, not a design gap: the rollover enrollment loop
+(`index.ts:4200-4204`) `break`s once `scholarshipLimit` is hit, leaving any
+prospect still `COMMITTED` past the cap stuck in that status forever instead
+of resolving to a terminal state.

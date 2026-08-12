@@ -168,6 +168,8 @@ test("contested recruiting is independent of command order", () => {
   state.recruiting["program-4"].discoveredProspectIds.push(prospectId);
   state.recruiting["program-4"].scoutingByProspect[prospectId] = { evaluations: [], pursuitPoints: 0 };
   const commands = [
+    { type: "OFFER_PROSPECT", programId: "program-1", prospectId, extend: true },
+    { type: "OFFER_PROSPECT", programId: "program-4", prospectId, extend: true },
     { type: "INVEST_RECRUITING_POINTS", programId: "program-1", prospectId, points: 20 },
     { type: "INVEST_RECRUITING_POINTS", programId: "program-4", prospectId, points: 20 },
   ];
@@ -211,6 +213,7 @@ test("one Recruiting Point budget pays for both information and pursuit", () => 
   const openingPoints = state.recruiting[programId].points;
   const result = advanceWeek(state, [
     { type: "EVALUATE_PROSPECT", programId, prospectId, evaluation: "BASIC" },
+    { type: "OFFER_PROSPECT", programId, prospectId, extend: true },
     { type: "INVEST_RECRUITING_POINTS", programId, prospectId, points: 10 }
   ]);
   const report = prospectScoutingReport(result.state, programId, result.state.prospects[prospectId]);

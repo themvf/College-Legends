@@ -383,6 +383,71 @@ const RECRUIT_PRIORITIES: readonly RecruitPriority[] = [
   "CLOSE_TO_HOME",
   "PERSONAL_STARDOM"
 ];
+/**
+ * What a bare scholarship offer is worth in `recruitingScore` — small on
+ * purpose. It is a signal that you want him, not a substitute for pursuit
+ * points, a visit, or NIL money: pursuit points alone contribute up to
+ * ~18.75 at the cap, NIL up to 14, fit up to 35.
+ */
+export const OFFER_SCORE_BONUS = 3;
+/** A handful of visit weekends a year, shared across the whole board. */
+export const MAX_VISITS_PER_SEASON = 6;
+/** Priced above a single evaluation, below a full pursuit-points push. */
+export const VISIT_COST = 20;
+/**
+ * What a visit is worth at the low end (poor fit) rising toward the high end
+ * (excellent fit) — see `visitScore`. Never dominates just buying more
+ * pursuit points, never worthless either.
+ */
+export const VISIT_BASE_BONUS = 6;
+/**
+ * A verbal commitment is contestable before this week, echoing the real
+ * early-signing window landing before the season's back half. At this week,
+ * every still-`COMMITTED` prospect locks to `SIGNED` and a first commitment
+ * made at or after this week signs immediately — there is no more time left
+ * to flip him anyway.
+ */
+export const SIGNING_WEEK = 12;
+/**
+ * The real social and emotional cost of backing out on a program, added only
+ * to the incumbent's own score in a contest for a man already `COMMITTED` to
+ * them. A rival needs a real, stated edge to flip him, not a marginal one.
+ */
+export const COMMITMENT_INERTIA_BONUS = 6;
+/**
+ * A season's worth of a division's earned standing decays by this fraction
+ * before that season's new contributors are added — slow, so a couple of
+ * quiet years does not erase what a program built.
+ */
+export const PIPELINE_DECAY_RATE = 0.85;
+/** What one qualifying contributor is worth, added at rollover. */
+export const PIPELINE_GAIN_PER_CONTRIBUTOR = 1;
+/**
+ * The ceiling on the pipeline bonus folded into `CLOSE_TO_HOME` — small on
+ * purpose, since the flat home-division bias is already 95 of a possible 100.
+ */
+export const PIPELINE_MAX_BONUS = 5;
+/** Games played this season at which a signed player counts as a real contributor. */
+export const PIPELINE_CONTRIBUTOR_GAMES = 6;
+/** Or a brand milestone reached without necessarily starting every week. */
+export const PIPELINE_CONTRIBUTOR_STARDOM = 30;
+
+/**
+ * A visit pays more where the program actually fits what the recruit is
+ * looking for, and each repeat visit to the same man is worth half the last —
+ * nobody should spend the whole season's cap chasing one recruit.
+ */
+export function visitScore(fit: number, visitsAlreadyUsed: number): number {
+  const perVisit = VISIT_BASE_BONUS * (0.5 + clamp(fit, 0, 100) / 200);
+  return Number((perVisit * 0.5 ** visitsAlreadyUsed).toFixed(3));
+}
+
+/** Every visit paid for so far, summed — what `recruitingScore` actually reads. */
+export function totalVisitScore(fit: number, visitsUsed: number): number {
+  let total = 0;
+  for (let visit = 0; visit < visitsUsed; visit += 1) total += visitScore(fit, visit);
+  return Number(total.toFixed(3));
+}
 
 export function recruitingSearchCost(searchType: RecruitingSearchType): number {
   return RECRUITING_SEARCH_COSTS[searchType];
@@ -866,6 +931,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       recruitAppeal: character.recruitAppeal,
       donorCulture: character.donorCulture,
       homeRegionBias: character.homeRegionBias,
+      pipelineStrength: {},
       ticketPrice: tier === "POWER" ? 58 : tier === "MID" ? 42 : 28,
       advertisingSpend: 0,
       weeklyRevenue: tier === "POWER" ? 1_200_000 : tier === "MID" ? 520_000 : 210_000,
@@ -884,7 +950,9 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       points: 0,
       weeklyPoints: 0,
       discoveredProspectIds: [],
-      scoutingByProspect: {}
+      scoutingByProspect: {},
+      offeredProspectIds: [],
+      visitsUsedThisSeason: 0
     };
     state.developmentSpotlights[id] = null;
     state.gamePlans[id] = { ...DEFAULT_GAME_PLAN };
@@ -932,6 +1000,9 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
         id: playerId,
         name: nameFor(personOrdinal),
         programId: id,
+        // An opening roster is mostly local by simplifying assumption — there
+        // is no recruiting history to draw a real origin from.
+        homeDivisionId: state.programs[id]!.divisionId,
         position,
         overall: derivedOverall,
         // A struggling program has to be able to out-develop a rich one, so its
@@ -1329,6 +1400,7 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   const rng = new AddressableRng(state.identity.rootSeed).fork(String(state.season), String(state.week));
   resolveCommands(state, commands, rng.fork("commands"), events);
   resolveRecruitingMarket(state, rng.fork("recruiting-market"), events);
+  resolveSigningWeek(state, events);
   recoverPlayers(state);
   developPlayers(state, rng.fork("development"), events);
   applyPracticeFatigue(state);
@@ -1685,7 +1757,10 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       const prospect = state.prospects[command.prospectId];
       const recruiting = state.recruiting[program.id]!;
       const scouting = recruiting.scoutingByProspect[command.prospectId];
-      if (!prospect || prospect.status !== "AVAILABLE" || !scouting) {
+      // A verbal commitment is still contestable — see SIGNING_WEEK — so a
+      // recruit stays reachable up to that point, whoever he is currently
+      // committed to.
+      if (!prospect || (prospect.status !== "AVAILABLE" && prospect.status !== "COMMITTED") || !scouting) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Discover this available prospect before evaluating him." });
         continue;
       }
@@ -1712,19 +1787,67 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       });
       continue;
     }
-    if (command.type === "INVEST_RECRUITING_POINTS" || command.type === "OFFER_PROSPECT") {
+    if (command.type === "OFFER_PROSPECT") {
       const prospect = state.prospects[command.prospectId];
       const recruiting = state.recruiting[program.id]!;
       const scouting = recruiting.scoutingByProspect[command.prospectId];
-      if (!prospect || prospect.status !== "AVAILABLE" || !scouting) {
+      // A verbal commitment is still contestable — see SIGNING_WEEK — so a
+      // recruit stays reachable up to that point, whoever he is currently
+      // committed to.
+      if (!prospect || (prospect.status !== "AVAILABLE" && prospect.status !== "COMMITTED") || !scouting) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Prospect is unavailable." });
+        continue;
+      }
+      const alreadyOffered = recruiting.offeredProspectIds.includes(command.prospectId);
+      if (command.extend) {
+        if (alreadyOffered) continue;
+        if (projectedRecruitingOpenings(state, program.id) <= 0) {
+          events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The projected incoming class is full." });
+          continue;
+        }
+        recruiting.offeredProspectIds.push(command.prospectId);
+        recruiting.offeredProspectIds.sort();
+      } else {
+        if (!alreadyOffered) continue;
+        recruiting.offeredProspectIds = recruiting.offeredProspectIds.filter((id) => id !== command.prospectId);
+        // Rescinding is remembered, the same flat, deterministic way NIL
+        // withdrawal already is. Whatever pursuit points or NIL dollars are
+        // already on the table stay — this only closes the door to more.
+        prospect.interestByProgram[program.id] = Math.max(
+          0,
+          Number(((prospect.interestByProgram[program.id] ?? 0) - NIL_WITHDRAWAL_INTEREST_PENALTY).toFixed(3))
+        );
+      }
+      events.push({
+        type: "PROSPECT_OFFERED",
+        season: state.season,
+        week: state.week,
+        programId: program.id,
+        prospectId: prospect.id,
+        extended: command.extend
+      });
+      continue;
+    }
+    if (command.type === "INVEST_RECRUITING_POINTS") {
+      const prospect = state.prospects[command.prospectId];
+      const recruiting = state.recruiting[program.id]!;
+      const scouting = recruiting.scoutingByProspect[command.prospectId];
+      // A verbal commitment is still contestable — see SIGNING_WEEK — so a
+      // recruit stays reachable up to that point, whoever he is currently
+      // committed to.
+      if (!prospect || (prospect.status !== "AVAILABLE" && prospect.status !== "COMMITTED") || !scouting) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Prospect is unavailable." });
+        continue;
+      }
+      if (!recruiting.offeredProspectIds.includes(command.prospectId)) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Offer him a scholarship before you pitch him further." });
         continue;
       }
       if (projectedRecruitingOpenings(state, program.id) <= 0) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The projected incoming class is full." });
         continue;
       }
-      const points = command.type === "OFFER_PROSPECT" ? 10 : Math.trunc(command.points);
+      const points = Math.trunc(command.points);
       if (points < 1 || points > 25 || recruiting.points < points) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Choose an investment of 1–25 available Recruiting Points." });
         continue;
@@ -1742,11 +1865,58 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       });
       continue;
     }
+    if (command.type === "SCHEDULE_VISIT") {
+      const prospect = state.prospects[command.prospectId];
+      const recruiting = state.recruiting[program.id]!;
+      const scouting = recruiting.scoutingByProspect[command.prospectId];
+      // A verbal commitment is still contestable — see SIGNING_WEEK — so a
+      // recruit stays reachable up to that point, whoever he is currently
+      // committed to.
+      if (!prospect || (prospect.status !== "AVAILABLE" && prospect.status !== "COMMITTED") || !scouting) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Prospect is unavailable." });
+        continue;
+      }
+      if (!recruiting.offeredProspectIds.includes(command.prospectId)) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Offer him a scholarship before you schedule a visit." });
+        continue;
+      }
+      if (projectedRecruitingOpenings(state, program.id) <= 0) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The projected incoming class is full." });
+        continue;
+      }
+      if (recruiting.visitsUsedThisSeason >= MAX_VISITS_PER_SEASON) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Every visit weekend this season is already spent." });
+        continue;
+      }
+      if (recruiting.points < VISIT_COST) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Not enough Recruiting Points to schedule a visit." });
+        continue;
+      }
+      const visitsAlreadyUsed = scouting.visitsUsed ?? 0;
+      const bonus = visitScore(prospectProgramFit(state, prospect, program.id), visitsAlreadyUsed);
+      recruiting.points -= VISIT_COST;
+      recruiting.visitsUsedThisSeason += 1;
+      scouting.visitsUsed = visitsAlreadyUsed + 1;
+      events.push({
+        type: "RECRUITING_VISIT_SCHEDULED",
+        season: state.season,
+        week: state.week,
+        programId: program.id,
+        prospectId: prospect.id,
+        visitNumber: scouting.visitsUsed,
+        bonus,
+        visitsRemainingThisSeason: MAX_VISITS_PER_SEASON - recruiting.visitsUsedThisSeason
+      });
+      continue;
+    }
     if (command.type === "SET_NIL_OFFER") {
       const prospect = state.prospects[command.prospectId];
       const scouting = state.recruiting[program.id]?.scoutingByProspect[command.prospectId];
       const amount = Math.max(0, Math.round(command.weeklyAmount));
-      if (!prospect || prospect.status !== "AVAILABLE" || !scouting) {
+      // A verbal commitment is still contestable — see SIGNING_WEEK — so a
+      // recruit stays reachable up to that point, whoever he is currently
+      // committed to.
+      if (!prospect || (prospect.status !== "AVAILABLE" && prospect.status !== "COMMITTED") || !scouting) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Prospect is unavailable." });
         continue;
       }
@@ -2233,8 +2403,10 @@ function applyRedshirtCommand(
 function commandArbitrationKey(command: GameCommand): string {
   if (command.type === "SEARCH_PROSPECTS") return `${command.programId}:0:${command.searchType}:${command.position ?? ""}`;
   if (command.type === "EVALUATE_PROSPECT") return `${command.programId}:1:${command.prospectId}:${command.evaluation}`;
-  if (command.type === "INVEST_RECRUITING_POINTS") return `${command.programId}:2:${command.prospectId}:${String(command.points).padStart(2, "0")}`;
-  if (command.type === "OFFER_PROSPECT") return `${command.programId}:2:${command.prospectId}:10`;
+  // An offer must resolve before anything that requires one, in the same week.
+  if (command.type === "OFFER_PROSPECT") return `${command.programId}:2:${command.prospectId}:${command.extend ? 1 : 0}`;
+  if (command.type === "INVEST_RECRUITING_POINTS") return `${command.programId}:3:${command.prospectId}:${String(command.points).padStart(2, "0")}`;
+  if (command.type === "SCHEDULE_VISIT") return `${command.programId}:4:${command.prospectId}`;
   return `${command.programId}:9:${command.type}:${JSON.stringify(command)}`;
 }
 
@@ -2291,12 +2463,17 @@ function resolveProspectSearch(
  * never become hidden recruiting rules.
  */
 function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
+  // A verbal commitment stays in the market — and therefore contestable —
+  // until the signing week. After that, only a fresh (never-committed)
+  // prospect can still be in this pool, and he signs immediately: see below.
   const contests = Object.values(state.prospects)
-    .filter((prospect) => prospect.status === "AVAILABLE")
+    .filter((prospect) => prospect.status === "AVAILABLE" || (prospect.status === "COMMITTED" && state.week < SIGNING_WEEK))
     .map((prospect) => {
       const offeredBy = Object.keys(state.programs).filter((programId) =>
         ((state.recruiting[programId]?.scoutingByProspect[prospect.id]?.pursuitPoints ?? 0) > 0
-          || (state.nil?.[programId]?.offersByProspect[prospect.id] ?? 0) > 0)
+          || (state.nil?.[programId]?.offersByProspect[prospect.id] ?? 0) > 0
+          || (state.nil?.[programId]?.commitmentsByPlayer[prospect.id] ?? 0) > 0
+          || (state.recruiting[programId]?.offeredProspectIds.includes(prospect.id) ?? false))
         && projectedRecruitingOpenings(state, programId) > 0
       ).sort();
       const scores = Object.fromEntries(offeredBy.map((programId) => [programId, recruitingScore(state, prospect, programId, rng)]));
@@ -2315,7 +2492,19 @@ function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: 
     const commitmentThreshold = Math.max(58, 82 - state.week * 2);
     const requiredLead = state.week >= 12 ? 0 : 4;
     if (score < commitmentThreshold || score - (runnerUpScore ?? 0) < requiredLead) continue;
-    contest.prospect.status = "COMMITTED";
+
+    const previousProgramId = contest.prospect.signedProgramId;
+    // Nothing changed: the incumbent simply re-won his own recruit this week.
+    if (contest.prospect.status === "COMMITTED" && previousProgramId === winnerProgramId) continue;
+    const isFlip = contest.prospect.status === "COMMITTED" && previousProgramId !== null && previousProgramId !== winnerProgramId;
+    if (isFlip) {
+      // He stops costing the program he left the moment he leaves it.
+      const previousNil = state.nil?.[previousProgramId!];
+      if (previousNil) delete previousNil.commitmentsByPlayer[contest.prospect.id];
+    }
+
+    const signsImmediately = state.week >= SIGNING_WEEK;
+    contest.prospect.status = signsImmediately ? "SIGNED" : "COMMITTED";
     contest.prospect.signedProgramId = winnerProgramId;
     // The winner's offer converts to a commitment and starts charging this
     // week — settled decision: the drain begins at commitment, not enrollment.
@@ -2347,40 +2536,91 @@ function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: 
       winnerProgramId,
       scores: contest.scores
     });
-    events.push({
-      type: "PROSPECT_COMMITTED",
-      season: state.season,
-      week: state.week,
-      prospectId: contest.prospect.id,
-      programId: winnerProgramId,
-      score,
-      runnerUpProgramId,
-      runnerUpScore
-    });
+    if (isFlip) {
+      events.push({
+        type: "PROSPECT_FLIPPED",
+        season: state.season,
+        week: state.week,
+        prospectId: contest.prospect.id,
+        fromProgramId: previousProgramId!,
+        toProgramId: winnerProgramId,
+        score
+      });
+    } else {
+      events.push({
+        type: "PROSPECT_COMMITTED",
+        season: state.season,
+        week: state.week,
+        prospectId: contest.prospect.id,
+        programId: winnerProgramId,
+        score,
+        runnerUpProgramId,
+        runnerUpScore
+      });
+    }
+    if (signsImmediately) {
+      events.push({ type: "PROSPECT_SIGNED", season: state.season, week: state.week, prospectId: contest.prospect.id, programId: winnerProgramId });
+    }
+  }
+}
+
+/**
+ * Every prospect still verbally `COMMITTED` at the signing week locks to
+ * `SIGNED` — no more flips, whoever ranks where. A prospect who commits for
+ * the first time at or after this week never passes through `COMMITTED` at
+ * all; see the `signsImmediately` branch in `resolveRecruitingMarket`.
+ */
+function resolveSigningWeek(state: GameState, events: GameEvent[]): void {
+  if (state.week !== SIGNING_WEEK) return;
+  for (const prospect of Object.values(state.prospects)) {
+    if (prospect.status !== "COMMITTED") continue;
+    prospect.status = "SIGNED";
+    events.push({ type: "PROSPECT_SIGNED", season: state.season, week: state.week, prospectId: prospect.id, programId: prospect.signedProgramId! });
   }
 }
 
 function recruitingScore(state: GameState, prospect: Prospect, programId: string, rng: AddressableRng): number {
   const program = state.programs[programId]!;
-  const pursuitPoints = state.recruiting[programId]?.scoutingByProspect[prospect.id]?.pursuitPoints ?? 0;
+  const scouting = state.recruiting[programId]?.scoutingByProspect[prospect.id];
+  const pursuitPoints = scouting?.pursuitPoints ?? 0;
+  const fit = prospectProgramFit(state, prospect, programId);
   const facilityBonus = Math.max(0, program.facilities.RECRUITING - 1) * 2;
   const staffBonus = staffContribution(state, programId, "RECRUIT") / 25;
   const exposureBonus = program.localPress / 50 + program.nationalPress / 20;
   const appealBonus = program.recruitAppeal + (prospect.homeDivisionId === program.divisionId ? program.homeRegionBias / 8 : 0);
   // Money is a tiebreaker by design: nilScore saturates at NIL_SCORE_CEILING,
   // under the fit and interest terms, so an offer decides close contests and
-  // never overcomes a prospect who does not want the program.
-  const nilOffer = state.nil?.[programId]?.offersByProspect[prospect.id] ?? 0;
+  // never overcomes a prospect who does not want the program. A live offer is
+  // read first; once he is committed here the same dollars live in
+  // `commitmentsByPlayer` instead, and must still count toward keeping him.
+  const nilOffer = state.nil?.[programId]?.offersByProspect[prospect.id]
+    ?? state.nil?.[programId]?.commitmentsByPlayer[prospect.id]
+    ?? 0;
   const nilBonus = nilScore(nilOffer, nilAskingPrice(prospect, program), prospect);
+  // A bare offer is a small, flat signal — not a substitute for actually
+  // pursuing him. See OFFER_SCORE_BONUS for how it is sized against the rest.
+  const offerBonus = state.recruiting[programId]?.offeredProspectIds.includes(prospect.id) ? OFFER_SCORE_BONUS : 0;
+  // Reuses the same fit the roster requirement reads: a visit pays more where
+  // the program actually has what he's looking for.
+  const visitBonus = totalVisitScore(fit, scouting?.visitsUsed ?? 0);
+  // The real cost of backing out on a program, added only for whoever he is
+  // currently verbally committed to. A rival needs a real, stated edge to
+  // flip him — not a marginal one.
+  const commitmentInertia = prospect.status === "COMMITTED" && prospect.signedProgramId === programId
+    ? COMMITMENT_INERTIA_BONUS
+    : 0;
   return Number((
     prospect.interestByProgram[programId]! * 0.3
-    + prospectProgramFit(state, prospect, programId) * 0.35
+    + fit * 0.35
     + pursuitPoints * 0.75
     + facilityBonus
     + staffBonus
     + exposureBonus
     + appealBonus
     + nilBonus
+    + offerBonus
+    + visitBonus
+    + commitmentInertia
     + rng.between(`${prospect.id}:${programId}:decision-noise`, -2, 2)
   ).toFixed(3));
 }
@@ -2391,7 +2631,7 @@ function scoutingQuality(state: Readonly<GameState>, programId: string): number 
   return clamp(25 + program.facilities.RECRUITING * 12 + staffContribution(state, programId, "RECRUIT") / 6, 25, 100);
 }
 
-function prospectProgramFit(state: Readonly<GameState>, prospect: Readonly<Prospect>, programId: string): number {
+export function prospectProgramFit(state: Readonly<GameState>, prospect: Readonly<Prospect>, programId: string): number {
   const program = state.programs[programId];
   if (!program) return 0;
   const rosterAtPosition = Object.values(state.players).filter((player) =>
@@ -2411,10 +2651,46 @@ function prospectProgramFit(state: Readonly<GameState>, prospect: Readonly<Prosp
     if (priority === "NATIONAL_EXPOSURE") return clamp(program.nationalPress + Math.max(0, 26 - program.nationalRank), 5, 100);
     if (priority === "ACADEMICS") return program.facilities.ACADEMICS * 20;
     if (priority === "FACILITIES") return (program.facilities.TRAINING + program.facilities.RECRUITING) * 10;
-    if (priority === "CLOSE_TO_HOME") return prospect.homeDivisionId === program.divisionId ? 95 : 30;
+    if (priority === "CLOSE_TO_HOME") {
+      if (prospect.homeDivisionId !== program.divisionId) return 30;
+      // A program that has actually developed players from this division
+      // earns a little more than the flat home-territory discount everyone
+      // gets — see `pipelineStrength` and `updatePipelineStrength`.
+      const pipelineBonus = Math.min(PIPELINE_MAX_BONUS, program.pipelineStrength[prospect.homeDivisionId] ?? 0);
+      return Math.min(100, 95 + pipelineBonus);
+    }
     return clamp(averageStardom + program.nationalPress * 0.45, 5, 100);
   };
   return prospect.priorities.reduce((sum, priority) => sum + priorityScore(priority), 0) / prospect.priorities.length;
+}
+
+/**
+ * Once a season, at rollover — not weekly, this is a slow-moving number.
+ * Every division a program has ever touched decays a little first, so a
+ * program that stops developing a territory slowly loses its edge there;
+ * then whoever became a real contributor this season adds to it. Must run
+ * before the eligibility loop resets `gamesPlayedThisSeason`.
+ */
+export function updatePipelineStrength(state: GameState): void {
+  for (const program of Object.values(state.programs)) {
+    const decayed: Partial<Record<DivisionId, number>> = {};
+    for (const [divisionId, strength] of Object.entries(program.pipelineStrength) as [DivisionId, number][]) {
+      const next = strength * PIPELINE_DECAY_RATE;
+      // Let a spent pipeline actually reach zero rather than lingering forever.
+      if (next > 0.05) decayed[divisionId] = next;
+    }
+    program.pipelineStrength = decayed;
+  }
+  for (const player of Object.values(state.players)) {
+    if (player.programId === null || player.eligibility.rosterStatus !== "SCHOLARSHIP") continue;
+    const contributed = player.eligibility.gamesPlayedThisSeason >= PIPELINE_CONTRIBUTOR_GAMES
+      || player.stardom >= PIPELINE_CONTRIBUTOR_STARDOM;
+    if (!contributed) continue;
+    const program = state.programs[player.programId];
+    if (!program) continue;
+    const divisionId = player.homeDivisionId;
+    program.pipelineStrength[divisionId] = (program.pipelineStrength[divisionId] ?? 0) + PIPELINE_GAIN_PER_CONTRIBUTOR;
+  }
 }
 
 function replenishRecruitingPoints(state: GameState, events: GameEvent[]): void {
@@ -2439,6 +2715,7 @@ function prospectToPlayer(prospect: Prospect, id: string, programId: string, sea
     id,
     name: prospect.name,
     programId,
+    homeDivisionId: prospect.homeDivisionId,
     position: prospect.position,
     overall: prospect.overall,
     potential: prospect.potential,
@@ -2536,10 +2813,17 @@ function initializeRecruitingBoards(state: GameState, rng: AddressableRng): void
       points: 0,
       weeklyPoints: 0,
       discoveredProspectIds: [],
-      scoutingByProspect: {}
+      scoutingByProspect: {},
+      offeredProspectIds: [],
+      visitsUsedThisSeason: 0
     };
     recruiting.discoveredProspectIds = [];
     recruiting.scoutingByProspect = {};
+    // A new class every season; last season's offers named prospects who are
+    // already resolved one way or another, and this year's visit weekends
+    // haven't been spent yet.
+    recruiting.offeredProspectIds = [];
+    recruiting.visitsUsedThisSeason = 0;
     state.recruiting[program.id] = recruiting;
     const initialBoard = [...available]
       .sort((left, right) => {
@@ -2953,6 +3237,7 @@ function ensureEmergencyQuarterbacks(state: GameState): void {
       id,
       name: fictionalPersonName(12_000 + index),
       programId: program.id,
+      homeDivisionId: program.divisionId,
       position: "QB",
       overall: computeOverall("QB", ratings),
       potential: computeOverall("QB", ratings),
@@ -4135,6 +4420,8 @@ function endNilCommitment(
 
 function rolloverSeason(state: GameState, events: GameEvent[]): void {
   finalizeSeason(state, events);
+  // Read before the eligibility loop below zeroes gamesPlayedThisSeason.
+  updatePipelineStrength(state);
   // Fold the season that just finished. Per-game rows are the growth term in
   // both memory and the save file — about 2,300 a week at full league size —
   // and nothing after the season is over reads them individually. Done before
@@ -4191,7 +4478,10 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
   }
   for (const program of Object.values(state.programs)) {
     const commitments = Object.values(state.prospects)
-      .filter((prospect) => prospect.status === "COMMITTED" && prospect.signedProgramId === program.id)
+      // Everyone still COMMITTED should already be SIGNED by the signing
+      // week; SIGNED is the real gate and COMMITTED stays only as a safety
+      // net so nobody is ever lost to an ordering surprise.
+      .filter((prospect) => (prospect.status === "SIGNED" || prospect.status === "COMMITTED") && prospect.signedProgramId === program.id)
       .sort((left, right) => {
         const leftPoints = state.recruiting[program.id]?.scoutingByProspect[left.id]?.pursuitPoints ?? 0;
         const rightPoints = state.recruiting[program.id]?.scoutingByProspect[right.id]?.pursuitPoints ?? 0;
@@ -4201,7 +4491,13 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
       const scholarships = Object.values(state.players).filter((player) =>
         player.programId === program.id && player.eligibility.rosterStatus === "SCHOLARSHIP"
       ).length;
-      if (scholarships >= program.scholarshipLimit) break;
+      if (scholarships >= program.scholarshipLimit) {
+        // The class filled before he got here. Resolve him rather than leave
+        // him stuck in COMMITTED forever — a real, if unhappy, outcome.
+        prospect.status = "WITHDRAWN";
+        events.push({ type: "PROSPECT_COMMITMENT_VOIDED", season: state.season, prospectId: prospect.id, programId: program.id, reason: "CLASS_FULL" });
+        continue;
+      }
       const playerId = `player:${prospect.id}`;
       state.players[playerId] = prospectToPlayer(prospect, playerId, program.id, state.season + 1);
       prospect.status = "ENROLLED";

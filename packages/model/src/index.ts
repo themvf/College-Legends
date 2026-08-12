@@ -559,6 +559,12 @@ export interface Player {
   id: PlayerId;
   name: string;
   programId: ProgramId | null;
+  /**
+   * Where he's from, carried over from the prospect he was (or, for an
+   * opening roster with no recruiting history, his own program's division).
+   * What `pipelineStrength` reads to credit a program for developing him.
+   */
+  homeDivisionId: DivisionId;
   position: Position;
   overall: number;
   potential: number;
@@ -621,7 +627,12 @@ export interface Prospect {
   priorities: RecruitPriority[];
   /** A prospect's private fit with each school, generated from the save seed. */
   interestByProgram: Record<ProgramId, number>;
-  status: "AVAILABLE" | "COMMITTED" | "ENROLLED" | "WITHDRAWN";
+  /**
+   * `COMMITTED` is verbal and contestable — a rival can still flip him — until
+   * the signing week, when he becomes `SIGNED` and can never be contested
+   * again. `ENROLLED` is a season later, once he actually joins the roster.
+   */
+  status: "AVAILABLE" | "COMMITTED" | "SIGNED" | "ENROLLED" | "WITHDRAWN";
   signedProgramId: ProgramId | null;
 }
 
@@ -629,6 +640,8 @@ export interface ProspectScoutingState {
   evaluations: RecruitingEvaluation[];
   /** Persistent staff investment that remains with the recruit until he commits. */
   pursuitPoints: number;
+  /** Home visits this program has spent on him this season. Diminishing per repeat. */
+  visitsUsed?: number;
 }
 
 export interface RecruitingProgramState {
@@ -636,6 +649,14 @@ export interface RecruitingProgramState {
   weeklyPoints: number;
   discoveredProspectIds: ProspectId[];
   scoutingByProspect: Record<ProspectId, ProspectScoutingState>;
+  /**
+   * Prospects this program has extended a scholarship offer to. Durable and
+   * free to give — it is a signal, not a spend — and a prerequisite for
+   * pursuing him further. Persists until he resolves off the board.
+   */
+  offeredProspectIds: ProspectId[];
+  /** Home visits used this season, shared across every prospect on the board. */
+  visitsUsedThisSeason: number;
 }
 
 /**
@@ -726,6 +747,14 @@ export interface Program {
   donorCulture: number;
   /** Standing in this program's own division before any relationship is built. */
   homeRegionBias: number;
+  /**
+   * Earned standing in a division, division by division — rises slowly when a
+   * signed prospect from that division becomes a real contributor, decays
+   * slowly otherwise. `homeRegionBias` is the flat discount every program
+   * gets in its own territory; this is what a program has actually built
+   * there over time.
+   */
+  pipelineStrength: Partial<Record<DivisionId, number>>;
   /** Price of a home-game ticket. Demand falls as it rises above what the
    *  program's standing justifies, and goodwill falls with it. */
   ticketPrice: number;
@@ -831,7 +860,19 @@ export interface BalanceConfiguration {
 }
 
 export type GameCommand =
-  | { type: "OFFER_PROSPECT"; programId: ProgramId; prospectId: ProspectId }
+  /**
+   * A real, durable scholarship offer — not a disguised pursuit-point spend.
+   * Free to extend; a prerequisite for investing pursuit points or scheduling
+   * a visit. `extend: false` rescinds it, which the prospect remembers.
+   */
+  | { type: "OFFER_PROSPECT"; programId: ProgramId; prospectId: ProspectId; extend: boolean }
+  /**
+   * A home visit — the highest-leverage single recruiting action. Requires an
+   * active offer, costs Recruiting Points, and pays more where the program
+   * actually fits what he's looking for. Capped per season across the whole
+   * board and diminishing per repeat visit to the same recruit.
+   */
+  | { type: "SCHEDULE_VISIT"; programId: ProgramId; prospectId: ProspectId }
   | { type: "SEARCH_PROSPECTS"; programId: ProgramId; searchType: RecruitingSearchType; position?: Position }
   | { type: "EVALUATE_PROSPECT"; programId: ProgramId; prospectId: ProspectId; evaluation: RecruitingEvaluation }
   | { type: "INVEST_RECRUITING_POINTS"; programId: ProgramId; prospectId: ProspectId; points: number }
@@ -977,7 +1018,12 @@ export type GameEvent =
       winnerProgramId: ProgramId;
       scores: Record<ProgramId, number>;
     }
-  | { type: "PROSPECT_SIGNED"; season: Season; week: number; prospectId: ProspectId; playerId: PlayerId; programId: ProgramId }
+  /**
+   * He can never be contested again after this — the signing week lock, or an
+   * immediate sign for a first commitment made after that week. Enrollment is
+   * a season later and has its own event; there is no player yet here.
+   */
+  | { type: "PROSPECT_SIGNED"; season: Season; week: number; prospectId: ProspectId; programId: ProgramId }
   | {
       type: "PROSPECTS_DISCOVERED";
       season: Season;
@@ -995,6 +1041,24 @@ export type GameEvent =
       prospectId: ProspectId;
       evaluation: RecruitingEvaluation;
       pointsSpent: number;
+    }
+  | {
+      type: "PROSPECT_OFFERED";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      prospectId: ProspectId;
+      extended: boolean;
+    }
+  | {
+      type: "RECRUITING_VISIT_SCHEDULED";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      prospectId: ProspectId;
+      visitNumber: number;
+      bonus: number;
+      visitsRemainingThisSeason: number;
     }
   | {
       type: "RECRUITING_INVESTMENT";
@@ -1015,7 +1079,23 @@ export type GameEvent =
       runnerUpProgramId: ProgramId | null;
       runnerUpScore: number | null;
     }
+  /** A rival won a verbal commitment away from its incumbent before the signing week. */
+  | {
+      type: "PROSPECT_FLIPPED";
+      season: Season;
+      week: number;
+      prospectId: ProspectId;
+      fromProgramId: ProgramId;
+      toProgramId: ProgramId;
+      score: number;
+    }
   | { type: "PROSPECT_ENROLLED"; season: Season; prospectId: ProspectId; playerId: PlayerId; programId: ProgramId }
+  /**
+   * A verbal commitment that never became a roster spot because the class
+   * filled before he got there. He is not signed anywhere else — the
+   * commitment is simply void, resolved rather than left dangling.
+   */
+  | { type: "PROSPECT_COMMITMENT_VOIDED"; season: Season; prospectId: ProspectId; programId: ProgramId; reason: "CLASS_FULL" }
   | {
       type: "NIL_DEAL_SIGNED";
       season: Season;
