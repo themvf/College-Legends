@@ -9,6 +9,11 @@ export type WorkerRequest =
   | { type: "ADVANCE_WEEK"; requestId: string; playerProgramId: ProgramId; commands: GameCommand[] }
   /** Scouting resolves before the week is advanced, so the report can inform the plan. */
   | { type: "PREPARE"; requestId: string; playerProgramId: ProgramId; commands: GameCommand[] }
+  /**
+   * Closes the open offseason step for the whole league. One step at a time —
+   * the player sees each one, and rivals plan against the same step.
+   */
+  | { type: "ADVANCE_OFFSEASON"; requestId: string; playerProgramId: ProgramId; commands: GameCommand[] }
   /** Asks whether a career exists on this device, without loading it. */
   | { type: "HAS_SAVE"; requestId: string }
   /** Reads the autosave out of the origin private file system, if there is one. */

@@ -112,21 +112,20 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       reply({ type: "COMPLETE", requestId: request.requestId, state: activeState, events: result.events });
       return;
     }
-    if (activeState.phase === "OFFSEASON") {
-      // No offseason screens exist yet, so the prototype runs the steps through
-      // with the engine's do-nothing defaults rather than stranding the player
-      // on a phase they cannot advance. Replace this with the real step-by-step
-      // flow when the offseason UI lands.
-      const offseasonEvents: GameEvent[] = [];
-      while (activeState.phase === "OFFSEASON") {
-        const step = advanceOffseasonStep(activeState, planOffseasonCommands(activeState, request.playerProgramId));
-        activeState = step.state;
-        offseasonEvents.push(...step.events);
-      }
+    if (request.type === "ADVANCE_OFFSEASON") {
+      if (activeState.phase !== "OFFSEASON") throw new Error("There is no offseason step open.");
+      // Rivals plan against the same step the player just decided, so the
+      // league moves around him rather than waiting for him.
+      const rivals = planOffseasonCommands(activeState, request.playerProgramId);
+      const result = advanceOffseasonStep(activeState, [...rivals, ...request.commands] as GameCommand[]);
+      activeState = result.state;
       activeProgramId = request.playerProgramId;
       autosave(activeState, activeProgramId);
-      reply({ type: "COMPLETE", requestId: request.requestId, state: activeState, events: offseasonEvents });
+      reply({ type: "COMPLETE", requestId: request.requestId, state: activeState, events: result.events });
       return;
+    }
+    if (activeState.phase === "OFFSEASON") {
+      throw new Error("The season is over. Work through the offseason before the next one starts.");
     }
     const aiCommands = planWeeklyCommands(activeState, request.playerProgramId);
     const result = advanceWeek(activeState, [...aiCommands, ...request.commands] as GameCommand[]);

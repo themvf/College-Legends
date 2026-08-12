@@ -35,13 +35,27 @@ offseason planner. 150 tests pass.
   one-shot window. `portalBidScore` is a sibling on the same coefficients
   reading the same fit function, which keeps the two honest without forcing
   one function to branch on which pool it is scoring.
-- **The web prototype auto-runs the offseason.** No offseason screens exist
-  yet, so the worker steps through with the do-nothing defaults rather than
-  stranding a player on a phase with no UI. Rivals still plan normally, so the
-  league moves around a human who currently cannot act. Marked in the worker
-  for replacement — **this is the largest thing still missing**, and until it
-  lands the human player is the only program not participating in his own
-  offseason.
+- **~~The web prototype auto-runs the offseason.~~ Built.** Four screens, one
+  per step, as a full-screen flow rather than a dashboard tab — for the same
+  reason `SetUpProgram` is one: no games are being played, the weekly
+  decisions do not apply, and a nav bar of in-season screens would be fourteen
+  dead links. Driven end to end in a real browser, not asserted: a season
+  played out, a retention bid placed on a player leaving, all four steps
+  closed, and the career back on the dashboard at Season 2028 Week 1.
+- **Building the screens found a performance defect I had introduced.**
+  `planPortalBids` sorted listings by calling `portalTargetValue` from inside
+  the comparator, and that function scanned every player in the league —
+  precisely the antipattern `CLAUDE.md` measures at 45% of a week's runtime
+  for `prospectValue`. At 72 programs against ~280 listings it made closing
+  the portal window take longer than the browser would wait, which is how it
+  surfaced. Position depth is now counted once per program and the sort reads
+  a precomputed key. Worth noting the test suite never caught this: every
+  engine test passed at both 12 and 24 programs. **Only driving the real UI at
+  real league size exposed it.**
+- **An error during the offseason was invisible.** The flow renders instead of
+  `Dashboard`, and `Dashboard` was the only thing that displayed `error` — so
+  a worker throw would have left the player on a screen where the button
+  silently did nothing. The flow surfaces it now.
 - **The staff card was posting a number the engine no longer charged.** It
   read "already on staff, no buyout" and priced a hire at the signing cost
   alone. Adding the buyout to the engine without fixing the card would have
@@ -427,6 +441,8 @@ this pass does not settle:
    it *should* cost something is a design question this slice does not
    answer.
 
-5. **The offseason has no screens.** The engine is complete and the AI plays
-   it; the human currently cannot. This is the next piece of work, not an
-   open design question — see the deviation note above.
+5. ~~The offseason has no screens.~~ **Built and verified in a browser.** What
+   is genuinely still open is smaller: signing day is a report rather than a
+   decision, which is correct today because recruiting settles during the
+   season — but it makes step 2 the one step that never asks for anything, and
+   it may be the natural home for a last-chance push once that exists.

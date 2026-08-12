@@ -9,9 +9,11 @@ import type {
   GameCommand,
   GameEvent,
   GameState,
+  OffseasonStep,
   Player,
   PlayerGameStatLine,
   PlayerMediaAction,
+  PortalListingState,
   Position,
   ProgramId,
   Prospect,
@@ -23,6 +25,7 @@ import type {
   StaffFocus,
   StaffMember,
   StaffSkill,
+  TrainingCampFocus,
   WeekFocus
 } from "@college-legends/model";
 import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
@@ -112,6 +115,16 @@ import {
   MAX_VISITS_PER_SEASON,
   SIGNING_WEEK,
   VISIT_COST,
+  OFFSEASON_STEPS,
+  portalAskingPrice,
+  portalListings,
+  portalRecruitable,
+  prospectProgramFit,
+  PORTAL_MINIMUM_POINTS,
+  TRAINING_CAMP_CONDITIONING_RISK,
+  TRAINING_CAMP_INSTALL_BONUS,
+  TRAINING_CAMP_INSTALL_RISK,
+  TRAINING_CAMP_WEEKS,
   SEASON_AWARD_LABELS,
   SEASON_AWARD_TYPES,
   seasonAwardRace,
@@ -287,6 +300,8 @@ export function App(): ReactElement {
       : command.type === "EVALUATE_PROSPECT" ? `recruit-eval:${command.prospectId}:${command.evaluation}`
       : command.type === "INVEST_RECRUITING_POINTS" ? `recruit-invest:${command.prospectId}`
       : command.type === "OFFER_PROSPECT" ? `prospect:${command.prospectId}`
+      : command.type === "BID_PORTAL_PLAYER" ? `portal:${command.playerId}`
+      : command.type === "SET_TRAINING_CAMP_FOCUS" ? "training-camp"
       : command.type === "SET_DEPTH_CHART" ? `depth:${command.position}`
       : command.type === "SET_REDSHIRT" || command.type === "RED_SHIRT" ? `redshirt:${command.playerId}`
       : "command";
@@ -309,6 +324,11 @@ export function App(): ReactElement {
       command
     ]);
   };
+  const advanceOffseason = (): void => {
+    if (!game) return;
+    send({ type: "ADVANCE_OFFSEASON", requestId: nextRequestId(), playerProgramId: game.playerProgramId, commands: pendingCommands });
+    setPendingCommands([]);
+  };
   const advance = (): void => {
     if (!game) return;
     send({ type: "ADVANCE_WEEK", requestId: nextRequestId(), playerProgramId: game.playerProgramId, commands: pendingCommands });
@@ -321,6 +341,10 @@ export function App(): ReactElement {
   if (game && game.state.phase === "ROSTER_REVIEW" && !setupDone) {
     return <SetUpProgram busy={busy} game={game} onPrepare={prepare}
       onDone={() => { setSetupDone(true); setScreen("ROSTER"); }} />;
+  }
+  if (game && game.state.phase === "OFFSEASON") {
+    return <Offseason game={game} busy={busy} error={error} pending={pendingCommands} onQueue={queue}
+      onContinue={advanceOffseason} />;
   }
   if (offers) return <ChooseJob busy={busy} careerPath={offers.careerPath} previews={offers.previews}
     onTake={takeJob} onReroll={() => startGame(offers.careerPath, Math.floor(Math.random() * 100_000))}
@@ -418,6 +442,8 @@ function commandKey(command: GameCommand): string {
   if (command.type === "EVALUATE_PROSPECT") return `recruit-eval:${command.prospectId}:${command.evaluation}`;
   if (command.type === "INVEST_RECRUITING_POINTS") return `recruit-invest:${command.prospectId}`;
   if (command.type === "OFFER_PROSPECT") return `prospect:${command.prospectId}`;
+  if (command.type === "BID_PORTAL_PLAYER") return `portal:${command.playerId}`;
+  if (command.type === "SET_TRAINING_CAMP_FOCUS") return "training-camp";
   if (command.type === "SET_DEPTH_CHART") return `depth:${command.position}`;
   if (command.type === "SET_REDSHIRT" || command.type === "RED_SHIRT") return `redshirt:${command.playerId}`;
   return "command";
@@ -2664,3 +2690,428 @@ function facilityBenefit(facility: FacilityType): string {
   }[facility];
 }
 function Metric({ label: metricLabel, value }: { label: string; value: string }): ReactElement { return <article><p>{metricLabel}</p><strong>{value}</strong></article>; }
+
+/**
+ * The offseason: four steps, in order, each its own screen.
+ *
+ * Deliberately a full-screen flow rather than another dashboard tab, for the
+ * same reason `SetUpProgram` is: no games are being played, the weekly
+ * decisions do not apply, and the nav bar full of in-season screens would be
+ * fourteen dead links. The player works through the four steps and comes out
+ * the other side in week one.
+ *
+ * Every step is skippable. "Continue" with nothing chosen is a legal, sane
+ * week — the engine's own default — so the flow is never homework.
+ */
+function Offseason({ game, busy, error, pending, onQueue, onContinue }: {
+  game: GameView;
+  busy: boolean;
+  error: string | undefined;
+  pending: GameCommand[];
+  onQueue: (command: GameCommand) => void;
+  onContinue: () => void;
+}): ReactElement {
+  const step = game.state.offseasonStep ?? "PORTAL";
+  const index = OFFSEASON_STEPS.indexOf(step);
+  const program = game.state.programs[game.playerProgramId]!;
+  return <main className="new-game offseason-screen">
+    <header className="masthead">
+      <p className="eyebrow">{program.name} · the {game.state.season} season is over</p>
+      <h1>{OFFSEASON_STEP_HEADLINES[step]}</h1>
+      <p>{OFFSEASON_STEP_BLURBS[step]}</p>
+      <ol className="offseason-steps">{OFFSEASON_STEPS.map((entry, entryIndex) => (
+        <li className={entryIndex === index ? "current" : entryIndex < index ? "done" : ""} key={entry}>
+          <span>{entryIndex + 1}</span>{OFFSEASON_STEP_TITLES[entry]}
+        </li>
+      ))}</ol>
+    </header>
+
+    {error && <article className="panel offseason-error"><p className="eyebrow">Something went wrong</p><p>{error}</p></article>}
+    <OffseasonRecap game={game} />
+
+    {step === "PORTAL" && <PortalBoard game={game} busy={busy} pending={pending} onQueue={onQueue} />}
+    {step === "SIGNING_DAY" && <SigningDay game={game} />}
+    {step === "COACHING" && <CoachingMarket game={game} busy={busy} pending={pending} onQueue={onQueue} />}
+    {step === "TRAINING_CAMP" && <TrainingCamp game={game} busy={busy} pending={pending} onQueue={onQueue} />}
+
+    <div className="job-actions">
+      <button disabled={busy} onClick={onContinue}>
+        {busy ? "Working…" : index === OFFSEASON_STEPS.length - 1 ? "Open the season" : OFFSEASON_STEP_ACTIONS[step]}
+      </button>
+    </div>
+  </main>;
+}
+
+const OFFSEASON_STEP_TITLES: Record<OffseasonStep, string> = {
+  PORTAL: "Portal",
+  SIGNING_DAY: "Signing day",
+  COACHING: "Staff",
+  TRAINING_CAMP: "Camp"
+};
+const OFFSEASON_STEP_HEADLINES: Record<OffseasonStep, string> = {
+  PORTAL: "Players are in the portal. Some of them are yours.",
+  SIGNING_DAY: "This is the class you signed.",
+  COACHING: "One look at your staff before the season starts.",
+  TRAINING_CAMP: "How do you want to spend camp?"
+};
+const OFFSEASON_STEP_BLURBS: Record<OffseasonStep, string> = {
+  PORTAL: "Everybody bids at once and nobody sees anybody else's offer. Bidding on a man who is leaving you is how you keep him — you already know him, and that counts for something.",
+  SIGNING_DAY: "Recruiting settled during the season. They arrive on campus when the offseason closes, and only if you have the scholarships free.",
+  COACHING: "The market you can reach depends on what the program is worth. Letting a coach go costs you his buyout on top of what the new man wants to sign.",
+  TRAINING_CAMP: "One choice, and it is a trade rather than an upgrade. Whatever you pick covers the opening weeks and then runs out."
+};
+const OFFSEASON_STEP_ACTIONS: Record<OffseasonStep, string> = {
+  PORTAL: "Close the portal window",
+  SIGNING_DAY: "On to the staff",
+  COACHING: "On to camp",
+  TRAINING_CAMP: "Open the season"
+};
+
+/** What the step the player just closed actually did. Saturday names Monday. */
+function OffseasonRecap({ game }: { game: GameView }): ReactElement | null {
+  const programId = game.playerProgramId;
+  const lines: string[] = [];
+  for (const event of game.events) {
+    if (event.type === "PORTAL_PLAYER_SIGNED" && event.programId === programId) {
+      const player = game.state.players[event.playerId];
+      lines.push(event.retained
+        ? `You kept ${player?.name ?? "a player"} (${player?.position}, ${player?.overall.toFixed(0)} overall).`
+        : `Signed ${player?.name ?? "a transfer"} out of the portal (${player?.position}, ${player?.overall.toFixed(0)} overall).`);
+    }
+    if (event.type === "PORTAL_PLAYER_SIGNED" && event.previousProgramId === programId && event.programId !== programId) {
+      const player = game.state.players[event.playerId];
+      lines.push(`Lost ${player?.name ?? "a player"} to ${game.state.programs[event.programId]?.name ?? "a rival"}.`);
+    }
+    if (event.type === "PORTAL_PLAYER_UNCLAIMED" && event.previousProgramId === programId) {
+      const player = game.state.players[event.playerId];
+      lines.push(`${player?.name ?? "A player"} left the program and did not land anywhere.`);
+    }
+    if (event.type === "STAFF_REPLACED" && event.programId === programId) {
+      lines.push(`Hired ${event.name} · ${money(event.signingCost)} to sign him and ${money(event.buyoutCost)} to let the last man go.`);
+    }
+    if (event.type === "TRAINING_CAMP_SET" && event.programId === programId) {
+      lines.push(`Camp is set on ${label(event.focus).toLowerCase()} for the first ${event.weeks} weeks.`);
+    }
+  }
+  if (!lines.length) return null;
+  return <article className="panel offseason-recap">
+    <p className="eyebrow">What just happened</p>
+    <ul>{lines.map((line, lineIndex) => <li key={lineIndex}>{line}</li>)}</ul>
+  </article>;
+}
+
+/**
+ * The portal window. Two lists, because they are two different decisions: the
+ * men leaving you, whom you are trying to keep, and everybody else, whom you
+ * are trying to take. Keeping somebody is the same bid either way — the engine
+ * runs one market — but the reason you are making it is not the same, and the
+ * screen should not pretend it is.
+ */
+function PortalBoard({ game, busy, pending, onQueue }: {
+  game: GameView; busy: boolean; pending: GameCommand[]; onQueue: (command: GameCommand) => void;
+}): ReactElement {
+  const programId = game.playerProgramId;
+  const program = game.state.programs[programId]!;
+  const recruiting = game.state.recruiting[programId]!;
+  const listings = Object.entries(portalListings(game.state))
+    .map(([playerId, listing]) => ({ playerId, listing, player: game.state.players[playerId]! }))
+    .filter((entry) => Boolean(entry.player));
+
+  const bids = pending.filter((command): command is Extract<GameCommand, { type: "BID_PORTAL_PLAYER" }> =>
+    command.type === "BID_PORTAL_PLAYER");
+  const pointsCommitted = bids.reduce((sum, bid) => sum + bid.points, 0);
+  const nilCommitted = bids.reduce((sum, bid) => sum + bid.weeklyNil, 0);
+  const pointsLeft = recruiting.points - pointsCommitted;
+  const nilLeft = freeNilCapacity(game.state, programId) - nilCommitted;
+  const openings = projectedRecruitingOpenings(game.state, programId);
+
+  const yours = listings.filter((entry) => entry.listing.previousProgramId === programId);
+  const others = listings
+    .filter((entry) => entry.listing.previousProgramId !== programId)
+    .sort((left, right) => right.player.overall - left.player.overall)
+    .slice(0, 24);
+
+  const card = (entry: typeof listings[number]) => <PortalCard
+    key={entry.playerId} game={game} busy={busy} entry={entry}
+    pointsLeft={pointsLeft} nilLeft={nilLeft} openings={openings}
+    bid={bids.find((item) => item.playerId === entry.playerId)}
+    onQueue={onQueue} />;
+
+  return <>
+    <article className="panel recruiting-command-center">
+      <div>
+        <p className="eyebrow">Portal window</p>
+        <h2>{pointsLeft} Recruiting Points and {money(Math.max(0, nilLeft))} a week left to spend</h2>
+        <p className="muted">
+          A bid costs points now and NIL dollars every week he is on your roster. Everything resolves at once when
+          you close the window — nobody wins by bidding first, and nobody sees what anybody else offered.
+        </p>
+      </div>
+      <div className="recruiting-metrics">
+        <Metric label="Leaving you" value={String(yours.length)} />
+        <Metric label="In the portal" value={String(listings.length)} />
+        <Metric label="Roster openings" value={String(openings)} />
+        <Metric label="Bids placed" value={String(bids.length)} />
+        <Metric label="Points left" value={String(Math.max(0, pointsLeft))} />
+        <Metric label="Donor room left" value={`${money(Math.max(0, nilLeft))} a week`} />
+      </div>
+    </article>
+
+    <article className="panel">
+      <SectionHeading eyebrow="Your players" title={yours.length
+        ? `${yours.length} of your own are in the portal`
+        : "Nobody left you this year"}
+        detail={yours.length
+          ? "Bid on him and you are re-recruiting him. You already know him, which is worth something no rival can match — but he has already decided to look."
+          : "Everyone with eligibility left is staying. Nothing to do here."} />
+    </article>
+    {yours.length > 0 && <div className="prospect-grid">{yours.map(card)}</div>}
+
+    <article className="panel">
+      <SectionHeading eyebrow="Everybody else" title="Players other programs are losing"
+        detail={openings > 0
+          ? "A transfer arrives finished rather than at eighteen, and keeps whatever eligibility he had left. That is what makes the portal the fast way up."
+          : "Your projected roster is full, so you cannot take anybody on. Openings come from graduations and departures."} />
+    </article>
+    <div className="prospect-grid">{others.map(card)}</div>
+  </>;
+}
+
+/** One man in the portal, with the whole bid on the card and no hidden numbers. */
+function PortalCard({ game, busy, entry, bid, pointsLeft, nilLeft, openings, onQueue }: {
+  game: GameView;
+  busy: boolean;
+  entry: { playerId: string; listing: PortalListingState; player: Player };
+  bid: Extract<GameCommand, { type: "BID_PORTAL_PLAYER" }> | undefined;
+  pointsLeft: number;
+  nilLeft: number;
+  openings: number;
+  onQueue: (command: GameCommand) => void;
+}): ReactElement {
+  const programId = game.playerProgramId;
+  const { playerId, listing, player } = entry;
+  const yours = listing.previousProgramId === programId;
+  const ask = portalAskingPrice(player);
+  const fit = Math.round(prospectProgramFit(game.state, portalRecruitable(player, listing), programId));
+  const currentPoints = bid?.points ?? 0;
+  const currentNil = bid?.weeklyNil ?? 0;
+  // The sliders may not offer more than the program can still cover, plus
+  // whatever this card has already reserved.
+  const maxPoints = Math.max(0, pointsLeft + currentPoints);
+  const maxNil = Math.max(0, Math.round((nilLeft + currentNil) / 50) * 50);
+  const blocked = openings <= 0;
+
+  const place = (points: number, weeklyNil: number): void => {
+    onQueue({ type: "BID_PORTAL_PLAYER", programId, playerId, points, weeklyNil });
+  };
+
+  return <article className={yours ? "panel prospect-card portal-card yours" : "panel prospect-card portal-card"}>
+    <header>
+      <div>
+        <p className="eyebrow">{yours ? "Leaving you" : game.state.programs[listing.previousProgramId]?.name ?? "Unattached"}</p>
+        <h2>{player.name}</h2>
+        <p>{player.position} · {player.eligibility.seasonsRemaining} {player.eligibility.seasonsRemaining === 1 ? "season" : "seasons"} of eligibility left</p>
+      </div>
+      <strong>{player.overall.toFixed(0)}</strong>
+    </header>
+    <div className="recruit-fit">
+      <span>He is looking for</span><strong>{listing.priorities.map(label).join(" · ")}</strong>
+      <span>How well you offer it</span><strong>{fit}/100</strong>
+    </div>
+    <p className="muted">Wants about {money(ask)} a week.</p>
+
+    {blocked
+      ? <p className="muted">No roster room to take anybody on.</p>
+      : <>
+        <div className="portal-bid">
+          <label>
+            <span>Recruiting Points</span>
+            <input type="range" min={0} max={Math.max(maxPoints, currentPoints)} step={5} value={currentPoints}
+              disabled={busy || maxPoints < PORTAL_MINIMUM_POINTS}
+              onChange={(event) => place(Number(event.target.value), currentNil)} />
+            <strong>{currentPoints} pts</strong>
+          </label>
+          <label>
+            <span>NIL a week</span>
+            <input type="range" min={0} max={Math.max(maxNil, currentNil, ask)} step={50} value={currentNil}
+              disabled={busy || currentPoints < PORTAL_MINIMUM_POINTS}
+              onChange={(event) => place(currentPoints, Number(event.target.value))} />
+            <strong>{money(currentNil)}</strong>
+          </label>
+        </div>
+        <p className="muted">
+          {currentPoints === 0
+            ? `Not bidding. A serious bid starts at ${PORTAL_MINIMUM_POINTS} points.`
+            : currentPoints < PORTAL_MINIMUM_POINTS
+              ? `Below the ${PORTAL_MINIMUM_POINTS}-point minimum — this bid would be refused.`
+              : `Bidding ${currentPoints} points${currentNil > 0 ? ` and ${money(currentNil)} a week` : " and no money"}${yours ? ", and he already knows you" : ""}.`}
+        </p>
+      </>}
+  </article>;
+}
+
+/**
+ * Signing day. Deliberately a report rather than a decision: recruiting ran
+ * all season and settled at the signing week. This is where the player finally
+ * sees the class as one thing, and where a scholarship squeeze becomes
+ * visible before it silently voids somebody at enrollment.
+ */
+function SigningDay({ game }: { game: GameView }): ReactElement {
+  const programId = game.playerProgramId;
+  const program = game.state.programs[programId]!;
+  const signed = Object.values(game.state.prospects)
+    .filter((prospect) => (prospect.status === "SIGNED" || prospect.status === "COMMITTED") && prospect.signedProgramId === programId)
+    .sort((left, right) => right.overall - left.overall);
+  const roster = Object.values(game.state.players).filter((player) =>
+    player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP").length;
+  const room = program.scholarshipLimit - roster;
+  const squeezed = signed.length > room;
+
+  return <>
+    <article className="panel recruiting-command-center">
+      <div>
+        <p className="eyebrow">Incoming class</p>
+        <h2>{signed.length} signed for {game.state.season + 1}</h2>
+        <p className="muted">
+          They join the roster when the offseason closes. {squeezed
+            ? "You have signed more men than you have scholarships for — the ones at the bottom of this list will not make it onto the roster."
+            : "There is room on the roster for all of them."}
+        </p>
+      </div>
+      <div className="recruiting-metrics">
+        <Metric label="Signed" value={String(signed.length)} />
+        <Metric label="On the roster now" value={String(roster)} />
+        <Metric label="Scholarships free" value={String(Math.max(0, room))} />
+        <Metric label="Best in the class" value={signed[0] ? signed[0].overall.toFixed(0) : "—"} />
+      </div>
+    </article>
+    {signed.length === 0
+      ? <article className="panel"><SectionHeading eyebrow="Nobody signed"
+          title="This class is empty"
+          detail="Nothing was locked down during the season. Every prospect you were chasing went somewhere else or withdrew." /></article>
+      : <div className="prospect-grid">{signed.map((prospect, rank) => {
+        const overCap = rank >= room;
+        return <article className={overCap ? "panel prospect-card over-cap" : "panel prospect-card"} key={prospect.id}>
+          <header>
+            <div>
+              <p className="eyebrow">{prospect.reputation} · {prospect.homeStateCode}</p>
+              <h2>{prospect.name}</h2>
+              <p>{prospect.position}</p>
+            </div>
+            <strong>{prospect.overall.toFixed(0)}</strong>
+          </header>
+          {overCap && <p className="muted">No scholarship left for him — this commitment will be void.</p>}
+        </article>;
+      })}</div>}
+  </>;
+}
+
+/**
+ * The coaching market, once a year, whether or not the player ever opened the
+ * staff screen mid-season. The cards are the ones the takeover screen already
+ * uses, so a hire here is priced and explained exactly the same way.
+ */
+function CoachingMarket({ game, busy, pending, onQueue }: {
+  game: GameView; busy: boolean; pending: GameCommand[]; onQueue: (command: GameCommand) => void;
+}): ReactElement {
+  const programId = game.playerProgramId;
+  const program = game.state.programs[programId]!;
+  const [openPost, setOpenPost] = useState<string>();
+  const staff = Object.values(game.state.staff).filter((member) => member.programId === programId);
+  const roleOrder = ["HEAD_COACH", "OFFENSIVE_COORDINATOR", "DEFENSIVE_COORDINATOR", "STRENGTH_COACH"] as const;
+  const queuedHire = pending.find((command): command is Extract<GameCommand, { type: "REPLACE_STAFF" }> =>
+    command.type === "REPLACE_STAFF");
+
+  return <>
+    <article className="panel recruiting-command-center">
+      <div>
+        <p className="eyebrow">Staff · {money(program.budget)} in the bank</p>
+        <h2>{queuedHire ? "One change queued" : "Nobody has to change"}</h2>
+        <p className="muted">
+          Every post is worth a look once a year. Prestige decides which coaches will even take your call — the ones
+          out of reach say so on the card rather than quietly never appearing.
+        </p>
+      </div>
+    </article>
+    <section className="setup-grid">{roleOrder.map((role) => {
+      const member = staff.find((candidate) => candidate.role === role);
+      if (!member) return null;
+      const open = openPost === role;
+      const candidates = open ? staffCandidatesFor(game.state, programId, member.id) : [];
+      const options = coachOptions({
+        member, candidates, identity: program.schemeIdentity, budget: program.budget,
+        onHire: (candidateId) => onQueue({ type: "REPLACE_STAFF", programId, staffId: member.id, candidateId })
+      });
+      return <article className={open ? "panel staff-card span-two" : "panel staff-card"} key={role}>
+        <div className="staff-head">
+          <div>
+            <p className="eyebrow">{label(role)}</p>
+            <h2>{member.name}</h2>
+            <p className="muted">{ROLE_JOB[role]}</p>
+          </div>
+          <button className="replace-button" disabled={busy} onClick={() => setOpenPost(open ? undefined : role)}>
+            {open ? "Keep him" : "See who's available"}
+          </button>
+        </div>
+        <div className="snapshot-list">{staffCard(game.state, programId, member.id).map((modifier) =>
+          <p key={modifier.label}><span>{modifier.label}</span><strong>{modifier.value}</strong></p>)}
+        </div>
+        <div className="coach-list">
+          {(open ? options : options.slice(0, 1)).map((option) =>
+            <CoachOption busy={busy} key={option.key} option={option} />)}
+        </div>
+      </article>;
+    })}</section>
+  </>;
+}
+
+/** Camp: three cards, one choice, both halves of the trade posted on each. */
+function TrainingCamp({ game, busy, pending, onQueue }: {
+  game: GameView; busy: boolean; pending: GameCommand[]; onQueue: (command: GameCommand) => void;
+}): ReactElement {
+  const programId = game.playerProgramId;
+  const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_TRAINING_CAMP_FOCUS" }> =>
+    command.type === "SET_TRAINING_CAMP_FOCUS");
+  const chosen = queued?.focus ?? "BALANCED";
+  const options: { focus: TrainingCampFocus; title: string; gain: string; cost: string }[] = [
+    {
+      focus: "CONDITIONING",
+      title: "Get them fit",
+      gain: `${Math.round((1 - TRAINING_CAMP_CONDITIONING_RISK) * 100)}% less chance of an injury, every man, every game`,
+      cost: "No head start on the playbook"
+    },
+    {
+      focus: "BALANCED",
+      title: "Split it",
+      gain: "Nothing either way",
+      cost: "Nothing either way"
+    },
+    {
+      focus: "INSTALL",
+      title: "Get the playbook in",
+      gain: `+${Math.round(TRAINING_CAMP_INSTALL_BONUS * 100)} points of execution on both sides of the ball`,
+      cost: `${Math.round((TRAINING_CAMP_INSTALL_RISK - 1) * 100)}% more chance of an injury while it lasts`
+    }
+  ];
+  return <>
+    <article className="panel recruiting-command-center">
+      <div>
+        <p className="eyebrow">Training camp</p>
+        <h2>Whatever you pick covers the first {TRAINING_CAMP_WEEKS} weeks</h2>
+        <p className="muted">
+          Then it runs out. This is a head start, not something you carry all year — the weekly priorities are still
+          what decide the rest of the season.
+        </p>
+      </div>
+    </article>
+    <div className="plan-options camp-options">{options.map((option) =>
+      <button className={chosen === option.focus ? "plan-option active" : "plan-option"} key={option.focus}
+        disabled={busy}
+        onClick={() => onQueue({ type: "SET_TRAINING_CAMP_FOCUS", programId, focus: option.focus })}>
+        <strong>{option.title}</strong>
+        <span className="effect">You get: {option.gain}</span>
+        <span className="effect fit-line">It costs: {option.cost}</span>
+      </button>)}
+    </div>
+  </>;
+}

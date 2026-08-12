@@ -330,21 +330,34 @@ function planPortalBids(state: Readonly<GameState>, programId: string): GameComm
   const program = state.programs[programId];
   if (!recruiting || !program) return [];
 
+  // Depth counted once, not once per candidate: this used to call
+  // portalTargetValue from inside a sort comparator, and that function scans
+  // every player in the league. At 72 programs and ~280 listings that is the
+  // exact defect CLAUDE.md measures at 45% of a week's runtime, and it made
+  // closing the portal window take longer than a browser would wait.
+  const depthByPosition = new Map<string, number>();
+  for (const other of Object.values(state.players)) {
+    if (other.programId !== programId) continue;
+    if (other.eligibility.rosterStatus !== "SCHOLARSHIP") continue;
+    if (other.eligibility.seasonsRemaining <= 1) continue;
+    depthByPosition.set(other.position, (depthByPosition.get(other.position) ?? 0) + 1);
+  }
   const listings = Object.entries(state.portal ?? {})
     .map(([playerId, listing]) => ({ playerId, listing, player: state.players[playerId] }))
     .filter((entry) => Boolean(entry.player))
-    .sort((left, right) =>
-      portalTargetValue(state, programId, left.player!, left.listing)
-        - portalTargetValue(state, programId, right.player!, right.listing) > 0 ? -1 : 1);
+    .map((entry) => ({
+      ...entry,
+      value: portalTargetValue(programId, entry.player!, entry.listing, depthByPosition)
+    }))
+    .sort((left, right) => right.value - left.value || left.playerId.localeCompare(right.playerId));
 
   const commands: GameCommand[] = [];
   let points = recruiting.points;
   let capacity = freeNilCapacity(state, programId);
   // Chase as many as the class has room for, best first, and stop when the
   // pool runs out — the same shape as the in-season recruiting planner.
-  for (const { playerId, player, listing } of listings.slice(0, Math.min(openings, 3))) {
+  for (const { playerId, player, listing, value } of listings.slice(0, Math.min(openings, 3))) {
     if (points < PORTAL_MINIMUM_POINTS) break;
-    const value = portalTargetValue(state, programId, player!, listing);
     // Bidding on everybody is not a strategy. Only chase somebody who is
     // actually better than what walks in as a freshman.
     if (value < 60) continue;
@@ -371,18 +384,14 @@ function planPortalBids(state: Readonly<GameState>, programId: string): GameComm
  * Keeping your own man is worth more than signing a stranger of equal quality.
  */
 function portalTargetValue(
-  state: Readonly<GameState>,
   programId: string,
   player: Player,
-  listing: PortalListingState
+  listing: PortalListingState,
+  /** Returning scholarship players per position, counted once by the caller. */
+  depthByPosition: ReadonlyMap<string, number>
 ): number {
   const retentionBonus = listing.previousProgramId === programId ? 10 : 0;
-  const needBonus = Object.values(state.players).filter((other) =>
-    other.programId === programId
-    && other.position === player.position
-    && other.eligibility.rosterStatus === "SCHOLARSHIP"
-    && other.eligibility.seasonsRemaining > 1
-  ).length <= 2 ? 8 : 0;
+  const needBonus = (depthByPosition.get(player.position) ?? 0) <= 2 ? 8 : 0;
   return player.overall * 0.7 + (listing.interestByProgram[programId] ?? 0) * 0.2 + retentionBonus + needBonus;
 }
 
