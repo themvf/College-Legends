@@ -1,0 +1,705 @@
+<title>The War Room</title>
+<style>
+  @font-face {
+    font-family: "Field Sans";
+    src: local("Arial Narrow"), local("Arial");
+    font-stretch: 75% 100%;
+  }
+
+  :root {
+    --ground: #14100b;
+    --panel: #1e1811;
+    --panel-raised: #271f15;
+    --chrome: #5a4c39;
+    --chrome-light: #cdc0a9;
+    --field: #55c079;
+    --field-dim: #1f6b42;
+    --leather: #cf8544;
+    --leather-dim: #6e3f1e;
+    --gold: #e6ac3f;
+    --red: #e35b45;
+    --text: #f6f0e3;
+    --text-dim: #cdc0a9;
+    --text-faint: #a2916f;
+    --line: #3d3120;
+    font-size: 16px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+  }
+
+  body {
+    font-family: "Field Sans", "Arial Narrow", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background:
+      radial-gradient(ellipse 900px 500px at 20% -10%, rgba(85, 192, 121, 0.09), transparent 60%),
+      radial-gradient(ellipse 900px 600px at 100% 10%, rgba(207, 133, 68, 0.07), transparent 60%),
+      var(--ground);
+    min-height: 100vh;
+  }
+
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 28px 24px 80px;
+  }
+
+  /* ---------- HUD header ---------- */
+
+  .hud {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+
+  .hud-mark {
+    font-weight: 800;
+    font-style: italic;
+    font-stretch: 90%;
+    letter-spacing: 0.5px;
+    font-size: 1.7rem;
+    color: var(--text);
+    text-transform: uppercase;
+  }
+  .hud-mark span {
+    color: var(--field);
+    text-shadow: 0 0 14px rgba(85, 192, 121, 0.45);
+  }
+
+  .hud-sub {
+    font-size: 0.75rem;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    font-style: normal;
+    font-stretch: 100%;
+  }
+
+  .hud-right {
+    display: flex;
+    gap: 22px;
+    align-items: baseline;
+  }
+  .hud-stat { text-align: right; }
+  .hud-stat .n {
+    font-size: 1.5rem;
+    font-weight: 800;
+    font-style: italic;
+    font-stretch: 90%;
+    font-variant-numeric: tabular-nums;
+    color: var(--field);
+  }
+  .hud-stat .l {
+    font-size: 0.66rem;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    display: block;
+    font-style: normal;
+  }
+
+  /* yard-line divider: hash marks either side of a lone yardage number */
+  .flag {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 14px;
+    margin: 22px 0 26px;
+    opacity: 0.95;
+  }
+  .flag .hash {
+    height: 7px;
+    background-image: repeating-linear-gradient(
+      90deg, var(--chrome) 0 2px, transparent 2px 16px
+    );
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  }
+  .flag .yard {
+    font-size: 0.72rem;
+    font-weight: 800;
+    font-style: italic;
+    font-stretch: 90%;
+    letter-spacing: 1px;
+    color: var(--chrome-light);
+  }
+
+  .board-label {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .board-label .title {
+    font-size: 1.08rem;
+    font-weight: 800;
+    font-style: italic;
+    font-stretch: 90%;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .board-label .count {
+    font-size: 0.7rem;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: var(--panel);
+  }
+
+  /* ---------- the board ---------- */
+
+  .board {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+  }
+
+  .prospect {
+    position: relative;
+    background: linear-gradient(160deg, var(--panel-raised), var(--panel) 60%);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 14px 14px;
+    cursor: pointer;
+    transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    overflow: hidden;
+  }
+  .prospect::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(115deg, transparent 40%, rgba(255,255,255,0.04) 50%, transparent 60%);
+    pointer-events: none;
+  }
+  .prospect:hover {
+    transform: translateY(-3px);
+    border-color: var(--chrome-light);
+  }
+  .prospect.selected {
+    border-color: var(--field);
+    box-shadow: 0 0 0 1px var(--field), 0 8px 30px -8px rgba(85, 192, 121, 0.45);
+  }
+  .prospect.selected::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--field), var(--leather));
+  }
+
+  .prospect-pos {
+    font-size: 0.66rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--chrome-light);
+    font-style: normal;
+  }
+  .prospect-name {
+    font-size: 1.08rem;
+    font-weight: 800;
+    font-style: italic;
+    font-stretch: 92%;
+    margin: 2px 0 12px;
+    line-height: 1.15;
+    color: var(--text);
+  }
+
+  .gauge-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .gauge {
+    width: 62px;
+    height: 62px;
+    flex: none;
+  }
+  .gauge text {
+    font-family: "Field Sans", Arial, sans-serif;
+    font-style: italic;
+    font-weight: 800;
+    font-stretch: 90%;
+  }
+
+  .gauge-stats {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .gstat {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+  }
+  .gstat .k {
+    color: var(--text-dim);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    font-size: 0.64rem;
+    font-style: normal;
+  }
+  .gstat .v {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    font-style: italic;
+    font-stretch: 90%;
+    color: var(--text);
+  }
+
+  .prospect-price {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-top: 1px dashed var(--line);
+    padding-top: 10px;
+  }
+  .prospect-price .tag {
+    font-size: 0.64rem;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    font-style: normal;
+  }
+  .prospect-price .amt {
+    font-size: 1.08rem;
+    font-weight: 800;
+    font-style: italic;
+    font-stretch: 90%;
+    font-variant-numeric: tabular-nums;
+    color: var(--gold);
+  }
+
+  .fit-strip {
+    margin-top: 10px;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--line);
+    overflow: hidden;
+    position: relative;
+  }
+  .fit-strip .fill {
+    position: absolute;
+    inset: 0;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--field-dim), var(--field));
+  }
+  .fit-caption {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 5px;
+    font-size: 0.64rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    font-style: normal;
+  }
+
+  /* ---------- detail: scouting report ---------- */
+
+  .report {
+    margin-top: 26px;
+    background: linear-gradient(170deg, var(--panel-raised), var(--panel) 70%);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 26px;
+    position: relative;
+    overflow: hidden;
+  }
+  .report::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+    background: linear-gradient(180deg, var(--field), var(--leather));
+  }
+
+  .report-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-bottom: 22px;
+  }
+  .report-title {
+    font-size: 1.65rem;
+    font-weight: 800;
+    font-style: italic;
+    font-stretch: 90%;
+    text-transform: uppercase;
+    line-height: 1.05;
+    color: var(--text);
+  }
+  .report-title small {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 600;
+    font-style: normal;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-top: 6px;
+  }
+
+  .prediction {
+    text-align: right;
+  }
+  .prediction .n {
+    font-size: 2.6rem;
+    font-weight: 800;
+    font-style: italic;
+    font-stretch: 85%;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    color: var(--field);
+    text-shadow: 0 0 18px rgba(85, 192, 121, 0.35);
+  }
+  .prediction .l {
+    font-size: 0.66rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    font-style: normal;
+  }
+
+  .telemetry {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 22px;
+  }
+  .tcard {
+    background: var(--ground);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .tcard .k {
+    font-size: 0.64rem;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    font-style: normal;
+  }
+  .tcard .v {
+    font-size: 1.18rem;
+    font-weight: 800;
+    font-style: italic;
+    font-stretch: 90%;
+    font-variant-numeric: tabular-nums;
+    margin-top: 3px;
+    color: var(--text);
+  }
+  .tcard.warn .v { color: var(--gold); }
+  .tcard.hot .v { color: var(--red); }
+
+  .attr-block {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .attr-col .attr-head {
+    font-size: 0.68rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    font-style: normal;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .attr {
+    display: grid;
+    grid-template-columns: 108px 1fr 40px;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 9px;
+  }
+  .attr .name {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    font-style: normal;
+  }
+  .attr .bar {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--line);
+    overflow: hidden;
+  }
+  .attr .bar i {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--field-dim), var(--field));
+  }
+  .attr.wants .bar i { background: linear-gradient(90deg, var(--leather-dim), var(--leather)); }
+  .attr .val {
+    font-size: 0.78rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    font-style: italic;
+    font-stretch: 90%;
+    color: var(--text);
+  }
+
+  .note-strip {
+    margin-top: 20px;
+    padding: 12px 16px;
+    background: rgba(85, 192, 121, 0.08);
+    border: 1px solid var(--field-dim);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    color: var(--text);
+    font-style: normal;
+    line-height: 1.55;
+  }
+  .note-strip b { color: var(--field); font-style: italic; }
+
+  /* ---------- verdict ---------- */
+
+  .verdict {
+    margin-top: 60px;
+    padding-top: 30px;
+    border-top: 1px solid var(--line);
+  }
+  .verdict-head {
+    font-size: 0.72rem;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    font-style: normal;
+    margin-bottom: 18px;
+  }
+  .verdict-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  .vcard {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 16px 18px;
+  }
+  .vcard .vk {
+    font-size: 0.64rem;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--chrome-light);
+    font-style: normal;
+    margin-bottom: 8px;
+  }
+  .vcard p {
+    margin: 0;
+    font-size: 0.88rem;
+    line-height: 1.6;
+    color: var(--text);
+    font-style: normal;
+  }
+  .vcard.risk .vk { color: var(--gold); }
+  .vcard.risk { border-color: rgba(230, 172, 63, 0.35); }
+
+  .closer {
+    margin-top: 20px;
+    font-size: 0.92rem;
+    line-height: 1.65;
+    color: var(--text-dim);
+    font-style: normal;
+    max-width: 68ch;
+  }
+  .closer b { color: var(--text); }
+
+  @media (max-width: 860px) {
+    .board { grid-template-columns: repeat(2, 1fr); }
+    .telemetry { grid-template-columns: repeat(2, 1fr); }
+    .attr-block { grid-template-columns: 1fr; }
+    .verdict-grid { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="page">
+
+  <div class="hud">
+    <div>
+      <div class="hud-mark">WAR <span>ROOM</span></div>
+      <div class="hud-sub">Recruiting &middot; Signing Week &minus;4</div>
+    </div>
+    <div class="hud-right">
+      <div class="hud-stat"><span class="n">$14.2M</span><span class="l">NIL Budget</span></div>
+      <div class="hud-stat"><span class="n">6</span><span class="l">Offers Out</span></div>
+      <div class="hud-stat"><span class="n">#31</span><span class="l">Class Rank</span></div>
+    </div>
+  </div>
+
+  <div class="flag"><div class="hash"></div><div class="yard">50</div><div class="hash"></div></div>
+
+  <div class="board-label">
+    <div class="title">The Board &mdash; Active Recruits</div>
+    <div class="count">4 of 6</div>
+  </div>
+
+  <div class="board">
+
+    <div class="prospect selected">
+      <div class="prospect-pos">Quarterback</div>
+      <div class="prospect-name">Marcus Webb</div>
+      <div class="gauge-row">
+        <svg class="gauge" viewBox="0 0 64 64">
+          <circle cx="32" cy="32" r="27" fill="none" stroke="#3d3120" stroke-width="6"/>
+          <circle cx="32" cy="32" r="27" fill="none" stroke="#55c079" stroke-width="6"
+                  stroke-linecap="round" stroke-dasharray="169.6" stroke-dashoffset="112"
+                  transform="rotate(-90 32 32)"/>
+          <text x="32" y="30" text-anchor="middle" font-size="15" fill="#f6f0e3">34</text>
+          <text x="32" y="42" text-anchor="middle" font-size="7" fill="#cdc0a9" font-style="normal" font-weight="600">PCT</text>
+        </svg>
+        <div class="gauge-stats">
+          <div class="gstat"><span class="k">Overall</span><span class="v">71&ndash;79</span></div>
+          <div class="gstat"><span class="k">Fit</span><span class="v">78</span></div>
+        </div>
+      </div>
+      <div class="fit-strip"><div class="fill" style="width:78%"></div></div>
+      <div class="fit-caption"><span>Air Raid fit</span><span>78 / 100</span></div>
+      <div class="prospect-price"><span class="tag">Asking</span><span class="amt">$2.4M</span></div>
+    </div>
+
+    <div class="prospect">
+      <div class="prospect-pos">Wide Receiver</div>
+      <div class="prospect-name">Dontae Rollins</div>
+      <div class="gauge-row">
+        <svg class="gauge" viewBox="0 0 64 64">
+          <circle cx="32" cy="32" r="27" fill="none" stroke="#3d3120" stroke-width="6"/>
+          <circle cx="32" cy="32" r="27" fill="none" stroke="#55c079" stroke-width="6"
+                  stroke-linecap="round" stroke-dasharray="169.6" stroke-dashoffset="81"
+                  transform="rotate(-90 32 32)"/>
+          <text x="32" y="30" text-anchor="middle" font-size="15" fill="#f6f0e3">52</text>
+          <text x="32" y="42" text-anchor="middle" font-size="7" fill="#cdc0a9" font-style="normal" font-weight="600">PCT</text>
+        </svg>
+        <div class="gauge-stats">
+          <div class="gstat"><span class="k">Overall</span><span class="v">68&ndash;74</span></div>
+          <div class="gstat"><span class="k">Fit</span><span class="v">64</span></div>
+        </div>
+      </div>
+      <div class="fit-strip"><div class="fill" style="width:64%"></div></div>
+      <div class="fit-caption"><span>Air Raid fit</span><span>64 / 100</span></div>
+      <div class="prospect-price"><span class="tag">Asking</span><span class="amt">$1.1M</span></div>
+    </div>
+
+    <div class="prospect">
+      <div class="prospect-pos">Offensive Line</div>
+      <div class="prospect-name">Elias Frost</div>
+      <div class="gauge-row">
+        <svg class="gauge" viewBox="0 0 64 64">
+          <circle cx="32" cy="32" r="27" fill="none" stroke="#3d3120" stroke-width="6"/>
+          <circle cx="32" cy="32" r="27" fill="none" stroke="#55c079" stroke-width="6"
+                  stroke-linecap="round" stroke-dasharray="169.6" stroke-dashoffset="66"
+                  transform="rotate(-90 32 32)"/>
+          <text x="32" y="30" text-anchor="middle" font-size="15" fill="#f6f0e3">61</text>
+          <text x="32" y="42" text-anchor="middle" font-size="7" fill="#cdc0a9" font-style="normal" font-weight="600">PCT</text>
+        </svg>
+        <div class="gauge-stats">
+          <div class="gstat"><span class="k">Overall</span><span class="v">64&ndash;77</span></div>
+          <div class="gstat"><span class="k">Fit</span><span class="v">71</span></div>
+        </div>
+      </div>
+      <div class="fit-strip"><div class="fill" style="width:71%"></div></div>
+      <div class="fit-caption"><span>Air Raid fit</span><span>71 / 100</span></div>
+      <div class="prospect-price"><span class="tag">Asking</span><span class="amt">$0.6M</span></div>
+    </div>
+
+    <div class="prospect">
+      <div class="prospect-pos">Defensive Line</div>
+      <div class="prospect-name">Kai Ngata</div>
+      <div class="gauge-row">
+        <svg class="gauge" viewBox="0 0 64 64">
+          <circle cx="32" cy="32" r="27" fill="none" stroke="#3d3120" stroke-width="6"/>
+          <circle cx="32" cy="32" r="27" fill="none" stroke="#e35b45" stroke-width="6"
+                  stroke-linecap="round" stroke-dasharray="169.6" stroke-dashoffset="150"
+                  transform="rotate(-90 32 32)"/>
+          <text x="32" y="30" text-anchor="middle" font-size="15" fill="#f6f0e3">11</text>
+          <text x="32" y="42" text-anchor="middle" font-size="7" fill="#cdc0a9" font-style="normal" font-weight="600">PCT</text>
+        </svg>
+        <div class="gauge-stats">
+          <div class="gstat"><span class="k">Overall</span><span class="v">73&ndash;81</span></div>
+          <div class="gstat"><span class="k">Fit</span><span class="v">59</span></div>
+        </div>
+      </div>
+      <div class="fit-strip"><div class="fill" style="width:59%"></div></div>
+      <div class="fit-caption"><span>Air Raid fit</span><span>59 / 100</span></div>
+      <div class="prospect-price"><span class="tag">Asking</span><span class="amt">$4.9M</span></div>
+    </div>
+
+  </div>
+
+  <div class="report">
+    <div class="report-head">
+      <div class="report-title">Marcus Webb<small>Quarterback &middot; Class of 2027 &middot; Committed nowhere</small></div>
+      <div class="prediction"><span class="n">34%</span><span class="l">To Sign</span></div>
+    </div>
+
+    <div class="telemetry">
+      <div class="tcard"><span class="k">Overall Range</span><span class="v">71&ndash;79</span></div>
+      <div class="tcard warn"><span class="k">Asking Price</span><span class="v">$2.4M / yr</span></div>
+      <div class="tcard"><span class="k">Home Region</span><span class="v">In-state</span></div>
+      <div class="tcard hot"><span class="k">Also Bidding</span><span class="v">2 programs</span></div>
+    </div>
+
+    <div class="attr-block">
+      <div class="attr-col">
+        <div class="attr-head">Scouted Attributes</div>
+        <div class="attr"><span class="name">Accuracy</span><div class="bar"><i style="width:74%"></i></div><span class="val">70&ndash;78</span></div>
+        <div class="attr"><span class="name">Decision Making</span><div class="bar"><i style="width:68%"></i></div><span class="val">64&ndash;74</span></div>
+        <div class="attr"><span class="name">Arm Talent</span><div class="bar"><i style="width:82%"></i></div><span class="val">77&ndash;85</span></div>
+        <div class="attr"><span class="name">Mobility</span><div class="bar"><i style="width:58%"></i></div><span class="val">52&ndash;62</span></div>
+      </div>
+      <div class="attr-col">
+        <div class="attr-head">What He Wants</div>
+        <div class="attr wants"><span class="name">Scheme Fit</span><div class="bar"><i style="width:88%"></i></div><span class="val">High</span></div>
+        <div class="attr wants"><span class="name">Playing Time</span><div class="bar"><i style="width:70%"></i></div><span class="val">Med</span></div>
+        <div class="attr wants"><span class="name">NIL Money</span><div class="bar"><i style="width:95%"></i></div><span class="val">High</span></div>
+        <div class="attr wants"><span class="name">Home State</span><div class="bar"><i style="width:100%"></i></div><span class="val">Yes</span></div>
+      </div>
+    </div>
+
+    <div class="note-strip">
+      <b>Scout's read:</b> Real arm, real questions about the decisions. He's an in-state Air Raid arm sitting on two other offers &mdash; the money gap is what's keeping this at 34%, not the fit.
+    </div>
+  </div>
+
+  <div class="verdict">
+    <div class="verdict-head">Direction Study 4 of 4, Revised &mdash; Broadcast Cockpit &times; Recruiting Board</div>
+
+    <div class="verdict-grid">
+      <div class="vcard">
+        <div class="vk">Best Argument</div>
+        <p>The gauge and the italic numeral turn out to be football's own visual language, not a borrowed one. Rivals and 247Sports already render a "Crystal Ball" as a percentage circle, and every broadcast scorebug runs bold italic condensed numerals &mdash; this treatment just makes that instinct systematic across the whole recruiting board.</p>
+      </div>
+      <div class="vcard risk">
+        <div class="vk">What Kills It</div>
+        <p>The gloss still reads closer to a draft-day TV package than to a program you run for decades. It sells the excitement of one kid choosing a school; it says nothing about the institution he'd be joining, which is the part of the sim this screen has to hand off to.</p>
+      </div>
+      <div class="vcard">
+        <div class="vk">Where It Lands</div>
+        <p>Keep the gauge, the numeral, and the yard-line divider &mdash; sport-native now, worth using on other screens too. Keep the panel gloss and the deep glow to this one board, where a five-star's decision is the moment the game is supposed to be exciting.</p>
+      </div>
+    </div>
+
+    <p class="closer">
+      Retextured twice now, both times at your direction. First from the racing "Asphalt Legends" skin to football's own visual grammar; now off the racing cyan-and-magenta pairing entirely, onto turf green and leather brown, and off the low-contrast greys that made the small labels hard to read &mdash; the field-green primary, the leather-brown secondary, and every caption color got a real contrast bump against the ground. The specific Behance kit remains unreachable (HTTP 403 on every attempt; Behance blocks scraping), so this stays built from the franchise's general UI conventions rather than that exact file.
+    </p>
+  </div>
+
+</div>
