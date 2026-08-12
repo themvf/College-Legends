@@ -490,7 +490,9 @@ export interface ProspectScoutingReport {
   overall: string;
   potential: string;
   athletic: string;
+  athleticAttributes: { label: string; range: string }[];
   positionSkill: string;
+  positionAttributes: { label: string; range: string }[];
   character: string;
   medical: string;
   priorities: RecruitPriority[];
@@ -519,8 +521,14 @@ export function prospectScoutingReport(state: Readonly<GameState>, programId: st
     const definition = attribute(role);
     return `${definition.label} ${estimate(prospect.ratings[definition.key] ?? 50, definition.key)}`;
   };
-  const athletic = evaluations.has("ATHLETIC") ? `${band("POWER")} · ${band("SPEED")}` : "Unknown";
-  const positionSkill = evaluations.has("POSITION") ? `${band("PRIMARY")} · ${band("SECONDARY")}` : "Unknown";
+  const structuredBand = (role: Parameters<typeof attributeByRole>[1]): { label: string; range: string } => {
+    const definition = attribute(role);
+    return { label: definition.label, range: estimate(prospect.ratings[definition.key] ?? 50, definition.key) };
+  };
+  const athleticAttributes = evaluations.has("ATHLETIC") ? [structuredBand("POWER"), structuredBand("SPEED")] : [];
+  const positionAttributes = evaluations.has("POSITION") ? [structuredBand("PRIMARY"), structuredBand("SECONDARY")] : [];
+  const athletic = athleticAttributes.length ? athleticAttributes.map((entry) => `${entry.label} ${entry.range}`).join(" · ") : "Unknown";
+  const positionSkill = positionAttributes.length ? positionAttributes.map((entry) => `${entry.label} ${entry.range}`).join(" · ") : "Unknown";
   const competition = Object.entries(state.recruiting)
     .map(([candidateProgramId, recruiting]) => ({
       programId: candidateProgramId,
@@ -534,7 +542,9 @@ export function prospectScoutingReport(state: Readonly<GameState>, programId: st
     overall: evaluations.has("BASIC") ? estimate(prospect.overall, "overall") : "Unknown",
     potential: evaluations.has("PROJECTION") ? estimate(prospect.potential, "potential") : "Unknown",
     athletic,
+    athleticAttributes,
     positionSkill,
+    positionAttributes,
     character: evaluations.has("CHARACTER") ? `Work ethic ${grade(prospect.workEthic)}` : "Unknown",
     medical: evaluations.has("MEDICAL")
       ? ratingByRole(prospect.position, prospect.ratings, "DURABILITY") >= 78 ? "Low injury concern" : ratingByRole(prospect.position, prospect.ratings, "DURABILITY") >= 62 ? "Average medical profile" : "Elevated injury concern"
