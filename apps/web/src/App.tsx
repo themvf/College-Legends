@@ -117,6 +117,8 @@ import {
   stadiumCapacity
 } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
+import { Recruiting as WarRoomRecruiting } from "./Recruiting.js";
+import { recruitingCommandKey } from "./recruiting-view-model.js";
 
 type GameView = { state: GameState; playerProgramId: ProgramId; events: GameEvent[] };
 type Screen = "DASHBOARD" | "THIS_WEEK" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CHART" | "PLAYER_STATS" | "HONORS" | "DEVELOPMENT" | "PLAYER_MEDIA" | "SCHEDULE" | "DIVISIONS" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
@@ -273,7 +275,7 @@ export function App(): ReactElement {
     if (command.type === "ALLOCATE_SCOUTING" || command.type === "SET_PRACTICE_REPS"
       || command.type === "SET_STAFF_ALLOCATION" || command.type === "SET_WEEK_HOURS"
       || command.type === "CHOOSE_BOOSTER") { prepare(command); return; }
-    const key = command.type === "REPLACE_STAFF" ? `replace:${command.staffId}`
+    const key = recruitingCommandKey(command) ?? (command.type === "REPLACE_STAFF" ? `replace:${command.staffId}`
       : command.type === "SET_TICKET_PRICE" ? "ticket-price"
       : command.type === "SET_ADVERTISING" ? "advertising"
       : command.type === "ACCEPT_SPONSORSHIP" ? "sponsorship"
@@ -282,13 +284,9 @@ export function App(): ReactElement {
       : command.type === "SET_PLAYER_MEDIA_ACTION" ? "featured-media"
       : command.type === "UPGRADE_FACILITY" ? `facility:${command.facility}`
       : command.type === "SCHEDULE_MARQUEE_HOME_GAME" ? "marquee-game"
-      : command.type === "SEARCH_PROSPECTS" ? `recruit-search:${command.searchType}:${command.position ?? "ALL"}`
-      : command.type === "EVALUATE_PROSPECT" ? `recruit-eval:${command.prospectId}:${command.evaluation}`
-      : command.type === "INVEST_RECRUITING_POINTS" ? `recruit-invest:${command.prospectId}`
-      : command.type === "OFFER_PROSPECT" ? `prospect:${command.prospectId}`
       : command.type === "SET_DEPTH_CHART" ? `depth:${command.position}`
       : command.type === "SET_REDSHIRT" || command.type === "RED_SHIRT" ? `redshirt:${command.playerId}`
-      : "command";
+      : "command");
     if (command.type === "SET_REDSHIRT" && game) {
       const actual = game.state.players[command.playerId]?.eligibility.redshirtStatus === "REDSHIRTING";
       if (command.enabled === actual) {
@@ -299,6 +297,20 @@ export function App(): ReactElement {
     if (command.type === "SET_DEPTH_CHART" && game) {
       const actual = game.state.depthCharts[command.programId]?.[command.position] ?? [];
       if (actual.length === command.playerIds.length && actual.every((playerId, index) => playerId === command.playerIds[index])) {
+        setPendingCommands((previous) => previous.filter((item) => commandKey(item) !== key));
+        return;
+      }
+    }
+    if (command.type === "OFFER_PROSPECT" && game) {
+      const actual = game.state.recruiting[command.programId]?.offeredProspectIds.includes(command.prospectId) ?? false;
+      if (command.extend === actual) {
+        setPendingCommands((previous) => previous.filter((item) => commandKey(item) !== key));
+        return;
+      }
+    }
+    if (command.type === "SET_NIL_OFFER" && game) {
+      const actual = game.state.nil?.[command.programId]?.offersByProspect[command.prospectId] ?? 0;
+      if (command.weeklyAmount === actual) {
         setPendingCommands((previous) => previous.filter((item) => commandKey(item) !== key));
         return;
       }
@@ -400,6 +412,8 @@ function BoosterPopup({ game, busy, onChoose }: {
 }
 
 function commandKey(command: GameCommand): string {
+  const recruitingKey = recruitingCommandKey(command);
+  if (recruitingKey) return recruitingKey;
   if (command.type === "ALLOCATE_SCOUTING") return `scout:${command.opponentProgramId}`;
   if (command.type === "SET_PRACTICE_REPS") return `reps:${command.side}`;
   if (command.type === "REPLACE_STAFF") return `replace:${command.staffId}`;
@@ -413,10 +427,6 @@ function commandKey(command: GameCommand): string {
   if (command.type === "SET_WEEK_HOURS") return `hours:${command.focus}`;
   if (command.type === "UPGRADE_FACILITY") return `facility:${command.facility}`;
   if (command.type === "SCHEDULE_MARQUEE_HOME_GAME") return "marquee-game";
-  if (command.type === "SEARCH_PROSPECTS") return `recruit-search:${command.searchType}:${command.position ?? "ALL"}`;
-  if (command.type === "EVALUATE_PROSPECT") return `recruit-eval:${command.prospectId}:${command.evaluation}`;
-  if (command.type === "INVEST_RECRUITING_POINTS") return `recruit-invest:${command.prospectId}`;
-  if (command.type === "OFFER_PROSPECT") return `prospect:${command.prospectId}`;
   if (command.type === "SET_DEPTH_CHART") return `depth:${command.position}`;
   if (command.type === "SET_REDSHIRT" || command.type === "RED_SHIRT") return `redshirt:${command.playerId}`;
   return "command";
@@ -826,7 +836,6 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, wee
   const roster = useMemo(() => Object.values(game.state.players)
     .filter((player) => player.programId === program.id && player.eligibility.rosterStatus === "SCHOLARSHIP")
     .sort((a, b) => positionOrder.indexOf(a.position) - positionOrder.indexOf(b.position) || b.overall - a.overall), [game.state.players, program.id]);
-  const incomingOpenings = projectedRecruitingOpenings(game.state, program.id);
   const isReview = game.state.phase === "ROSTER_REVIEW";
 
   return <main className="app-shell">
@@ -869,7 +878,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, wee
     {screen === "DIVISIONS" && <Divisions game={game} />}
     {screen === "STAFF" && <Staff game={game} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "FINANCES" && <Finances game={game} pending={pendingCommands} onQueue={onQueue} />}
-    {screen === "RECRUITING" && <Recruiting game={game} locked={isReview} incomingOpenings={incomingOpenings} pending={pendingCommands} onQueue={onQueue} />}
+    {screen === "RECRUITING" && <WarRoomRecruiting game={game} locked={isReview} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "INBOX" && <Inbox game={game} />}
   </main>;
 }
@@ -2641,6 +2650,7 @@ function queuedRecruitingCost(command: GameCommand): number {
   if (command.type === "SEARCH_PROSPECTS") return recruitingSearchCost(command.searchType);
   if (command.type === "EVALUATE_PROSPECT") return recruitingEvaluationCost(command.evaluation);
   if (command.type === "INVEST_RECRUITING_POINTS") return command.points;
+  if (command.type === "SCHEDULE_VISIT") return VISIT_COST;
   return 0;
 }
 function formatRatingChanges(changes: Partial<Record<keyof Player["ratings"], number>>): string {
