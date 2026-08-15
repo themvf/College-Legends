@@ -54,6 +54,18 @@ test("rivals actually compete in the offseason rather than standing still", () =
       seen.signings += result.events.filter((event) => event.type === "PORTAL_PLAYER_SIGNED").length;
       seen.retentions += result.events.filter((event) =>
         event.type === "PORTAL_PLAYER_SIGNED" && event.retained).length;
+      if (state.offseasonStep === "PORTAL") {
+        for (const program of Object.values(result.state.programs)) {
+          const scholarships = Object.values(result.state.players).filter((player) =>
+            player.programId === program.id && player.eligibility.rosterStatus === "SCHOLARSHIP"
+          ).length;
+          assert.ok(
+            scholarships <= program.scholarshipLimit,
+            `${program.id} cannot leave the AI portal market over its scholarship limit`
+          );
+          assert.ok(result.state.recruiting[program.id].points >= 0, `${program.id} cannot overspend portal points`);
+        }
+      }
       state = result.state;
       continue;
     }

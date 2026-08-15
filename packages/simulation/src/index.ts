@@ -4565,27 +4565,123 @@ function openPortalWindow(state: GameState, rng: AddressableRng, events: GameEve
   }
 }
 
+interface PortalContest {
+  playerId: string;
+  listing: PortalListingState;
+  scores: Record<string, number>;
+  ranked: string[];
+  nextChoice: number;
+}
+
+interface PortalProposal {
+  contest: PortalContest;
+  programId: string;
+  score: number;
+  points: number;
+}
+
+/** Open scholarships that can actually be occupied during this portal window. */
+function portalScholarshipOpenings(state: Readonly<GameState>, programId: string): number {
+  const program = state.programs[programId];
+  if (!program) return 0;
+  const scholarships = Object.values(state.players).filter((player) =>
+    player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP"
+  ).length;
+  return Math.max(0, program.scholarshipLimit - scholarships);
+}
+
 /**
- * One shot, all bids together — the same order-independent resolution the
- * recruiting market uses, minus the multi-week contest. Whoever ranks first
- * above the threshold takes him; if that is the program he was leaving, he was
- * retained. Anybody nobody wanted leaves the level entirely rather than
- * lingering in `PORTAL` forever, which is the defect this window exists to fix.
+ * Returns the proposals a program can tentatively hold. Score is its fixed
+ * preference: a later proposal can displace a weaker one, while scholarship
+ * and point limits are applied to the whole set rather than to each listing.
+ */
+function portalProposalsToHold(
+  proposals: readonly PortalProposal[],
+  scholarshipOpenings: number,
+  recruitingPoints: number
+): PortalProposal[] {
+  const ranked = [...proposals].sort((left, right) =>
+    right.score - left.score || left.contest.playerId.localeCompare(right.contest.playerId)
+  );
+  const held: PortalProposal[] = [];
+  let pointsHeld = 0;
+  for (const proposal of ranked) {
+    if (held.length >= scholarshipOpenings) break;
+    // Normal command validation reserves the complete bid portfolio, so this
+    // guard is defensive for imported or hand-edited states. Never allow the
+    // market to create a negative Recruiting Points balance.
+    if (pointsHeld + proposal.points > recruitingPoints) continue;
+    held.push(proposal);
+    pointsHeld += proposal.points;
+  }
+  return held;
+}
+
+/**
+ * One shot, all bids together. Players propose down their fixed score ranking;
+ * programs tentatively hold their strongest affordable proposals up to their
+ * real scholarship capacity. A player displaced by a stronger portal win then
+ * falls through to his next eligible bidder. This deferred acceptance keeps
+ * command/listing order out of the result and resolves the market as a whole.
  */
 function resolvePortalMarket(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
-  const listings = Object.entries(state.portal ?? {}).sort(([left], [right]) => left.localeCompare(right));
-  for (const [playerId, listing] of listings) {
-    const player = state.players[playerId];
-    if (!player) continue;
-    const bidders = Object.keys(listing.bidsByProgram).sort();
-    const scores = Object.fromEntries(bidders.map((programId) => [
-      programId,
-      portalBidScore(state, player, listing, programId, rng)
-    ]));
-    const ranked = [...bidders].sort((left, right) => scores[right]! - scores[left]! || left.localeCompare(right));
-    const winnerProgramId = ranked[0];
-    const score = winnerProgramId ? scores[winnerProgramId]! : 0;
-    if (!winnerProgramId || score < PORTAL_COMMITMENT_THRESHOLD) {
+  const contests: PortalContest[] = Object.entries(state.portal ?? {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .flatMap(([playerId, listing]) => {
+      const player = state.players[playerId];
+      if (!player) return [];
+      const bidders = Object.keys(listing.bidsByProgram).filter((programId) =>
+        state.programs[programId] !== undefined && state.recruiting[programId] !== undefined
+      ).sort();
+      const scores = Object.fromEntries(bidders.map((programId) => [
+        programId,
+        portalBidScore(state, player, listing, programId, rng)
+      ]));
+      const ranked = bidders
+        .filter((programId) => scores[programId]! >= PORTAL_COMMITMENT_THRESHOLD)
+        .sort((left, right) => scores[right]! - scores[left]! || left.localeCompare(right));
+      return [{ playerId, listing, scores, ranked, nextChoice: 0 }];
+    });
+
+  const openings = Object.fromEntries(Object.keys(state.programs).map((programId) => [
+    programId,
+    portalScholarshipOpenings(state, programId)
+  ]));
+  const pointBudgets = Object.fromEntries(Object.keys(state.programs).map((programId) => [
+    programId,
+    Math.max(0, Math.trunc(state.recruiting[programId]?.points ?? 0))
+  ]));
+  const heldByProgram = new Map<string, PortalProposal[]>();
+  const pending = contests.filter((contest) => contest.ranked.length > 0);
+
+  while (pending.length > 0) {
+    pending.sort((left, right) => left.playerId.localeCompare(right.playerId));
+    const contest = pending.shift()!;
+    const programId = contest.ranked[contest.nextChoice++];
+    if (!programId) continue;
+    const bid = contest.listing.bidsByProgram[programId]!;
+    const proposal: PortalProposal = { contest, programId, score: contest.scores[programId]!, points: bid.points };
+    const considered = [...(heldByProgram.get(programId) ?? []), proposal];
+    const held = portalProposalsToHold(considered, openings[programId] ?? 0, pointBudgets[programId] ?? 0);
+    heldByProgram.set(programId, held);
+    const heldPlayers = new Set(held.map((candidate) => candidate.contest.playerId));
+    for (const rejected of considered) {
+      if (!heldPlayers.has(rejected.contest.playerId) && rejected.contest.nextChoice < rejected.contest.ranked.length) {
+        pending.push(rejected.contest);
+      }
+    }
+  }
+
+  const winnerByPlayer = new Map<string, PortalProposal>();
+  for (const proposals of heldByProgram.values()) {
+    for (const proposal of proposals) winnerByPlayer.set(proposal.contest.playerId, proposal);
+  }
+
+  for (const contest of contests) {
+    const { playerId, listing } = contest;
+    const player = state.players[playerId]!;
+    const winner = winnerByPlayer.get(playerId);
+    if (!winner) {
       player.eligibility.rosterStatus = "DEPARTED";
       events.push({
         type: "PORTAL_PLAYER_UNCLAIMED",
@@ -4595,9 +4691,15 @@ function resolvePortalMarket(state: GameState, rng: AddressableRng, events: Game
       });
       continue;
     }
-    const runnerUpProgramId = ranked[1] ?? null;
+    const { programId: winnerProgramId, score, points } = winner;
+    const rankedAlternatives = contest.ranked.filter((programId) => programId !== winnerProgramId);
+    const runnerUpProgramId = rankedAlternatives[0] ?? null;
     const weeklyNil = listing.bidsByProgram[winnerProgramId]?.weeklyNil ?? 0;
     const retained = winnerProgramId === listing.previousProgramId;
+    // The point portfolio was reserved when bids were entered and checked
+    // again during matching. Only a completed signing converts that reservation
+    // into a spend; losing and capacity-displaced bids remain free.
+    state.recruiting[winnerProgramId]!.points -= points;
     // A transfer keeps whatever eligibility he had left — the one real way he
     // differs from a freshman, and the reason the portal is the fast climb.
     player.programId = winnerProgramId;
@@ -4616,7 +4718,7 @@ function resolvePortalMarket(state: GameState, rng: AddressableRng, events: Game
       retained,
       score,
       runnerUpProgramId,
-      runnerUpScore: runnerUpProgramId ? scores[runnerUpProgramId]! : null,
+      runnerUpScore: runnerUpProgramId ? contest.scores[runnerUpProgramId]! : null,
       weeklyNil
     });
   }
@@ -4859,7 +4961,7 @@ function applyPortalBid(
     return;
   }
   // A program can only take him if it will have room for him.
-  if (projectedRecruitingOpenings(state, command.programId) <= 0) {
+  if (portalScholarshipOpenings(state, command.programId) <= 0) {
     reject("The projected roster is full.");
     return;
   }

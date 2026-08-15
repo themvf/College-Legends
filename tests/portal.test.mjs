@@ -29,6 +29,12 @@ function listed(state) {
   return Object.entries(state.portal ?? {}).sort(([left], [right]) => left.localeCompare(right));
 }
 
+function scholarshipCount(state, programId) {
+  return Object.values(state.players).filter((player) =>
+    player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP"
+  ).length;
+}
+
 test("everyone who leaves is listed, and the listing names his old program", () => {
   const { state, events } = toPortalWindow("portal-listing");
   const entries = listed(state);
@@ -99,6 +105,125 @@ test("a real bid signs him, and he keeps the eligibility he had left", () => {
     eligibilityBefore,
     "a transfer keeps his clock — that is what makes the portal the fast climb"
   );
+  assert.equal(state.recruiting[suitorId].points, 340, "the completed signing spends its bid");
+});
+
+test("simultaneous portal wins share scholarship capacity and only the accepted bid is charged", () => {
+  const { state } = toPortalWindow("portal-capacity-spend");
+  const entries = listed(state).slice(0, 2);
+  assert.equal(entries.length, 2, "the fixture needs two players competing for one opening");
+  const previousPrograms = new Set(entries.map(([, listing]) => listing.previousProgramId));
+  const suitorId = Object.keys(state.programs).find((programId) => !previousPrograms.has(programId));
+  const rosterBefore = scholarshipCount(state, suitorId);
+  state.programs[suitorId].scholarshipLimit = rosterBefore + 1;
+  state.recruiting[suitorId].points = 300;
+  const bids = new Map();
+  const commands = entries.map(([playerId, listing], index) => {
+    listing.interestByProgram[suitorId] = 88;
+    const points = index === 0 ? 90 : 70;
+    bids.set(playerId, points);
+    return { type: "BID_PORTAL_PLAYER", programId: suitorId, playerId, points, weeklyNil: 0 };
+  });
+
+  const result = advanceOffseasonStep(state, commands);
+  const signings = result.events.filter((event) =>
+    event.type === "PORTAL_PLAYER_SIGNED" && event.programId === suitorId);
+  assert.equal(signings.length, 1, "one open scholarship can produce only one signing");
+  assert.equal(scholarshipCount(result.state, suitorId), rosterBefore + 1);
+  assert.ok(scholarshipCount(result.state, suitorId) <= result.state.programs[suitorId].scholarshipLimit);
+  assert.equal(
+    result.state.recruiting[suitorId].points,
+    300 - bids.get(signings[0].playerId),
+    "the capacity-displaced bid remains uncharged"
+  );
+});
+
+test("a weaker portal win is displaced to an eligible runner-up deterministically", () => {
+  const run = (reverse) => {
+    const { state } = toPortalWindow("portal-capacity-runner-up");
+    const entries = listed(state).slice(0, 2);
+    assert.equal(entries.length, 2);
+    const previousPrograms = new Set(entries.map(([, listing]) => listing.previousProgramId));
+    const [primaryId, secondaryId] = Object.keys(state.programs).filter((programId) => !previousPrograms.has(programId)).slice(0, 2);
+    const primaryRoster = scholarshipCount(state, primaryId);
+    state.programs[primaryId].scholarshipLimit = primaryRoster + 1;
+    state.recruiting[primaryId].points = 400;
+    state.recruiting[secondaryId].points = 400;
+    for (const [, listing] of entries) {
+      listing.interestByProgram[primaryId] = 88;
+      listing.interestByProgram[secondaryId] = 88;
+    }
+    const [stronger, displaced] = entries;
+    const commands = [
+      { type: "BID_PORTAL_PLAYER", programId: primaryId, playerId: stronger[0], points: 200, weeklyNil: 0 },
+      { type: "BID_PORTAL_PLAYER", programId: primaryId, playerId: displaced[0], points: 130, weeklyNil: 0 },
+      { type: "BID_PORTAL_PLAYER", programId: secondaryId, playerId: displaced[0], points: 70, weeklyNil: 0 }
+    ];
+    return {
+      primaryId,
+      secondaryId,
+      strongerId: stronger[0],
+      displacedId: displaced[0],
+      result: advanceOffseasonStep(state, reverse ? [...commands].reverse() : commands)
+    };
+  };
+
+  const forward = run(false);
+  const reversed = run(true);
+  assert.deepEqual(forward.result, reversed.result, "command order cannot change allocation");
+  assert.equal(forward.result.state.players[forward.strongerId].programId, forward.primaryId);
+  assert.equal(
+    forward.result.state.players[forward.displacedId].programId,
+    forward.secondaryId,
+    "the player displaced from a full first choice must fall through to the runner-up"
+  );
+  assert.equal(forward.result.state.recruiting[forward.primaryId].points, 200);
+  assert.equal(forward.result.state.recruiting[forward.secondaryId].points, 330);
+});
+
+test("a losing portal bidder keeps both Recruiting Points and uncommitted NIL", () => {
+  const { state } = toPortalWindow("portal-loser-free");
+  const [playerId, listing] = listed(state)[0];
+  const [winnerId, loserId] = Object.keys(state.programs).filter((programId) => programId !== listing.previousProgramId).slice(0, 2);
+  state.recruiting[winnerId].points = 300;
+  state.recruiting[loserId].points = 300;
+  listing.interestByProgram[winnerId] = 88;
+  listing.interestByProgram[loserId] = 88;
+
+  const result = advanceOffseasonStep(state, [
+    { type: "BID_PORTAL_PLAYER", programId: winnerId, playerId, points: 140, weeklyNil: 2 },
+    { type: "BID_PORTAL_PLAYER", programId: loserId, playerId, points: 60, weeklyNil: 1 }
+  ]);
+  const signed = result.events.find((event) => event.type === "PORTAL_PLAYER_SIGNED" && event.playerId === playerId);
+  assert.equal(signed.programId, winnerId);
+  assert.equal(result.state.recruiting[winnerId].points, 160);
+  assert.equal(result.state.recruiting[loserId].points, 300, "losing bids are reservations, not spends");
+  assert.equal(result.state.nil?.[winnerId]?.commitmentsByPlayer[playerId], 2);
+  assert.equal(result.state.nil?.[loserId]?.commitmentsByPlayer[playerId], undefined);
+});
+
+test("portal resolution defensively refuses aggregate wins it cannot afford", () => {
+  const { state } = toPortalWindow("portal-defensive-points");
+  const entries = listed(state).slice(0, 2);
+  assert.equal(entries.length, 2);
+  const previousPrograms = new Set(entries.map(([, listing]) => listing.previousProgramId));
+  const suitorId = Object.keys(state.programs).find((programId) => !previousPrograms.has(programId));
+  const rosterBefore = scholarshipCount(state, suitorId);
+  state.programs[suitorId].scholarshipLimit = rosterBefore + 2;
+  state.recruiting[suitorId].points = 100;
+  // Bypass command validation to represent an imported/hand-edited state whose
+  // live bid portfolio is no longer backed by its Recruiting Points balance.
+  for (const [, listing] of entries) {
+    listing.interestByProgram[suitorId] = 88;
+    listing.bidsByProgram[suitorId] = { points: 80, weeklyNil: 0 };
+  }
+
+  const result = advanceOffseasonStep(state);
+  const signings = result.events.filter((event) =>
+    event.type === "PORTAL_PLAYER_SIGNED" && event.programId === suitorId);
+  assert.equal(signings.length, 1);
+  assert.equal(result.state.recruiting[suitorId].points, 20);
+  assert.ok(result.state.recruiting[suitorId].points >= 0);
 });
 
 test("the program he is leaving can bid to keep him, and that is a retention", () => {
