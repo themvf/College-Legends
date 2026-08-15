@@ -228,7 +228,7 @@ export function buildProspectBoard(
     const flipTarget = prospect.status === "COMMITTED" && !isMine;
     const resolved = prospect.status === "SIGNED" || prospect.status === "ENROLLED";
     const statusLabel = resolved ? "Signed"
-      : prospect.status === "COMMITTED" ? (isMine ? "Your verbal" : "Flip target")
+      : prospect.status === "COMMITTED" ? (isMine ? "Committed to you" : "Flip target")
         : report.pursuitPoints > 0 ? `Active pursuit · ${report.pursuitPoints} pts`
           : ledger.effectiveScholarshipOffers.has(prospect.id) ? "Offer out" : "No offer";
     const evaluationCount = scouting?.evaluations.length ?? 0;

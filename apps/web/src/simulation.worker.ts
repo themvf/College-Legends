@@ -1,8 +1,8 @@
 /// <reference lib="webworker" />
-import type { CareerPath, GameCommand, GameState, ProgramId } from "@college-legends/model";
+import type { CareerPath, GameCommand, GameEvent, GameState, ProgramId } from "@college-legends/model";
 import { CAREER_PATHS } from "@college-legends/content";
-import { planWeeklyCommands } from "@college-legends/ai";
-import { advanceWeek, beginSeason, createFictionalLeague, decodeSave, encodeSave, prepareWeek, programPreviews } from "@college-legends/simulation";
+import { planOffseasonCommands, planWeeklyCommands } from "@college-legends/ai";
+import { advanceOffseasonStep, advanceWeek, beginSeason, createFictionalLeague, decodeSave, encodeSave, prepareWeek, programPreviews } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 import { deleteSave, readSave, savedBytes, storageAvailable, writeSave } from "./storage.js";
 
@@ -111,6 +111,21 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       activeState = result.state;
       reply({ type: "COMPLETE", requestId: request.requestId, state: activeState, events: result.events });
       return;
+    }
+    if (request.type === "ADVANCE_OFFSEASON") {
+      if (activeState.phase !== "OFFSEASON") throw new Error("There is no offseason step open.");
+      // Rivals plan against the same step the player just decided, so the
+      // league moves around him rather than waiting for him.
+      const rivals = planOffseasonCommands(activeState, request.playerProgramId);
+      const result = advanceOffseasonStep(activeState, [...rivals, ...request.commands] as GameCommand[]);
+      activeState = result.state;
+      activeProgramId = request.playerProgramId;
+      autosave(activeState, activeProgramId);
+      reply({ type: "COMPLETE", requestId: request.requestId, state: activeState, events: result.events });
+      return;
+    }
+    if (activeState.phase === "OFFSEASON") {
+      throw new Error("The season is over. Work through the offseason before the next one starts.");
     }
     const aiCommands = planWeeklyCommands(activeState, request.playerProgramId);
     const result = advanceWeek(activeState, [...aiCommands, ...request.commands] as GameCommand[]);

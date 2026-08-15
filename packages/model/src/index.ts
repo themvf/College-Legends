@@ -5,7 +5,21 @@ export type Season = number;
 
 export type CareerPath = "DYNASTY_BUILDER" | "PROGRAM_RISER" | "CHAMPIONSHIP_MANDATE";
 export type RosterStatus = "SCHOLARSHIP" | "WALK_ON" | "PORTAL" | "DEPARTED" | "GRADUATED";
-export type GamePhase = "ROSTER_REVIEW" | "REGULAR_SEASON";
+export type GamePhase = "ROSTER_REVIEW" | "REGULAR_SEASON" | "OFFSEASON";
+/**
+ * The offseason resolves in fixed order, in lockstep across the whole league —
+ * the same model a week already uses. Every step is skippable with
+ * `CONTINUE_OFFSEASON`, so a program that engages with none of it experiences
+ * what the engine did before the phase existed.
+ */
+export type OffseasonStep = "PORTAL" | "SIGNING_DAY" | "COACHING" | "TRAINING_CAMP";
+/**
+ * What a program spends camp on. `BALANCED` is the default and the
+ * do-nothing outcome; the other two trade against each other rather than
+ * being upgrades — a head start on the playbook is bought with the health
+ * margin conditioning would have banked.
+ */
+export type TrainingCampFocus = "CONDITIONING" | "BALANCED" | "INSTALL";
 export type Position = "QB" | "RB" | "WR" | "TE" | "OL" | "DL" | "LB" | "DB" | "K" | "P";
 export type DevelopmentFocus = "BALANCED" | "TECHNIQUE" | "STRENGTH" | "CONDITIONING";
 export type DevelopmentSpotlightTarget =
@@ -644,6 +658,36 @@ export interface ProspectScoutingState {
   visitsUsed?: number;
 }
 
+/**
+ * What every contested recruit has in common, whether he is a high-school
+ * prospect or a player in the transfer portal. `prospectProgramFit` and the
+ * market's scoring read this rather than `Prospect`, so one formula serves
+ * both pools and the two can never drift apart.
+ */
+export interface Recruitable {
+  id: string;
+  position: Position;
+  overall: number;
+  homeDivisionId: DivisionId;
+  priorities: RecruitPriority[];
+  interestByProgram: Record<ProgramId, number>;
+}
+
+/**
+ * A player who entered the portal and is open to bids — including from the
+ * program he just left, which is what makes retention the same market played
+ * in the other direction rather than a second system.
+ */
+export interface PortalListingState {
+  /** The program he is leaving. Gets an incumbency term when it bids to keep him. */
+  previousProgramId: ProgramId;
+  /** Drawn the same way a prospect's are; what he is looking for in a new home. */
+  priorities: RecruitPriority[];
+  interestByProgram: Record<ProgramId, number>;
+  /** Weekly dollars bid, by program. Cleared when the window resolves. */
+  bidsByProgram: Record<ProgramId, { points: number; weeklyNil: number }>;
+}
+
 export interface RecruitingProgramState {
   points: number;
   weeklyPoints: number;
@@ -807,6 +851,8 @@ export interface GameState {
   season: Season;
   week: number;
   phase: GamePhase;
+  /** Which offseason step is open. Null in every other phase. */
+  offseasonStep?: OffseasonStep | null;
   programs: Record<ProgramId, Program>;
   players: Record<PlayerId, Player>;
   prospects: Record<ProspectId, Prospect>;
@@ -837,6 +883,13 @@ export interface GameState {
   boosters: Record<ProgramId, BoosterProgramState>;
   /** NIL offers and commitments per program. The capacity ceiling is derived, never stored. */
   nil: Record<ProgramId, NilProgramState>;
+  /** Players open to bids in the offseason portal window. Empty outside it. */
+  portal?: Record<PlayerId, PortalListingState>;
+  /**
+   * What camp bought, and how much of the new season it still covers. Ticks
+   * down weekly; a program that took the default carries nothing.
+   */
+  trainingCamp?: Record<ProgramId, { focus: TrainingCampFocus; weeksRemaining: number }>;
   staff: Record<string, StaffMember>;
   depthCharts: Record<ProgramId, DepthChart>;
   playerGameStats: PlayerGameStatLine[];
@@ -915,7 +968,29 @@ export type GameCommand =
   | { type: "SET_SCHEME"; programId: ProgramId; scheme: Partial<SchemeIdentity> }
   | { type: "ALLOCATE_SCOUTING"; programId: ProgramId; opponentProgramId: ProgramId; points: number }
   | { type: "REPLACE_STAFF"; programId: ProgramId; staffId: string; candidateId: string }
-  | { type: "SCHEDULE_MARQUEE_HOME_GAME"; programId: ProgramId; opponentProgramId: ProgramId };
+  | { type: "SCHEDULE_MARQUEE_HOME_GAME"; programId: ProgramId; opponentProgramId: ProgramId }
+  /**
+   * Take no action in the open offseason step. Every step is skippable, so a
+   * program that sends only this all offseason gets the engine's own sane
+   * defaults — there is no maintenance chore and no punishment for not
+   * reading a screen.
+   */
+  | { type: "CONTINUE_OFFSEASON"; programId: ProgramId }
+  /**
+   * A bid on a player in the portal, valid only during the portal step. One
+   * bid per program per player — re-bidding replaces rather than stacks, so
+   * the amount is always absolute and command order cannot decide a winner.
+   * A program bidding on a player it is losing is a retention offer; the
+   * engine treats it as the same market, played in the other direction.
+   * `points: 0, weeklyNil: 0` withdraws.
+   */
+  | { type: "BID_PORTAL_PLAYER"; programId: ProgramId; playerId: PlayerId; points: number; weeklyNil: number }
+  /**
+   * How the program spends camp, set once in the training-camp step and
+   * applied to the season about to start. A trade rather than an upgrade:
+   * conditioning buys health at the cost of a head start on the playbook.
+   */
+  | { type: "SET_TRAINING_CAMP_FOCUS"; programId: ProgramId; focus: TrainingCampFocus };
 
 export type GameEvent =
   | {
@@ -1089,7 +1164,8 @@ export type GameEvent =
       toProgramId: ProgramId;
       score: number;
     }
-  | { type: "PROSPECT_ENROLLED"; season: Season; prospectId: ProspectId; playerId: PlayerId; programId: ProgramId }
+  | { type: "PROSPECT_ENROLLED"; season: Season; prospectId: ProspectId; playerId: PlayerId; programId: ProgramId; lateFill?: boolean }
+  | { type: "ROSTER_POSITION_CONVERTED"; season: Season; playerId: PlayerId; programId: ProgramId; from: Position; to: Position }
   /**
    * A verbal commitment that never became a roster spot because the class
    * filled before he got there. He is not signed anywhere else — the
@@ -1157,7 +1233,7 @@ export type GameEvent =
   | { type: "SCHEME_SET"; season: Season; week: number; programId: ProgramId; scheme: SchemeIdentity }
   | { type: "SCOUTING_ALLOCATED"; season: Season; week: number; programId: ProgramId; opponentProgramId: ProgramId; points: number; totalPoints: number; tiers: ScoutingTier[] }
   | { type: "PRACTICE_REPS_SET"; season: Season; week: number; programId: ProgramId; side: "OFFENSE" | "DEFENSE"; reps: number; pointsSpent: number; expectedExecution: number }
-  | { type: "STAFF_REPLACED"; season: Season; week: number; programId: ProgramId; departingStaffId: string; arrivingStaffId: string; name: string; role: StaffRole; rating: number; salary: number; signingCost: number }
+  | { type: "STAFF_REPLACED"; season: Season; week: number; programId: ProgramId; departingStaffId: string; arrivingStaffId: string; name: string; role: StaffRole; rating: number; salary: number; signingCost: number; buyoutCost: number }
   | { type: "TICKET_PRICE_SET"; season: Season; week: number; programId: ProgramId; price: number; fairPrice: number }
   | { type: "ADVERTISING_SET"; season: Season; week: number; programId: ProgramId; spend: number }
   | {
@@ -1184,6 +1260,31 @@ export type GameEvent =
     }
   | { type: "PREP_POINTS_ADDED"; season: Season; week: number; programId: ProgramId; pointsAdded: number }
   | { type: "SEASON_STATS_ARCHIVED"; season: Season; week: number; players: number; rowsFolded: number }
+  /** The season is over and the offseason has opened on its first step. */
+  | { type: "OFFSEASON_BEGAN"; season: Season; step: OffseasonStep }
+  /** Somebody entered the portal and can be bid on, by anybody. */
+  | { type: "PORTAL_PLAYER_LISTED"; season: Season; playerId: PlayerId; previousProgramId: ProgramId; askingPrice: number }
+  /**
+   * The window closed and he chose. `retained` marks the case where the
+   * program he was leaving won him back.
+   */
+  | {
+      type: "PORTAL_PLAYER_SIGNED";
+      season: Season;
+      playerId: PlayerId;
+      programId: ProgramId;
+      previousProgramId: ProgramId;
+      retained: boolean;
+      score: number;
+      runnerUpProgramId: ProgramId | null;
+      runnerUpScore: number | null;
+      weeklyNil: number;
+    }
+  /** Nobody bid enough. His career at this level is over rather than left hanging. */
+  | { type: "PORTAL_PLAYER_UNCLAIMED"; season: Season; playerId: PlayerId; previousProgramId: ProgramId }
+  | { type: "TRAINING_CAMP_SET"; season: Season; programId: ProgramId; focus: TrainingCampFocus; weeks: number }
+  /** One offseason step closed. `nextStep` is null when the offseason itself ends. */
+  | { type: "OFFSEASON_STEP_COMPLETED"; season: Season; step: OffseasonStep; nextStep: OffseasonStep | null }
   | { type: "BOOSTER_OFFERED"; season: Season; week: number; programId: ProgramId; options: BoosterOption[] }
   | {
       type: "BOOSTER_RESOLVED";

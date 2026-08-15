@@ -1,5 +1,6 @@
-import type { DevelopmentFocus, GamePlan, GameState, GameCommand, Position, Prospect, WeekFocus } from "@college-legends/model";
+import type { DevelopmentFocus, FacilityType, GameState, GameCommand, Player, PortalListingState, Position, Prospect, WeekFocus } from "@college-legends/model";
 import {
+  FACILITY_UPGRADE_COST,
   focusCapacity,
   freeNilCapacity,
   MAX_VISITS_PER_SEASON,
@@ -7,22 +8,17 @@ import {
   nilState,
   pendingBoosterOffer,
   programUnitRatings,
-  projectedGamePlan,
+  recruitingSearchCost,
+  ROSTER_COMPOSITION,
+  coachSchemeFit,
+  portalAskingPrice,
   scoutingBoard,
+  staffBuyout,
+  staffCandidatesFor,
+  PORTAL_MINIMUM_POINTS,
   VISIT_COST,
   WORTH_SCOUTING
 } from "@college-legends/simulation";
-
-/**
- * Rivals answer the same game-plan question the player does, from what their own
- * scouting file actually says. They call `projectedGamePlan` — the same function
- * the player's scouting report reads — so a bought report describes the plan
- * that is really run rather than a parallel guess, and a rival who has not
- * scouted plans blind.
- */
-function planGamePlan(state: Readonly<GameState>, programId: string, opponentId: string | null): GamePlan {
-  return projectedGamePlan(state, programId, opponentId, (id) => programUnitRatings(state, id));
-}
 
 /**
  * What a rival chases this week, from the same five priorities the player picks
@@ -107,14 +103,6 @@ function planBooster(state: Readonly<GameState>, programId: string): GameCommand
   return best ? [{ type: "CHOOSE_BOOSTER", programId, optionId: best.id }] : [];
 }
 
-function upcomingOpponent(state: Readonly<GameState>, programId: string): string | null {
-  const game = state.schedule.find((item) =>
-    item.week === state.week && !item.played && (item.homeProgramId === programId || item.awayProgramId === programId)
-  );
-  if (!game) return null;
-  return game.homeProgramId === programId ? game.awayProgramId : game.homeProgramId;
-}
-
 /**
  * Rival business choices follow program character. A front-running brand backs
  * itself to fill the stadium, bluebloods and talent magnets sell winning, while
@@ -136,6 +124,30 @@ function planSponsorship(state: Readonly<GameState>, programId: string): GameCom
 /** AI programs use the same limited development, media, and recruiting decisions as the human player. */
 export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId?: string): GameCommand[] {
   if (state.phase !== "REGULAR_SEASON" || state.week > 14) return [];
+  // These indexes turn the weekly planner from dozens of full-league scans per
+  // program into one pass. At 72 teams this is the difference between seconds
+  // and minutes over a dynasty season.
+  const positions = Object.keys(ROSTER_COMPOSITION) as Position[];
+  const rostersByProgram = new Map<string, Player[]>();
+  const returningByProgram = new Map<string, Record<Position, number>>();
+  const commitmentsByProgram = new Map<string, number>();
+  for (const programId of Object.keys(state.programs)) {
+    rostersByProgram.set(programId, []);
+    returningByProgram.set(programId, Object.fromEntries(positions.map((position) => [position, 0])) as Record<Position, number>);
+  }
+  for (const player of Object.values(state.players)) {
+    if (!player.programId || player.eligibility.rosterStatus !== "SCHOLARSHIP") continue;
+    rostersByProgram.get(player.programId)?.push(player);
+    if (player.eligibility.seasonsRemaining > 1) {
+      const rooms = returningByProgram.get(player.programId);
+      if (rooms) rooms[player.position] += 1;
+    }
+  }
+  for (const prospect of Object.values(state.prospects)) {
+    if (prospect.status === "COMMITTED" && prospect.signedProgramId) {
+      commitmentsByProgram.set(prospect.signedProgramId, (commitmentsByProgram.get(prospect.signedProgramId) ?? 0) + 1);
+    }
+  }
   return Object.values(state.programs).flatMap((program) => {
     if (program.id === excludedProgramId) return [];
     const commands: GameCommand[] = [];
@@ -144,25 +156,18 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
     commands.push(...planBooster(state, program.id));
     commands.push(...planSponsorship(state, program.id));
 
-    const desired = planGamePlan(state, program.id, upcomingOpponent(state, program.id));
-    const current = state.gamePlans?.[program.id];
-    const changes = Object.fromEntries(
-      (Object.keys(desired) as (keyof GamePlan)[])
-        .filter((key) => !current || current[key] !== desired[key])
-        .map((key) => [key, desired[key]])
-    );
-    if (Object.keys(changes).length > 0) commands.push({ type: "SET_GAME_PLAN", programId: program.id, plan: changes });
+    // The scheme is the game plan. The retired weekly command is intentionally
+    // never emitted; doing so only produced a rejection for every rival.
+    commands.push(...planFacilityUpgrade(state, program.id));
 
-    const position = weakestPosition(state, program.id);
+    const roster = rostersByProgram.get(program.id) ?? [];
+    const returningRooms = returningByProgram.get(program.id)!;
+    const position = weakestPosition(roster, returningRooms);
     const developmentFocus: Exclude<DevelopmentFocus, "BALANCED"> = state.week % 3 === 1 ? "TECHNIQUE" : state.week % 3 === 2 ? "STRENGTH" : "CONDITIONING";
     commands.push({ type: "SET_DEVELOPMENT_SPOTLIGHT", programId: program.id, target: { type: "POSITION", position }, focus: developmentFocus });
 
-    const featuredPlayer = Object.values(state.players)
-      .filter((player) =>
-        player.programId === program.id
-        && player.eligibility.rosterStatus === "SCHOLARSHIP"
-        && player.eligibility.redshirtStatus !== "REDSHIRTING"
-      )
+    const featuredPlayer = roster
+      .filter((player) => player.eligibility.redshirtStatus !== "REDSHIRTING")
       .sort((left, right) =>
         (right.lastGameRating ?? 0) - (left.lastGameRating ?? 0)
         || right.stardom - left.stardom
@@ -174,20 +179,22 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
       commands.push({ type: "SET_PLAYER_MEDIA_ACTION", programId: program.id, playerId: featuredPlayer.id, action });
     }
 
-    if (projectedOpenings(state, program.id) <= 0) return commands;
+    const openings = projectedOpenings(state, program.id, roster, commitmentsByProgram.get(program.id) ?? 0);
+    if (openings <= 0) return commands;
     const recruiting = state.recruiting[program.id];
     if (!recruiting || recruiting.points <= 0) return commands;
     let points = recruiting.points;
     const discovered = recruiting.discoveredProspectIds
       .map((prospectId) => state.prospects[prospectId])
       .filter((prospect): prospect is Prospect => Boolean(prospect && prospect.status === "AVAILABLE"))
-      .sort((left, right) => prospectValue(state, right, program.id) - prospectValue(state, left, program.id) || left.id.localeCompare(right.id));
+      .sort((left, right) => prospectValue(state, right, program.id, returningRooms) - prospectValue(state, left, program.id, returningRooms) || left.id.localeCompare(right.id));
 
-    if (discovered.length < 5) {
-      const searchType = program.tier === "POWER" ? "NATIONAL_SHOWCASE" : program.tier === "LOW" ? "SLEEPERS" : "LOCAL_REGION";
-      const cost = searchType === "NATIONAL_SHOWCASE" ? 25 : searchType === "SLEEPERS" ? 10 : 15;
+    const discoveredAtNeed = discovered.filter((prospect) => prospect.position === position).length;
+    if (discovered.length < 5 || discoveredAtNeed < 2) {
+      const searchType = discoveredAtNeed < 2 ? "POSITION" : program.tier === "POWER" ? "NATIONAL_SHOWCASE" : program.tier === "LOW" ? "SLEEPERS" : "LOCAL_REGION";
+      const cost = recruitingSearchCost(searchType);
       if (points >= cost) {
-        commands.push({ type: "SEARCH_PROSPECTS", programId: program.id, searchType });
+        commands.push({ type: "SEARCH_PROSPECTS", programId: program.id, searchType, ...(searchType === "POSITION" ? { position } : {}) });
         points -= cost;
       }
     }
@@ -198,13 +205,13 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
     // eats the withdrawal penalty. A system only the player pays for is a
     // system the player should not pay for either.
     let uncommittedCapacity = freeNilCapacity(state, program.id);
-    const openings = Math.max(1, projectedOpenings(state, program.id));
+    const nilOpenings = Math.max(1, openings);
     const nilOffers = nilState(state, program.id).offersByProspect;
     for (const prospect of discovered.slice(0, 2)) {
       const scouting = recruiting.scoutingByProspect[prospect.id]!;
       if (scouting.evaluations.length === 0) continue;
       const ask = nilAskingPrice(prospect, program);
-      const desired = Math.min(Math.round(uncommittedCapacity / openings / 50) * 50, ask);
+      const desired = Math.min(Math.round(uncommittedCapacity / nilOpenings / 50) * 50, ask);
       const current = nilOffers[prospect.id] ?? 0;
       if (desired >= ask * 0.3 && desired > current) {
         commands.push({ type: "SET_NIL_OFFER", programId: program.id, prospectId: prospect.id, weeklyAmount: desired });
@@ -246,25 +253,26 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
   });
 }
 
-function weakestPosition(state: Readonly<GameState>, programId: string): Position {
+function weakestPosition(roster: readonly Player[], returningRooms?: Readonly<Record<Position, number>>): Position {
   const positions: Position[] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
   return positions.map((position) => {
-    const players = Object.values(state.players).filter((player) =>
-      player.programId === programId
-      && player.position === position
-      && player.eligibility.rosterStatus === "SCHOLARSHIP"
-    );
-    return { position, average: players.reduce((sum, player) => sum + player.overall, 0) / Math.max(1, players.length) };
-  }).sort((left, right) => left.average - right.average || left.position.localeCompare(right.position))[0]!.position;
+    const players = roster.filter((player) => player.position === position);
+    const returning = returningRooms?.[position] ?? players.filter((player) => player.eligibility.seasonsRemaining > 1).length;
+    return {
+      position,
+      coverage: returning / ROSTER_COMPOSITION[position],
+      average: players.reduce((sum, player) => sum + player.overall, 0) / Math.max(1, players.length)
+    };
+  }).sort((left, right) => left.coverage - right.coverage || left.average - right.average || left.position.localeCompare(right.position))[0]!.position;
 }
 
-function projectedOpenings(state: Readonly<GameState>, programId: string): number {
+function projectedOpenings(state: Readonly<GameState>, programId: string, indexedRoster?: readonly Player[], indexedCommitments?: number): number {
   const program = state.programs[programId]!;
-  const roster = Object.values(state.players).filter((player) =>
+  const roster = indexedRoster ?? Object.values(state.players).filter((player) =>
     player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP"
   );
   const departures = roster.filter((player) => player.eligibility.seasonsRemaining <= 1).length;
-  const commitments = Object.values(state.prospects).filter((prospect) =>
+  const commitments = indexedCommitments ?? Object.values(state.prospects).filter((prospect) =>
     prospect.status === "COMMITTED" && prospect.signedProgramId === programId
   ).length;
   return Math.max(0, program.scholarshipLimit - roster.length + departures - commitments);
@@ -278,13 +286,181 @@ function projectedOpenings(state: Readonly<GameState>, programId: string): numbe
  * taken before the player could find one and the whole point of scouting was
  * lost. Same class of leak as the AI reading opposing unit ratings for free.
  */
-function prospectValue(state: Readonly<GameState>, prospect: Prospect, programId: string): number {
+function prospectValue(state: Readonly<GameState>, prospect: Prospect, programId: string, returningRooms?: Readonly<Record<Position, number>>): number {
   const localBonus = prospect.homeDivisionId === state.programs[programId]!.divisionId ? 8 : 0;
-  const needBonus = Object.values(state.players).filter((player) =>
+  const returning = returningRooms?.[prospect.position] ?? Object.values(state.players).filter((player) =>
     player.programId === programId
     && player.position === prospect.position
     && player.eligibility.rosterStatus === "SCHOLARSHIP"
     && player.eligibility.seasonsRemaining > 1
-  ).length <= 2 ? 7 : 0;
+  ).length;
+  const needBonus = Math.max(0, 1 - returning / ROSTER_COMPOSITION[prospect.position]) * 40;
   return prospect.hype * 0.65 + prospect.interestByProgram[programId]! * 0.25 + localBonus + needBonus;
+}
+
+/** One affordable, strategically weakest facility upgrade per season. */
+function planFacilityUpgrade(state: Readonly<GameState>, programId: string): GameCommand[] {
+  if (state.week !== 1) return [];
+  const program = state.programs[programId];
+  if (!program) return [];
+  const facility = (Object.entries(program.facilities) as [FacilityType, number][])
+    .filter(([, level]) => level < 5)
+    .sort((left, right) => left[1] - right[1] || left[0].localeCompare(right[0]))[0];
+  if (!facility) return [];
+  const cost = FACILITY_UPGRADE_COST[facility[1]];
+  return cost !== undefined && program.budget >= cost + program.weeklyExpenses * 2
+    ? [{ type: "UPGRADE_FACILITY", programId, facility: facility[0] }]
+    : [];
+}
+
+/**
+ * What rivals do between seasons. Without this, seventy-one of seventy-two
+ * programs stand still every year — nobody bids on the portal, nobody keeps
+ * the player they are about to lose, nobody ever changes a coach — and the
+ * one active program collects every transfer in the league unopposed. A
+ * system only the player pays for is a system the player should not pay for
+ * either, which is the same standard every recruiting slice was held to.
+ *
+ * Returns commands for the step that is actually open, so the caller can hand
+ * this straight to `advanceOffseasonStep` the way it hands `planWeeklyCommands`
+ * to `advanceWeek`.
+ */
+export function planOffseasonCommands(state: Readonly<GameState>, excludedProgramId?: string): GameCommand[] {
+  if (state.phase !== "OFFSEASON" || !state.offseasonStep) return [];
+  const step = state.offseasonStep;
+  return Object.values(state.programs).flatMap((program) => {
+    if (program.id === excludedProgramId) return [];
+    if (step === "PORTAL") return planPortalBids(state, program.id);
+    if (step === "COACHING") return planCoachingChange(state, program.id);
+    if (step === "TRAINING_CAMP") return [planTrainingCamp(state, program.id)];
+    return [];
+  });
+}
+
+/**
+ * A rival's portal window. Two things it must get right: keeping a man it is
+ * about to lose is worth more than a stranger of the same quality, and the
+ * points it bids have to fit inside the pool it actually has.
+ */
+function planPortalBids(state: Readonly<GameState>, programId: string): GameCommand[] {
+  const openings = projectedOpenings(state, programId);
+  if (openings <= 0) return [];
+  const recruiting = state.recruiting[programId];
+  const program = state.programs[programId];
+  if (!recruiting || !program) return [];
+
+  // Depth counted once, not once per candidate: this used to call
+  // portalTargetValue from inside a sort comparator, and that function scans
+  // every player in the league. At 72 programs and ~280 listings that is the
+  // exact defect CLAUDE.md measures at 45% of a week's runtime, and it made
+  // closing the portal window take longer than a browser would wait.
+  const depthByPosition = new Map<string, number>();
+  for (const other of Object.values(state.players)) {
+    if (other.programId !== programId) continue;
+    if (other.eligibility.rosterStatus !== "SCHOLARSHIP") continue;
+    if (other.eligibility.seasonsRemaining <= 1) continue;
+    depthByPosition.set(other.position, (depthByPosition.get(other.position) ?? 0) + 1);
+  }
+  const listings = Object.entries(state.portal ?? {})
+    .map(([playerId, listing]) => ({ playerId, listing, player: state.players[playerId] }))
+    .filter((entry) => Boolean(entry.player))
+    .map((entry) => ({
+      ...entry,
+      value: portalTargetValue(programId, entry.player!, entry.listing, depthByPosition)
+    }))
+    .sort((left, right) => right.value - left.value || left.playerId.localeCompare(right.playerId));
+
+  const commands: GameCommand[] = [];
+  let points = recruiting.points;
+  let capacity = freeNilCapacity(state, programId);
+  // Chase as many as the class has room for, best first, and stop when the
+  // pool runs out — the same shape as the in-season recruiting planner.
+  for (const { playerId, player, listing, value } of listings.slice(0, Math.min(openings, 3))) {
+    if (points < PORTAL_MINIMUM_POINTS) break;
+    // Bidding on everybody is not a strategy. Only chase somebody who is
+    // actually better than what walks in as a freshman.
+    if (value < 60) continue;
+    const bidPoints = Math.min(points, listing.previousProgramId === programId ? 30 : 20);
+    const ask = portalAskingPrice(player!);
+    const weeklyNil = Math.min(capacity, ask);
+    commands.push({
+      type: "BID_PORTAL_PLAYER",
+      programId,
+      playerId,
+      points: bidPoints,
+      weeklyNil: weeklyNil >= ask * 0.3 ? Math.round(weeklyNil / 50) * 50 : 0
+    });
+    points -= bidPoints;
+    if (weeklyNil >= ask * 0.3) capacity -= weeklyNil;
+  }
+  return commands;
+}
+
+/**
+ * How badly a rival wants a transfer. Reads his real `overall` rather than a
+ * consensus number, and that is correct rather than a leak: a portal player
+ * has played real games on television, so there is nothing hidden to scout.
+ * Keeping your own man is worth more than signing a stranger of equal quality.
+ */
+function portalTargetValue(
+  programId: string,
+  player: Player,
+  listing: PortalListingState,
+  /** Returning scholarship players per position, counted once by the caller. */
+  depthByPosition: ReadonlyMap<string, number>
+): number {
+  const retentionBonus = listing.previousProgramId === programId ? 10 : 0;
+  const needBonus = (depthByPosition.get(player.position) ?? 0) <= 2 ? 8 : 0;
+  return player.overall * 0.7 + (listing.interestByProgram[programId] ?? 0) * 0.2 + retentionBonus + needBonus;
+}
+
+/**
+ * How much better a candidate has to be before a rival will pay a buyout to
+ * make the change. Set by measurement, not by feel: the market re-rolls every
+ * season and is generous, so at +8 a 24-program league changed 41 coaches in
+ * two seasons — nearly one per program per year, which is exactly the
+ * "decline caused by drift" PROGRAM_IDENTITY_AND_ECONOMY.md rules out. At +15
+ * only about half a post per program is even eligible in a given year.
+ */
+const AI_COACHING_UPGRADE_THRESHOLD = 12;
+
+/**
+ * A rival changes a coach only when the upgrade clearly justifies the buyout
+ * plus the signing fee, and never trades a coordinator who coaches the
+ * program's scheme for a better-rated one who does not — a higher rating that
+ * installs someone else's playbook is not an upgrade.
+ *
+ * At most one post a year. The budget test is deliberately weak because the
+ * economy has no real drain yet (finding 3); the rating gap and the scheme-fit
+ * rule are what actually hold churn down.
+ */
+function planCoachingChange(state: Readonly<GameState>, programId: string): GameCommand[] {
+  const program = state.programs[programId];
+  if (!program) return [];
+  const posts = Object.values(state.staff)
+    .filter((member) => member.programId === programId)
+    .sort((left, right) => left.id.localeCompare(right.id));
+  for (const member of posts) {
+    const buyout = staffBuyout(member);
+    const incumbentFit = coachSchemeFit(member, program.schemeIdentity);
+    const candidate = staffCandidatesFor(state, programId, member.id)
+      .filter((option) => !option.unavailableReason && option.schemeFit >= incumbentFit)
+      .sort((left, right) => right.rating - left.rating)[0];
+    if (!candidate) continue;
+    if (candidate.rating - member.rating < AI_COACHING_UPGRADE_THRESHOLD) continue;
+    if (program.budget < candidate.signingCost + buyout + program.weeklyExpenses * 2) continue;
+    return [{ type: "REPLACE_STAFF", programId, staffId: member.id, candidateId: candidate.id }];
+  }
+  return [];
+}
+
+/**
+ * Camp follows the roster. A thin, banged-up squad protects itself; a program
+ * with depth to spare spends the week on the playbook instead.
+ */
+function planTrainingCamp(state: Readonly<GameState>, programId: string): GameCommand {
+  const roster = Object.values(state.players).filter((player) =>
+    player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP");
+  const thin = roster.length < state.programs[programId]!.scholarshipLimit * 0.85;
+  return { type: "SET_TRAINING_CAMP_FOCUS", programId, focus: thin ? "CONDITIONING" : "INSTALL" };
 }

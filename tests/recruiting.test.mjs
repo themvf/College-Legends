@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  advanceOffseasonStep,
   advanceWeek,
   beginSeason,
   createFictionalLeague,
@@ -18,6 +19,16 @@ import {
 } from "../packages/simulation/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
+
+/**
+ * One step of a career, whichever phase it is in — a week during the season,
+ * an offseason step between them. Offseason steps take no decisions here, so
+ * this is the engine's own do-nothing default.
+ */
+function advance(state, commands = []) {
+  if (state.phase === "ROSTER_REVIEW") return { state: beginSeason(state, commands), events: [] };
+  return state.phase === "OFFSEASON" ? advanceOffseasonStep(state, commands) : advanceWeek(state, commands);
+}
 
 function availableProspects(state) {
   return Object.values(state.prospects)
@@ -45,10 +56,10 @@ test("a prospect committed past the scholarship limit resolves to withdrawn, not
   // over the season — the rollover enrollment loop must never find room.
   program.scholarshipLimit = 0;
   const openingSeason = state.season;
-  let result = advanceWeek(state);
+  let result = advance(state);
   state = result.state;
   while (state.season === openingSeason) {
-    result = advanceWeek(state);
+    result = advance(state);
     state = result.state;
   }
   assert.equal(

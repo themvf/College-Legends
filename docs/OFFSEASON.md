@@ -1,5 +1,116 @@
 # The offseason phase — spec
 
+## Status (2026-08, built)
+
+All four slices are built and committed test-first on
+`claude/offseason-phase`: the phase with its four ordered steps, the portal
+window, buyouts and the coaching checkpoint and training camp, and the AI
+offseason planner. 150 tests pass.
+
+**Deviations from the plan, found while building it:**
+
+- **The portal is one bid command, not the recruiting market's four.** The
+  spec said to reuse `OFFER_PROSPECT` / `INVEST_RECRUITING_POINTS` /
+  `SCHEDULE_VISIT` / a NIL offer. Those four are interesting across fourteen
+  weeks *because* they interact over time — an offer opens the door, visits
+  compound, money breaks a tie at the end. Compressed into a single-shot
+  window they are four sliders with no reason not to max all of them.
+  `BID_PORTAL_PLAYER { points, weeklyNil }` is the same decision with the
+  ceremony removed, and it keeps the part the spec actually cared about: the
+  *scoring* is shared, not duplicated.
+- **Retention is a bid on your own player, not a pre-placed offer.** The plan
+  had `RETAIN_PLAYER` placed one offseason and applied at the next rollover's
+  transfer roll — a season-long standing decision made with no information.
+  Instead, a player who enters the portal can be bid on by anyone *including
+  the program he is leaving*, which is what really happens, needs no second
+  mechanism, and gives the decision full information: you know who left before
+  you decide who to fight for. `PORTAL_INCUMBENT_BONUS` (4, against a
+  recruit's inertia of 6) prices the existing relationship — deliberately
+  smaller, because a man who has already decided to leave is harder to hold
+  than one who merely verballed elsewhere.
+- **`Recruitable` narrowed one function, not two.** `prospectProgramFit` now
+  reads the shared interface and serves both pools unchanged.
+  `recruitingScore` did *not* generalize: half its terms (a standing offer,
+  accumulated visits, a verbal commitment to defend) have no meaning in a
+  one-shot window. `portalBidScore` is a sibling on the same coefficients
+  reading the same fit function, which keeps the two honest without forcing
+  one function to branch on which pool it is scoring.
+- **~~The web prototype auto-runs the offseason.~~ Built.** Four screens, one
+  per step, as a full-screen flow rather than a dashboard tab — for the same
+  reason `SetUpProgram` is one: no games are being played, the weekly
+  decisions do not apply, and a nav bar of in-season screens would be fourteen
+  dead links. Driven end to end in a real browser, not asserted: a season
+  played out, a retention bid placed on a player leaving, all four steps
+  closed, and the career back on the dashboard at Season 2028 Week 1.
+- **Building the screens found a performance defect I had introduced.**
+  `planPortalBids` sorted listings by calling `portalTargetValue` from inside
+  the comparator, and that function scanned every player in the league —
+  precisely the antipattern `CLAUDE.md` measures at 45% of a week's runtime
+  for `prospectValue`. At 72 programs against ~280 listings it made closing
+  the portal window take longer than the browser would wait, which is how it
+  surfaced. Position depth is now counted once per program and the sort reads
+  a precomputed key. Worth noting the test suite never caught this: every
+  engine test passed at both 12 and 24 programs. **Only driving the real UI at
+  real league size exposed it.**
+- **An error during the offseason was invisible.** The flow renders instead of
+  `Dashboard`, and `Dashboard` was the only thing that displayed `error` — so
+  a worker throw would have left the player on a screen where the button
+  silently did nothing. The flow surfaces it now.
+- **The staff card was posting a number the engine no longer charged.** It
+  read "already on staff, no buyout" and priced a hire at the signing cost
+  alone. Adding the buyout to the engine without fixing the card would have
+  been exactly the "card that disagrees with the engine" failure the
+  payoffs-are-visible invariant exists to prevent, so the card posts the
+  total and the affordability gate checks it.
+- **The AI coaching threshold was set by measurement, not by feel.** At the
+  first-guess +8 rating gap a 24-program league changed **41 coaches in two
+  seasons** — nearly one per program per year, the "decline caused by drift"
+  §15 explicitly rules out. The market re-rolls annually and is generous:
+  2.58 posts per program have a +6 upgrade available in any given year. At
+  +15, plus a rule that a rival never trades a coordinator who coaches the
+  program's scheme for a better-rated one who does not, it measures **0.18
+  changes per program per year** — a post turning over about every five
+  seasons.
+
+**Measured at 72 programs, one season — this settles Open question 1:**
+
+| | |
+|---|---|
+| scholarship players | 6,120 |
+| portal listings after one season | **281**, or 3.9 per program |
+| overall: under 60 / 60–70 / 70–80 / 80+ | 123 / 80 / 56 / **22** |
+| asking price: min / median / max | $100 / $300 / $2,550 a week |
+
+So the pool is real — a step's worth of attention, not a trickle — but it is
+mostly fringe: **the median transfer is a 61-overall depth piece.** Only 22
+players a year across the whole league are the 80+ starters the "portal is
+the climb" thesis is about, and at $2,550 a week even those are cheap against
+a POWER program's ~$130K donor capacity. Two things follow, both deferred
+rather than blind-tuned: the `transferRisk` formula produces too flat a
+quality distribution for the portal to be the fast climb §12 describes, and
+`portalAskingPrice` is priced far under what scarcity at the top should cost.
+Both are balance hypotheses that predate this work; neither is worth moving
+until the offseason has screens and the market has a human in it.
+
+**Five seasons, 24 programs, before and after — the defect this phase exists
+to fix:**
+
+| | before | after |
+|---|---|---|
+| players stuck in `PORTAL` forever | **389** | **0** |
+| every listing accounted for | — | 389 = 28 signed + 361 unclaimed |
+| smallest roster in the league | 18 | 21 |
+| coach changes over five seasons | 0 | 21 |
+
+Nobody is stranded any more, and roster minimums moved the right way, since
+a transfer can now actually be signed by somebody. But **only 7% of listings
+found a home** (28 of 389), which is the quality problem above seen from the
+other side: most of what enters the portal is not worth a bid from anyone.
+The shrinking-roster problem is *not* caused by this work — it is worse on
+the baseline — and traces to rival programs under-recruiting by roughly
+seven signees a year against natural attrition. Logged here because the
+measurement surfaced it, not because this slice introduced it.
+
 ## Why
 
 `rolloverSeason` (`packages/simulation/src/index.ts:4421`) runs entirely
@@ -266,9 +377,19 @@ justify it.
 ## Constants ledger
 
 All hypotheses, committed-test-tuned like every other constant in this
-codebase: `BUYOUT_SALARY_FRACTION` 0.6 · portal overall curve shape TBD by
-measurement, same method `prospectHype`'s curve was calibrated with ·
-retention effect curve shares `nilScore`'s diminishing-returns shape.
+codebase, listed so tuning changes one place:
+
+| constant | value | what it prices |
+|---|---|---|
+| `BUYOUT_SALARY_FRACTION` | 0.6 | What is owed a coach let go early, off his salary |
+| `PORTAL_INCUMBENT_BONUS` | 4 | The relationship a program already has with a man it is losing. Under a recruit's inertia of 6 on purpose |
+| `PORTAL_MINIMUM_POINTS` | 5 | A bid has to be real; without a floor everybody blankets every listing |
+| `PORTAL_COMMITMENT_THRESHOLD` | 58 | Below this nobody wanted him enough |
+| portal price curve | `(overall − 40)/25` ^2.6 | Convex in production, mirroring the hype curve's shape |
+| `TRAINING_CAMP_WEEKS` | 4 | How long camp still covers. A head start, not a season buff |
+| `TRAINING_CAMP_INSTALL_BONUS` | 0.05 | Against `planExecution`'s ~0.26 maximum from a full week of reps |
+| `TRAINING_CAMP_CONDITIONING_RISK` / `_INSTALL_RISK` | 0.85 / 1.15 | Both directions of the same trade, matched to the CONDITIONING focus |
+| `AI_COACHING_UPGRADE_THRESHOLD` | 15 | Set by measurement — see the deviations above |
 
 ## Tests
 
@@ -297,20 +418,31 @@ retention effect curve shares `nilScore`'s diminishing-returns shape.
 Matching `PROGRAM_IDENTITY_AND_ECONOMY.md` §16's own honesty about what
 this pass does not settle:
 
-1. **How many portal players actually enter a 72-program league in one
-   offseason**, and whether the current `transferRisk` formula produces a
-   pool worth a whole step of attention or a scarce trickle. Needs
-   measurement before `portalAskingPrice` can be tuned at all.
-2. **Whether retention and portal bidding should share one Recruiting Point
-   budget or a separate offseason allotment.** Sharing is simpler and
-   consistent with "one pool, not a second currency"; separate would stop a
-   program that spent its whole season pool from being locked out of the
-   one moment it might matter most.
+1. ~~How many portal players actually enter a 72-program league in one
+   offseason.~~ **Measured — 281 a year, 3.9 per program.** What it opened
+   instead: the pool's *quality* is too flat for the portal to be "the
+   climb" §12 describes. A median transfer is a 61-overall depth piece and
+   only 22 a year are the 80+ starters that thesis is about. Fixing that
+   means reweighting `transferRisk` toward players who are actually good,
+   which is a balance change to a formula that predates this work.
+2. **Whether the portal should share the season's Recruiting Point budget or
+   get its own allotment.** Built as sharing, which is simpler and consistent
+   with "one pool, not a second currency" — but it means a program that spent
+   everything chasing high-schoolers is locked out of the window where it
+   could have replaced them, and it never finds that out until the window
+   opens. Worth watching once the offseason has screens.
 3. **Whether training camp's `INSTALL` option should persist into week 1's
    install band or simply be consumed by it.** Affects whether a strong
    camp is a one-week bump or a lasting head start.
-4. **How this interacts with career-ending departures mid-list** — a coach
-   fired in `COACHING` after a portal target already committed to play for
-   him. Likely resolved by the fact that a program, not a coach, holds the
-   NIL commitment and the roster spot, but worth a dedicated test once both
-   systems are live together.
+4. **A coach fired in `COACHING` after a portal target already signed to
+   play for him.** Resolved in practice by ordering — the portal closes two
+   steps before the coaching market opens, and a program rather than a coach
+   holds the roster spot and the NIL commitment — so nothing breaks. Whether
+   it *should* cost something is a design question this slice does not
+   answer.
+
+5. ~~The offseason has no screens.~~ **Built and verified in a browser.** What
+   is genuinely still open is smaller: signing day is a report rather than a
+   decision, which is correct today because recruiting settles during the
+   season — but it makes step 2 the one step that never asks for anything, and
+   it may be the natural home for a last-chance push once that exists.

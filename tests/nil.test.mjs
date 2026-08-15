@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  advanceOffseasonStep,
   advanceWeek,
   beginSeason,
   createFictionalLeague,
@@ -16,6 +17,12 @@ import {
 import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
+
+/** One step of a career, whichever phase it is in. Offseason steps take no decisions here. */
+function advance(state, commands = []) {
+  if (state.phase === "ROSTER_REVIEW") return { state: beginSeason(state, commands), events: [] };
+  return state.phase === "OFFSEASON" ? advanceOffseasonStep(state, commands) : advanceWeek(state, commands);
+}
 
 /** Puts a prospect on a program's board with one evaluation, the minimum an offer requires. */
 function discover(state, programId, prospectId) {
@@ -245,7 +252,7 @@ test("the deal follows him to campus and ends when he leaves", () => {
   const seasonStart = state.season;
   let ended = null;
   while (state.season === seasonStart) {
-    const result = advanceWeek(state);
+    const result = advance(state);
     state = result.state;
     ended ??= result.events.find((event) => event.type === "NIL_COMMITMENT_ENDED" && event.playerId === senior.id) ?? null;
   }
