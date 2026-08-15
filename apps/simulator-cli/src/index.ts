@@ -18,9 +18,11 @@ const events: GameEvent[] = [];
 const initialSeason = state.season;
 while (state.season < initialSeason + seasons) {
   // A career alternates weeks with offseason steps, and rivals plan for both.
-  const result = state.phase === "OFFSEASON"
-    ? advanceOffseasonStep(state, planOffseasonCommands(state))
-    : advanceWeek(state, planWeeklyCommands(state));
+  const result = state.phase === "ROSTER_REVIEW"
+    ? { state: beginSeason(state), events: [] as GameEvent[] }
+    : state.phase === "OFFSEASON"
+      ? advanceOffseasonStep(state, planOffseasonCommands(state))
+      : advanceWeek(state, planWeeklyCommands(state));
   state = result.state;
   events.push(...result.events);
 }

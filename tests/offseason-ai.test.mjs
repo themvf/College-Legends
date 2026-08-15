@@ -10,6 +10,7 @@ import { planOffseasonCommands, planWeeklyCommands } from "../packages/ai/dist/i
 
 /** A full career step, with rivals planning for whichever phase is open. */
 function advance(state, excluded) {
+  if (state.phase === "ROSTER_REVIEW") return { state: beginSeason(state), events: [] };
   return state.phase === "OFFSEASON"
     ? advanceOffseasonStep(state, planOffseasonCommands(state, excluded))
     : advanceWeek(state, planWeeklyCommands(state, excluded));
@@ -69,7 +70,7 @@ test("rivals actually compete in the offseason rather than standing still", () =
       state = result.state;
       continue;
     }
-    state = advanceWeek(state, planWeeklyCommands(state)).state;
+    state = advance(state).state;
   }
   assert.ok(seen.bids > 0, `rivals must bid on the portal, saw ${seen.bids}`);
   assert.ok(seen.signings > 0, `and some of those bids must land, saw ${seen.signings}`);
@@ -111,7 +112,7 @@ test("the league does not churn its entire coaching staff every single year", ()
       state = result.state;
       continue;
     }
-    state = advanceWeek(state, planWeeklyCommands(state)).state;
+    state = advance(state).state;
   }
   // Measured at 0.18 changes per program per year — a post turning over about
   // every five seasons. The floor that matters is the upper one: at the old

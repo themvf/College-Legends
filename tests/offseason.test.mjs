@@ -41,12 +41,15 @@ test("the steps resolve in their fixed order and hand back a playable season", (
     state = advanceOffseasonStep(state).state;
   }
   assert.deepEqual(seen, [...OFFSEASON_STEPS], "every step runs, once, in order");
-  assert.equal(state.phase, "REGULAR_SEASON");
+  assert.equal(state.phase, "ROSTER_REVIEW");
   assert.equal(state.offseasonStep, null);
-  assert.equal(state.week, 1);
-  assert.equal(state.season, seasonEnding + 1, "the new season only begins when the offseason closes");
+  assert.equal(state.week, 0);
+  assert.equal(state.season, seasonEnding + 1, "the new year is created when the offseason closes");
   assert.ok(state.schedule.length > 0, "a schedule must exist for the season about to be played");
   assert.throws(() => advanceOffseasonStep(state), /no offseason step/i);
+  state = beginSeason(state);
+  assert.equal(state.phase, "REGULAR_SEASON");
+  assert.equal(state.week, 1, "the opener waits for the explicit preseason review");
 });
 
 test("the incoming class enrolls when the offseason closes, not when week 14 ends", () => {

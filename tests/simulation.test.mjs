@@ -11,6 +11,7 @@ const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLea
  * this is the engine's own do-nothing default.
  */
 function advance(state, commands = []) {
+  if (state.phase === "ROSTER_REVIEW") return { state: beginSeason(state, commands), events: [] };
   return state.phase === "OFFSEASON" ? advanceOffseasonStep(state, commands) : advanceWeek(state, commands);
 }
 
@@ -256,7 +257,9 @@ test("AI recruiting respects scholarship limits and receives a new annual cohort
     assert.equal(openingPlan.filter((command) => command.programId === program.id && command.type === "SET_PLAYER_MEDIA_ACTION").length, 1);
   }
   while (state.season < firstSeason + 2) {
-    const result = state.phase === "OFFSEASON" ? advanceOffseasonStep(state) : advanceWeek(state, planWeeklyCommands(state));
+    const result = state.phase === "REGULAR_SEASON"
+      ? advanceWeek(state, planWeeklyCommands(state))
+      : advance(state);
     state = result.state;
   }
   for (const program of Object.values(state.programs)) {
@@ -1033,7 +1036,7 @@ test("social media builds a reserve player's brand and converts some fans to the
   assert.equal(brand.personalFanChange, expectedPersonalFans);
   assert.equal(brand.stardomAfter, stardomBefore + 3);
   assert.equal(brand.schoolFanLift, Math.round(expectedPersonalFans * 0.15));
-  assert.ok(recap.playerFanLift >= brand.schoolFanLift);
+  assert.ok(recap.playerFanLift > 0 && recap.playerFanLift <= brand.schoolFanLift);
   assert.equal(result.state.players[reserve.id].mediaAction, "FOOTBALL_FOCUS");
 });
 
@@ -1130,8 +1133,8 @@ test("a dynasty saves small, folds finished seasons, and round-trips exactly", a
   assert.deepEqual(loaded.playerSeasonStats, state.playerSeasonStats);
 
   // And a loaded career must advance identically to one that was never saved.
-  const fromSave = advanceWeek(loaded);
-  const fromMemory = advanceWeek({ ...state, eventHistory: loaded.eventHistory });
+  const fromSave = advanceWeek(beginSeason(loaded));
+  const fromMemory = advanceWeek(beginSeason({ ...state, eventHistory: loaded.eventHistory }));
   assert.equal(
     JSON.stringify(fromSave.state.programs),
     JSON.stringify(fromMemory.state.programs),

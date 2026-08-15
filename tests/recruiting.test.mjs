@@ -26,6 +26,7 @@ const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLea
  * this is the engine's own do-nothing default.
  */
 function advance(state, commands = []) {
+  if (state.phase === "ROSTER_REVIEW") return { state: beginSeason(state, commands), events: [] };
   return state.phase === "OFFSEASON" ? advanceOffseasonStep(state, commands) : advanceWeek(state, commands);
 }
 

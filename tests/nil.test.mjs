@@ -20,6 +20,7 @@ const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLea
 
 /** One step of a career, whichever phase it is in. Offseason steps take no decisions here. */
 function advance(state, commands = []) {
+  if (state.phase === "ROSTER_REVIEW") return { state: beginSeason(state, commands), events: [] };
   return state.phase === "OFFSEASON" ? advanceOffseasonStep(state, commands) : advanceWeek(state, commands);
 }
 

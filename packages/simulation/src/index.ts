@@ -251,6 +251,26 @@ export { AddressableRng } from "./rng.js";
 const clamp = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value));
 const clone = <T>(value: T): T => structuredClone(value);
 
+/**
+ * State transitions are immutable, but completed stat rows and historical
+ * events are append-only values. Deep-cloning tens of thousands of those rows
+ * every week made a 72-team season progressively slower. Clone the live,
+ * mutable graph and copy the append-only arrays instead.
+ */
+function cloneGameState(value: Readonly<GameState>): GameState {
+  const { playerGameStats, playerSeasonStats, eventHistory, ...mutable } = value;
+  const state = structuredClone({
+    ...mutable,
+    playerGameStats: [],
+    playerSeasonStats: [],
+    eventHistory: []
+  }) as GameState;
+  state.playerGameStats = [...playerGameStats];
+  state.playerSeasonStats = [...(playerSeasonStats ?? [])];
+  state.eventHistory = [...eventHistory];
+  return state;
+}
+
 export const ROSTER_COMPOSITION: Readonly<Record<Position, number>> = {
   QB: 4,
   RB: 7,
@@ -263,6 +283,11 @@ export const ROSTER_COMPOSITION: Readonly<Record<Position, number>> = {
   K: 2,
   P: 2
 };
+
+/** The minimum viable room carried into a season after late signing. */
+export const ROSTER_MINIMUMS: Readonly<Record<Position, number>> = Object.fromEntries(
+  (Object.entries(ROSTER_COMPOSITION) as [Position, number][]).map(([position, target]) => [position, Math.ceil(target * 0.75)])
+) as Record<Position, number>;
 
 export const STARTING_ROSTER_SIZE = Object.values(ROSTER_COMPOSITION).reduce((total, count) => total + count, 0);
 export const FACILITY_UPGRADE_COST: Readonly<Record<number, number>> = {
@@ -967,7 +992,10 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       ticketPrice: tier === "POWER" ? 58 : tier === "MID" ? 42 : 28,
       advertisingSpend: 0,
       weeklyRevenue: tier === "POWER" ? 1_200_000 : tier === "MID" ? 520_000 : 210_000,
-      weeklyExpenses: tier === "POWER" ? 940_000 : tier === "MID" ? 430_000 : 185_000,
+      // Includes the full cost of operating an 85-man football program, not
+      // only game-day bills. At these levels, a losing season is near break-even
+      // and sustained winning, sponsorships and smart pricing create the margin.
+      weeklyExpenses: tier === "POWER" ? 3_850_000 : tier === "MID" ? 1_800_000 : 825_000,
       // A scouting department starts a tier behind the rest: information is the
       // thing a program has to decide to invest in rather than inherit.
       facilities: {
@@ -991,6 +1019,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
     state.preparation[id] = { points: 0, weeklyPoints: 0, scoutingPoints: 0, weeklyScoutingPoints: 0, offensiveReps: 0, defensiveReps: 0 };
     state.dossiers[id] = {};
     state.boosters[id] = { offer: null, advertisingCredit: 0, takeawayBoostWeek: null };
+    state.nil![id] = emptyNilState();
     state.weekFocus[id] = [];
     state.scoutingTarget[id] = null;
     for (const [staffIndex, role] of STAFF_ROLES.entries()) {
@@ -1177,7 +1206,7 @@ function createPlayerRatings(overall: number, position: Position, rng: Addressab
 }
 
 export function beginSeason(input: Readonly<GameState>, commands: readonly GameCommand[] = []): GameState {
-  const state = clone<GameState>(input);
+  const state = cloneGameState(input);
   ensureSponsorshipOffers(state);
   if (state.phase === "ROSTER_REVIEW") {
     const events: GameEvent[] = [];
@@ -1402,7 +1431,7 @@ function balanceHomeAndAway(schedule: GameState["schedule"]): void {
 }
 
 export function advanceWeek(input: Readonly<GameState>, commands: readonly GameCommand[] = []): SimulationResult {
-  const state = clone<GameState>(input);
+  const state = cloneGameState(input);
   if (state.phase !== "REGULAR_SEASON") {
     throw new Error("Review the opening roster and begin the season before advancing a week.");
   }
@@ -1737,7 +1766,7 @@ function commitScoutingOutput(state: GameState, programId: string, events?: Game
  * of buying it. Everything else still waits for `advanceWeek`.
  */
 export function prepareWeek(input: Readonly<GameState>, commands: readonly GameCommand[] = []): SimulationResult {
-  const state = clone<GameState>(input);
+  const state = cloneGameState(input);
   ensureSponsorshipOffers(state);
   const events: GameEvent[] = [];
   // Everything a coach settles *before* Saturday resolves here. Practice reps
@@ -2513,20 +2542,50 @@ function resolveProspectSearch(
  * never become hidden recruiting rules.
  */
 function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
+  const programIds = Object.keys(state.programs);
+  const fitIndex = buildProspectFitIndex(state);
+  const commitmentsByProgram = new Map<string, number>();
+  for (const prospect of Object.values(state.prospects)) {
+    if (prospect.status === "COMMITTED" && prospect.signedProgramId) {
+      commitmentsByProgram.set(prospect.signedProgramId, (commitmentsByProgram.get(prospect.signedProgramId) ?? 0) + 1);
+    }
+  }
+  const openingsByProgram = new Map(programIds.map((programId) => {
+    const roster = fitIndex.rostersByProgram.get(programId) ?? [];
+    const departures = roster.filter((player) => player.eligibility.seasonsRemaining <= 1).length;
+    return [programId, Math.max(0, state.programs[programId]!.scholarshipLimit - roster.length + departures - (commitmentsByProgram.get(programId) ?? 0))];
+  }));
+  const programsByProspect = new Map<string, Set<string>>();
+  const addContender = (prospectId: string, programId: string): void => {
+    const contenders = programsByProspect.get(prospectId) ?? new Set<string>();
+    contenders.add(programId);
+    programsByProspect.set(prospectId, contenders);
+  };
+  for (const programId of programIds) {
+    if ((openingsByProgram.get(programId) ?? 0) <= 0) continue;
+    const recruiting = state.recruiting[programId];
+    for (const prospectId of recruiting?.offeredProspectIds ?? []) addContender(prospectId, programId);
+    for (const [prospectId, scouting] of Object.entries(recruiting?.scoutingByProspect ?? {})) {
+      if (scouting.pursuitPoints > 0) addContender(prospectId, programId);
+    }
+    const nil = state.nil?.[programId];
+    for (const prospectId of Object.keys(nil?.offersByProspect ?? {})) addContender(prospectId, programId);
+    for (const prospectId of Object.keys(nil?.commitmentsByPlayer ?? {})) {
+      if (state.prospects[prospectId]) addContender(prospectId, programId);
+    }
+  }
   // A verbal commitment stays in the market — and therefore contestable —
   // until the signing week. After that, only a fresh (never-committed)
   // prospect can still be in this pool, and he signs immediately: see below.
-  const contests = Object.values(state.prospects)
+  const contests = [...programsByProspect.keys()]
+    .map((prospectId) => state.prospects[prospectId])
+    .filter((prospect): prospect is Prospect => Boolean(prospect))
     .filter((prospect) => prospect.status === "AVAILABLE" || (prospect.status === "COMMITTED" && state.week < SIGNING_WEEK))
     .map((prospect) => {
-      const offeredBy = Object.keys(state.programs).filter((programId) =>
-        ((state.recruiting[programId]?.scoutingByProspect[prospect.id]?.pursuitPoints ?? 0) > 0
-          || (state.nil?.[programId]?.offersByProspect[prospect.id] ?? 0) > 0
-          || (state.nil?.[programId]?.commitmentsByPlayer[prospect.id] ?? 0) > 0
-          || (state.recruiting[programId]?.offeredProspectIds.includes(prospect.id) ?? false))
-        && projectedRecruitingOpenings(state, programId) > 0
-      ).sort();
-      const scores = Object.fromEntries(offeredBy.map((programId) => [programId, recruitingScore(state, prospect, programId, rng)]));
+      const offeredBy = [...(programsByProspect.get(prospect.id) ?? [])]
+        .filter((programId) => (openingsByProgram.get(programId) ?? 0) > 0)
+        .sort();
+      const scores = Object.fromEntries(offeredBy.map((programId) => [programId, recruitingScore(state, prospect, programId, rng, fitIndex)]));
       const ranked = [...offeredBy].sort((left, right) => scores[right]! - scores[left]! || left.localeCompare(right));
       return { prospect, offeredBy, scores, ranked, priority: rng.at(`${prospect.id}:commitment-priority`) };
     })
@@ -2535,7 +2594,7 @@ function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: 
 
   for (const contest of contests) {
     const winnerProgramId = contest.ranked[0]!;
-    if (projectedRecruitingOpenings(state, winnerProgramId) <= 0) continue;
+    if ((openingsByProgram.get(winnerProgramId) ?? 0) <= 0) continue;
     const score = contest.scores[winnerProgramId]!;
     const runnerUpProgramId = contest.ranked[1] ?? null;
     const runnerUpScore = runnerUpProgramId ? contest.scores[runnerUpProgramId]! : null;
@@ -2556,6 +2615,8 @@ function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: 
     const signsImmediately = state.week >= SIGNING_WEEK;
     contest.prospect.status = signsImmediately ? "SIGNED" : "COMMITTED";
     contest.prospect.signedProgramId = winnerProgramId;
+    openingsByProgram.set(winnerProgramId, Math.max(0, (openingsByProgram.get(winnerProgramId) ?? 0) - 1));
+    if (isFlip && previousProgramId) openingsByProgram.set(previousProgramId, (openingsByProgram.get(previousProgramId) ?? 0) + 1);
     // The winner's offer converts to a commitment and starts charging this
     // week — settled decision: the drain begins at commitment, not enrollment.
     // Keyed by prospect id until enrollment re-keys it to the player id.
@@ -2629,13 +2690,13 @@ function resolveSigningWeek(state: GameState, events: GameEvent[]): void {
   }
 }
 
-function recruitingScore(state: GameState, prospect: Prospect, programId: string, rng: AddressableRng): number {
+function recruitingScore(state: GameState, prospect: Prospect, programId: string, rng: AddressableRng, fitIndex?: ProspectFitIndex): number {
   const program = state.programs[programId]!;
   const scouting = state.recruiting[programId]?.scoutingByProspect[prospect.id];
   const pursuitPoints = scouting?.pursuitPoints ?? 0;
-  const fit = prospectProgramFit(state, prospect, programId);
+  const fit = prospectProgramFit(state, prospect, programId, fitIndex);
   const facilityBonus = Math.max(0, program.facilities.RECRUITING - 1) * 2;
-  const staffBonus = staffContribution(state, programId, "RECRUIT") / 25;
+  const staffBonus = (fitIndex?.recruitingStaffByProgram.get(programId) ?? staffContribution(state, programId, "RECRUIT")) / 25;
   const exposureBonus = program.localPress / 50 + program.nationalPress / 20;
   const appealBonus = program.recruitAppeal + (prospect.homeDivisionId === program.divisionId ? program.homeRegionBias / 8 : 0);
   // Money is a tiebreaker by design: nilScore saturates at NIL_SCORE_CEILING,
@@ -2681,20 +2742,46 @@ function scoutingQuality(state: Readonly<GameState>, programId: string): number 
   return clamp(25 + program.facilities.RECRUITING * 12 + staffContribution(state, programId, "RECRUIT") / 6, 25, 100);
 }
 
+export interface ProspectFitIndex {
+  rostersByProgram: ReadonlyMap<string, readonly Player[]>;
+  averageStardomByProgram: ReadonlyMap<string, number>;
+  recruitingStaffByProgram: ReadonlyMap<string, number>;
+  developmentStaffByProgram: ReadonlyMap<string, number>;
+}
+
+function buildProspectFitIndex(state: Readonly<GameState>): ProspectFitIndex {
+  const rostersByProgram = new Map<string, Player[]>();
+  for (const player of Object.values(state.players)) {
+    if (!player.programId || player.eligibility.rosterStatus !== "SCHOLARSHIP") continue;
+    const roster = rostersByProgram.get(player.programId) ?? [];
+    roster.push(player);
+    rostersByProgram.set(player.programId, roster);
+  }
+  const averageStardomByProgram = new Map<string, number>();
+  const recruitingStaffByProgram = new Map<string, number>();
+  const developmentStaffByProgram = new Map<string, number>();
+  for (const programId of Object.keys(state.programs)) {
+    const roster = rostersByProgram.get(programId) ?? [];
+    averageStardomByProgram.set(programId, roster.reduce((sum, player) => sum + player.stardom, 0) / Math.max(1, roster.length));
+    recruitingStaffByProgram.set(programId, staffContribution(state, programId, "RECRUIT"));
+    developmentStaffByProgram.set(programId, staffContribution(state, programId, "DEVELOP"));
+  }
+  return { rostersByProgram, averageStardomByProgram, recruitingStaffByProgram, developmentStaffByProgram };
+}
+
 /**
  * How well a program serves what this recruit is actually looking for. Reads
  * `Recruitable`, not `Prospect`, so a portal player is scored by exactly the
  * same formula as a high-school signee — one implementation, two pools.
  */
-export function prospectProgramFit(state: Readonly<GameState>, prospect: Readonly<Recruitable>, programId: string): number {
+export function prospectProgramFit(state: Readonly<GameState>, prospect: Readonly<Recruitable>, programId: string, fitIndex?: ProspectFitIndex): number {
   const program = state.programs[programId];
   if (!program) return 0;
-  const rosterAtPosition = Object.values(state.players).filter((player) =>
-    player.programId === programId && player.position === prospect.position && player.eligibility.rosterStatus === "SCHOLARSHIP"
-  );
-  const averageStardom = Object.values(state.players)
-    .filter((player) => player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP")
-    .reduce((sum, player, _index, roster) => sum + player.stardom / Math.max(1, roster.length), 0);
+  const roster = fitIndex?.rostersByProgram.get(programId)
+    ?? Object.values(state.players).filter((player) => player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP");
+  const rosterAtPosition = roster.filter((player) => player.position === prospect.position);
+  const averageStardom = fitIndex?.averageStardomByProgram.get(programId)
+    ?? roster.reduce((sum, player) => sum + player.stardom, 0) / Math.max(1, roster.length);
   const priorityScore = (priority: RecruitPriority): number => {
     if (priority === "EARLY_PLAYING_TIME") {
       const returning = rosterAtPosition.filter((player) => player.eligibility.seasonsRemaining > 1);
@@ -2702,7 +2789,7 @@ export function prospectProgramFit(state: Readonly<GameState>, prospect: Readonl
       return clamp(95 - returning.length * 5 - Math.max(0, bestReturning - prospect.overall), 15, 95);
     }
     if (priority === "WINNING") return clamp(program.prestige * 0.55 + program.wins * 5 - program.losses * 2, 5, 100);
-    if (priority === "PLAYER_DEVELOPMENT") return clamp(program.facilities.TRAINING * 16 + staffContribution(state, programId, "DEVELOP") / 6, 10, 100);
+    if (priority === "PLAYER_DEVELOPMENT") return clamp(program.facilities.TRAINING * 16 + (fitIndex?.developmentStaffByProgram.get(programId) ?? staffContribution(state, programId, "DEVELOP")) / 6, 10, 100);
     if (priority === "NATIONAL_EXPOSURE") return clamp(program.nationalPress + Math.max(0, 26 - program.nationalRank), 5, 100);
     if (priority === "ACADEMICS") return program.facilities.ACADEMICS * 20;
     if (priority === "FACILITIES") return (program.facilities.TRAINING + program.facilities.RECRUITING) * 10;
@@ -3638,19 +3725,31 @@ interface ProgramBrandImpact {
 
 function processPlayerBrands(state: GameState, rng: AddressableRng, events: GameEvent[]): ReadonlyMap<string, ProgramBrandImpact> {
   const impactByProgram = new Map<string, ProgramBrandImpact>();
+  const gamesByProgram = new Map<string, GameState["schedule"][number]>();
+  for (const game of state.schedule) {
+    if (game.week !== state.week || !game.played) continue;
+    gamesByProgram.set(game.homeProgramId, game);
+    gamesByProgram.set(game.awayProgramId, game);
+  }
+  const rostersByProgram = new Map<string, Player[]>();
+  for (const player of Object.values(state.players)) {
+    if (!player.programId || player.eligibility.rosterStatus !== "SCHOLARSHIP") continue;
+    const roster = rostersByProgram.get(player.programId) ?? [];
+    roster.push(player);
+    rostersByProgram.set(player.programId, roster);
+  }
+  const statByPlayer = new Map<string, PlayerGameStatLine>();
+  for (const line of state.playerGameStats) {
+    if (line.season === state.season && line.week === state.week) statByPlayer.set(line.playerId, line);
+  }
   for (const program of Object.values(state.programs)) {
-    const game = state.schedule.find((item) => item.week === state.week && item.played && (item.homeProgramId === program.id || item.awayProgramId === program.id));
+    const game = gamesByProgram.get(program.id);
     const home = game?.homeProgramId === program.id;
     const scoreFor = game ? (home ? game.homeScore! : game.awayScore!) : null;
     const scoreAgainst = game ? (home ? game.awayScore! : game.homeScore!) : null;
     const won = scoreFor !== null && scoreAgainst !== null && scoreFor > scoreAgainst;
     const margin = scoreFor !== null && scoreAgainst !== null ? scoreFor - scoreAgainst : 0;
-    const roster = Object.values(state.players).filter((player) =>
-      player.programId === program.id && player.eligibility.rosterStatus === "SCHOLARSHIP"
-    );
-    const statByPlayer = new Map(state.playerGameStats
-      .filter((line) => line.season === state.season && line.week === state.week && line.programId === program.id)
-      .map((line) => [line.playerId, line]));
+    const roster = rostersByProgram.get(program.id) ?? [];
     const brandEvents: Extract<GameEvent, { type: "PLAYER_BRAND_UPDATED" }>[] = [];
     let schoolFanLift = 0;
     let localPressLift = 0;
@@ -3927,8 +4026,19 @@ export function playerPerformanceSummary(line: Readonly<PlayerGameStatLine>): st
 }
 
 function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: ReadonlyMap<string, ProgramBrandImpact>, events: GameEvent[]): void {
+  const gamesByProgram = new Map<string, GameState["schedule"][number]>();
+  for (const game of state.schedule) {
+    if (game.week !== state.week) continue;
+    gamesByProgram.set(game.homeProgramId, game);
+    gamesByProgram.set(game.awayProgramId, game);
+  }
+  const staffPayrollByProgram = new Map<string, number>();
+  for (const staff of Object.values(state.staff)) {
+    if (!staff.programId) continue;
+    staffPayrollByProgram.set(staff.programId, (staffPayrollByProgram.get(staff.programId) ?? 0) + staff.salary / 52);
+  }
   for (const program of Object.values(state.programs)) {
-    const game = state.schedule.find((item) => item.week === state.week && (item.homeProgramId === program.id || item.awayProgramId === program.id));
+    const game = gamesByProgram.get(program.id);
     const homeGame = game?.homeProgramId === program.id;
     const opponentId = game ? (homeGame ? game.awayProgramId : game.homeProgramId) : null;
     const opponent = opponentId ? state.programs[opponentId]! : null;
@@ -3946,18 +4056,18 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
     let localPressChange = brandImpact.localPressLift;
     let nationalPressChange = brandImpact.nationalPressLift;
     if (result === "WIN") {
-      teamResultFanChange = Math.round(Math.max(450, fansBefore * 0.018));
+      teamResultFanChange = Math.round(Math.max(250, fansBefore * 0.008));
       localPressChange += 6;
       if (rankedOpponent) {
-        teamResultFanChange += Math.round(fansBefore * 0.025);
+        teamResultFanChange += Math.round(fansBefore * 0.012);
         nationalPressChange += 12;
       }
       if (marqueeGame) {
-        teamResultFanChange += Math.round(fansBefore * 0.03);
+        teamResultFanChange += Math.round(fansBefore * 0.06);
         nationalPressChange += 10;
       }
     } else if (result === "LOSS") {
-      teamResultFanChange = -Math.round(Math.max(125, fansBefore * (marqueeGame ? 0.003 : 0.006)));
+      teamResultFanChange = -Math.round(Math.max(300, fansBefore * (marqueeGame ? 0.004 : 0.0125)));
       localPressChange += -2;
       nationalPressChange += marqueeGame ? -2 : rankedOpponent ? -1 : 0;
     }
@@ -3986,7 +4096,10 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
     // Character decides how hard the base swings on a result. A diehard support
     // barely moves either way; a front-running one empties out and floods back.
     const elasticResultChange = Math.round(teamResultFanChange * (program.fanElasticity ?? 1));
-    const fanChange = elasticResultChange + brandImpact.schoolFanLift + advertisingFans + goodwillFanLoss;
+    // Individual stars can amplify winning, but a roster full of box-score
+    // events cannot turn a losing season into automatic fan growth.
+    const brandFanLift = Math.round(brandImpact.schoolFanLift * (result === "WIN" ? 0.2 : result === "LOSS" ? 0.02 : 0.05));
+    const fanChange = elasticResultChange + brandFanLift + advertisingFans + goodwillFanLoss;
     program.fanBase = Math.max(5_000, program.fanBase + fanChange);
     program.fanSupport = clamp(
       Math.round(program.fanSupport + fanChange / Math.max(1, fansBefore) * 35 + goodwill),
@@ -4019,7 +4132,7 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
       });
     }
     const revenue = program.weeklyRevenue + ticketRevenue + concessionRevenue + sponsorPayment.total;
-    const staffPayroll = Object.values(state.staff).filter((staff) => staff.programId === program.id).reduce((sum, staff) => sum + staff.salary / 52, 0);
+    const staffPayroll = staffPayrollByProgram.get(program.id) ?? 0;
     // NIL commitments charge every week from the moment a recruit commits.
     // They ride the finance line rather than emitting their own weekly event —
     // the inbox lesson about the simulation talking to itself.
@@ -4054,7 +4167,7 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
       fansAfter: program.fanBase,
       fanChange,
       teamResultFanChange: elasticResultChange,
-      playerFanLift: brandImpact.schoolFanLift,
+      playerFanLift: brandFanLift,
       featuredPlayerId: brandImpact.featuredPlayerId,
       featuredPlayerRating: brandImpact.featuredPlayerRating,
       attendance,
@@ -4126,8 +4239,8 @@ function playerAwardEvidence(player: Readonly<Player>, lines: readonly PlayerGam
   ];
 }
 
-function playerAwardCandidate(state: Readonly<GameState>, player: Readonly<Player>): AwardCandidate | null {
-  const lines = state.playerGameStats.filter((line) =>
+function playerAwardCandidate(state: Readonly<GameState>, player: Readonly<Player>, indexedLines?: readonly PlayerGameStatLine[]): AwardCandidate | null {
+  const lines = indexedLines ?? state.playerGameStats.filter((line) =>
     line.season === state.season && line.week <= 14 && line.playerId === player.id
   );
   const minimumGames = Math.min(6, Math.max(1, state.week - 1));
@@ -4180,6 +4293,15 @@ function coachAwardCandidate(state: Readonly<GameState>, coach: Readonly<StaffMe
 }
 
 export function seasonAwardRace(state: Readonly<GameState>, awardType: SeasonAwardType): AwardCandidate[] {
+  const linesByPlayer = new Map<string, PlayerGameStatLine[]>();
+  if (awardType !== "COACH_OF_THE_YEAR") {
+    for (const line of state.playerGameStats) {
+      if (line.season !== state.season || line.week > 14) continue;
+      const lines = linesByPlayer.get(line.playerId) ?? [];
+      lines.push(line);
+      linesByPlayer.set(line.playerId, lines);
+    }
+  }
   const candidates = awardType === "COACH_OF_THE_YEAR"
     ? Object.values(state.staff).map((coach) => coachAwardCandidate(state, coach)).filter((candidate): candidate is AwardCandidate => candidate !== null)
     : Object.values(state.players)
@@ -4192,7 +4314,7 @@ export function seasonAwardRace(state: Readonly<GameState>, awardType: SeasonAwa
         }
         return OFFENSIVE_POSITIONS.has(player.position) || DEFENSIVE_POSITIONS.has(player.position);
       })
-      .map((player) => playerAwardCandidate(state, player))
+      .map((player) => playerAwardCandidate(state, player, linesByPlayer.get(player.id) ?? []))
       .filter((candidate): candidate is AwardCandidate => candidate !== null);
   return candidates.sort((left, right) => right.score - left.score || left.programId.localeCompare(right.programId));
 }
@@ -4779,6 +4901,51 @@ function portalBidScore(
  * safe to enroll a class against a known scholarship count.
  */
 function completeOffseason(state: GameState, events: GameEvent[]): void {
+  // Resolved prospect records from earlier classes are no longer gameplay
+  // state—the enrolled player carries forward independently. Pruning them here
+  // keeps larger, position-safe annual cohorts from growing saves forever.
+  for (const [prospectId, prospect] of Object.entries(state.prospects)) {
+    if (prospect.status === "ENROLLED" || prospect.status === "WITHDRAWN") delete state.prospects[prospectId];
+  }
+  const positions = Object.keys(ROSTER_COMPOSITION) as Position[];
+  const scholarshipCounts = new Map<string, number>();
+  const positionCounts = new Map<string, Record<Position, number>>();
+  const availableByPosition = Object.fromEntries(positions.map((position) => [position, [] as Prospect[]])) as Record<Position, Prospect[]>;
+  for (const programId of Object.keys(state.programs)) {
+    scholarshipCounts.set(programId, 0);
+    positionCounts.set(programId, Object.fromEntries(positions.map((position) => [position, 0])) as Record<Position, number>);
+  }
+  for (const player of Object.values(state.players)) {
+    if (player.eligibility.rosterStatus !== "SCHOLARSHIP" || !player.programId) continue;
+    scholarshipCounts.set(player.programId, (scholarshipCounts.get(player.programId) ?? 0) + 1);
+    const rooms = positionCounts.get(player.programId);
+    if (rooms) rooms[player.position] += 1;
+  }
+  for (const prospect of Object.values(state.prospects)) {
+    if (prospect.status === "AVAILABLE") availableByPosition[prospect.position].push(prospect);
+  }
+
+  const enroll = (prospect: Prospect, programId: string, lateFill = false): void => {
+    const playerId = `player:${prospect.id}`;
+    state.players[playerId] = prospectToPlayer(prospect, playerId, programId, state.season + 1);
+    prospect.signedProgramId = programId;
+    prospect.status = "ENROLLED";
+    scholarshipCounts.set(programId, (scholarshipCounts.get(programId) ?? 0) + 1);
+    const rooms = positionCounts.get(programId);
+    if (rooms) rooms[prospect.position] += 1;
+    // The NIL deal followed a recruited player to campus. Late-fill players
+    // arrive after the market closes and never inherit an unaccepted offer.
+    if (!lateFill) {
+      const nil = state.nil?.[programId];
+      const committedNil = nil?.commitmentsByPlayer[prospect.id];
+      if (nil && committedNil !== undefined) {
+        delete nil.commitmentsByPlayer[prospect.id];
+        nil.commitmentsByPlayer[playerId] = committedNil;
+      }
+    }
+    events.push({ type: "PROSPECT_ENROLLED", season: state.season + 1, prospectId: prospect.id, playerId, programId, lateFill });
+  };
+
   for (const program of Object.values(state.programs)) {
     const commitments = Object.values(state.prospects)
       // Everyone still COMMITTED should already be SIGNED by the signing
@@ -4791,9 +4958,7 @@ function completeOffseason(state: GameState, events: GameEvent[]): void {
         return rightPoints - leftPoints || right.potential - left.potential || left.id.localeCompare(right.id);
       });
     for (const prospect of commitments) {
-      const scholarships = Object.values(state.players).filter((player) =>
-        player.programId === program.id && player.eligibility.rosterStatus === "SCHOLARSHIP"
-      ).length;
+      const scholarships = scholarshipCounts.get(program.id) ?? 0;
       if (scholarships >= program.scholarshipLimit) {
         // The class filled before he got here. Resolve him rather than leave
         // him stuck in COMMITTED forever — a real, if unhappy, outcome.
@@ -4801,17 +4966,86 @@ function completeOffseason(state: GameState, events: GameEvent[]): void {
         events.push({ type: "PROSPECT_COMMITMENT_VOIDED", season: state.season, prospectId: prospect.id, programId: program.id, reason: "CLASS_FULL" });
         continue;
       }
-      const playerId = `player:${prospect.id}`;
-      state.players[playerId] = prospectToPlayer(prospect, playerId, program.id, state.season + 1);
-      prospect.status = "ENROLLED";
-      // The NIL deal followed him to campus: re-key from prospect to player.
-      const nil = state.nil?.[program.id];
-      const committedNil = nil?.commitmentsByPlayer[prospect.id];
-      if (nil && committedNil !== undefined) {
-        delete nil.commitmentsByPlayer[prospect.id];
-        nil.commitmentsByPlayer[playerId] = committedNil;
+      enroll(prospect, program.id);
+    }
+
+    // A recruiting miss should hurt quality and depth, not make a dynasty
+    // mechanically unplayable. After signing day, assign the best interested
+    // unsigned players at each dangerously thin position until the minimum
+    // viable room is restored. These are deliberately late fills: no NIL deal,
+    // no recruiting-point refund, and no guarantee of reaching the ideal 85.
+    const rooms = positionCounts.get(program.id)!;
+    for (const position of positions) {
+      while (rooms[position] < ROSTER_MINIMUMS[position]) {
+        if ((scholarshipCounts.get(program.id) ?? 0) >= program.scholarshipLimit) {
+          const conversion = Object.values(state.players)
+            .filter((player) => player.programId === program.id
+              && player.eligibility.rosterStatus === "SCHOLARSHIP"
+              && rooms[player.position] > ROSTER_MINIMUMS[player.position])
+            .sort((left, right) => left.overall - right.overall || left.id.localeCompare(right.id))[0];
+          if (!conversion) break;
+          const from = conversion.position;
+          rooms[from] -= 1;
+          rooms[position] += 1;
+          conversion.position = position;
+          conversion.ratings = createPlayerRatings(
+            conversion.overall,
+            position,
+            new AddressableRng(state.identity.rootSeed).fork("roster-position-conversion", String(state.season)),
+            `${program.id}:${conversion.id}:${position}`
+          );
+          events.push({ type: "ROSTER_POSITION_CONVERTED", season: state.season + 1, playerId: conversion.id, programId: program.id, from, to: position });
+          continue;
+        }
+        const pool = availableByPosition[position];
+        let candidateIndex = -1;
+        for (let index = 0; index < pool.length; index += 1) {
+          const prospect = pool[index]!;
+          if (prospect.status !== "AVAILABLE") continue;
+          if (candidateIndex < 0) { candidateIndex = index; continue; }
+          const incumbent = pool[candidateIndex]!;
+          const prospectFit = prospect.interestByProgram[program.id] ?? 0;
+          const incumbentFit = incumbent.interestByProgram[program.id] ?? 0;
+          if (prospectFit > incumbentFit
+            || (prospectFit === incumbentFit && prospect.potential > incumbent.potential)
+            || (prospectFit === incumbentFit && prospect.potential === incumbent.potential && prospect.overall > incumbent.overall)
+            || (prospectFit === incumbentFit && prospect.potential === incumbent.potential && prospect.overall === incumbent.overall && prospect.id < incumbent.id)) {
+            candidateIndex = index;
+          }
+        }
+        let candidate = candidateIndex >= 0 ? pool.splice(candidateIndex, 1)[0] : undefined;
+        if (!candidate) {
+          // If the national class runs out at one scarce position, convert an
+          // unsigned athlete instead of allowing an unplayable room. The new
+          // ratings are regenerated for the new position from the save seed,
+          // so an emergency DL is not secretly carrying kicker attributes.
+          const alternatives = positions.flatMap((sourcePosition) =>
+            availableByPosition[sourcePosition]
+              .map((prospect, index) => ({ prospect, index, sourcePosition }))
+              .filter(({ prospect }) => prospect.status === "AVAILABLE")
+          ).sort((left, right) => {
+            const leftFit = left.prospect.interestByProgram[program.id] ?? 0;
+            const rightFit = right.prospect.interestByProgram[program.id] ?? 0;
+            return rightFit - leftFit || right.prospect.potential - left.prospect.potential
+              || right.prospect.overall - left.prospect.overall || left.prospect.id.localeCompare(right.prospect.id);
+          });
+          const alternative = alternatives[0];
+          if (alternative) {
+            candidate = availableByPosition[alternative.sourcePosition].splice(alternative.index, 1)[0];
+            if (candidate) {
+              candidate.position = position;
+              candidate.ratings = createPlayerRatings(
+                candidate.overall,
+                position,
+                new AddressableRng(state.identity.rootSeed).fork("late-position-conversion", String(state.season)),
+                `${program.id}:${candidate.id}:${position}`
+              );
+            }
+          }
+        }
+        if (!candidate) break;
+        enroll(candidate, program.id, true);
       }
-      events.push({ type: "PROSPECT_ENROLLED", season: state.season + 1, prospectId: prospect.id, playerId, programId: program.id });
     }
     repairDepthChart(state, program.id);
   }
@@ -4828,15 +5062,16 @@ function completeOffseason(state: GameState, events: GameEvent[]): void {
       if (prospect && prospect.status !== "ENROLLED") delete nil.commitmentsByPlayer[id];
     }
   }
-  state.season += 1; state.week = 1;
+  state.season += 1; state.week = 0;
   for (const program of Object.values(state.programs)) { program.wins = 0; program.losses = 0; }
   const programCount = Object.keys(state.programs).length;
   const nameRng = new AddressableRng(state.identity.rootSeed).fork("league-generation", "fictional-names");
   const firstNameOffset = Math.floor(nameRng.between("first-offset", 0, 96));
   const lastNameOffset = Math.floor(nameRng.between("last-offset", 0, 160));
   const initialPeople = programCount * (STARTING_ROSTER_SIZE + STAFF_ROLES.length + 30);
-  const seasonOffset = Math.max(0, state.season - 2028) * programCount * 15;
-  generateProspects(state, new AddressableRng(state.identity.rootSeed).fork("recruiting-cohort", String(state.season)), programCount * 15, String(state.season), initialPeople + seasonOffset, firstNameOffset, lastNameOffset);
+  const annualCohortSize = programCount * 35;
+  const seasonOffset = Math.max(0, state.season - 2028) * annualCohortSize;
+  generateProspects(state, new AddressableRng(state.identity.rootSeed).fork("recruiting-cohort", String(state.season)), annualCohortSize, String(state.season), initialPeople + seasonOffset, firstNameOffset, lastNameOffset);
   initializeRecruitingBoards(state, new AddressableRng(state.identity.rootSeed).fork("recruiting-boards", String(state.season)));
   for (const program of Object.values(state.programs)) {
     const recruiting = state.recruiting[program.id]!;
@@ -4845,12 +5080,12 @@ function completeOffseason(state: GameState, events: GameEvent[]): void {
   }
   buildSeasonSchedule(state);
   refreshSponsorshipOffers(state);
-  state.phase = "REGULAR_SEASON";
+  // The offseason has settled the class, but the new year does not silently
+  // start. Give every program the same explicit preseason checkpoint the first
+  // season has: schemes/staff, roster review, depth chart, redshirts,
+  // sponsorship and marquee scheduling all happen before BEGIN_SEASON.
+  state.phase = "ROSTER_REVIEW";
   state.offseasonStep = null;
-  // Deferred out of `advanceWeek` for the whole offseason: preparation is for
-  // the week about to be played, and until now there was no schedule to
-  // prepare against.
-  refreshPreparation(state, events);
 }
 
 /** Fixed order. The offseason ends when the last one resolves. */
@@ -4863,7 +5098,7 @@ export const OFFSEASON_STEPS = ["PORTAL", "SIGNING_DAY", "COACHING", "TRAINING_C
  * that are valid differ step by step.
  */
 export function advanceOffseasonStep(input: Readonly<GameState>, commands: readonly GameCommand[] = []): SimulationResult {
-  const state = clone<GameState>(input);
+  const state = cloneGameState(input);
   if (state.phase !== "OFFSEASON" || !state.offseasonStep) {
     throw new Error("There is no offseason step open.");
   }

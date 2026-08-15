@@ -232,6 +232,13 @@ export function App(): ReactElement {
         playerProgramId: response.type === "READY" ? response.playerProgramId : previous!.playerProgramId,
         events: response.events
       }));
+      // Completing training camp returns to the same preseason setup flow used
+      // at takeover. Without resetting this flag, later seasons skipped scheme
+      // and staff setup even though the engine correctly entered roster review.
+      if (response.state.phase === "ROSTER_REVIEW") {
+        setSetupDone(false);
+        setScreen("ROSTER");
+      }
       if (response.type === "COMPLETE") {
         const playedGame = response.events.some((gameEvent) =>
           gameEvent.type === "WEEKLY_RECAP"
@@ -2030,7 +2037,8 @@ function eventText(event: GameEvent, game: GameView): string {
   if (event.type === "PROSPECT_FLIPPED") return `${game.state.prospects[event.prospectId]?.name ?? "A recruit"} flipped from ${game.state.programs[event.fromProgramId]?.name ?? "his old commitment"} to ${game.state.programs[event.toProgramId]?.name ?? "a new one"}.`;
   if (event.type === "RECRUITING_VISIT_SCHEDULED") return `Home visit with ${game.state.prospects[event.prospectId]?.name ?? "a prospect"} worth +${event.bonus.toFixed(1)} · ${event.visitsRemainingThisSeason} visit${event.visitsRemainingThisSeason === 1 ? "" : "s"} left this season.`;
   if (event.type === "PROSPECT_COMMITTED") return `${game.state.prospects[event.prospectId]?.name ?? "Prospect"} committed to ${game.state.programs[event.programId]?.name}; he will enroll next season.`;
-  if (event.type === "PROSPECT_ENROLLED") return `${game.state.prospects[event.prospectId]?.name ?? "Freshman"} joined ${game.state.programs[event.programId]?.name}.`;
+  if (event.type === "PROSPECT_ENROLLED") return `${game.state.prospects[event.prospectId]?.name ?? "Freshman"} ${event.lateFill ? "accepted a late scholarship to stabilize the roster at" : "joined"} ${game.state.programs[event.programId]?.name}.`;
+  if (event.type === "ROSTER_POSITION_CONVERTED") return `${game.state.players[event.playerId]?.name ?? "An athlete"} moved from ${event.from} to ${event.to} to stabilize ${game.state.programs[event.programId]?.name}'s roster.`;
   if (event.type === "PROSPECT_COMMITMENT_VOIDED") return `${game.state.prospects[event.prospectId]?.name ?? "A committed recruit"}'s class filled before he could enroll; the commitment is void.`;
   if (event.type === "RECRUITING_POINTS_ADDED") return `Scouting generated ${event.pointsAdded} points · ${event.pointsAvailable} available for next week.`;
   if (event.type === "COMMAND_REJECTED") return event.reason;

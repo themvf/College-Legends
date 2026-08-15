@@ -1164,7 +1164,8 @@ export type GameEvent =
       toProgramId: ProgramId;
       score: number;
     }
-  | { type: "PROSPECT_ENROLLED"; season: Season; prospectId: ProspectId; playerId: PlayerId; programId: ProgramId }
+  | { type: "PROSPECT_ENROLLED"; season: Season; prospectId: ProspectId; playerId: PlayerId; programId: ProgramId; lateFill?: boolean }
+  | { type: "ROSTER_POSITION_CONVERTED"; season: Season; playerId: PlayerId; programId: ProgramId; from: Position; to: Position }
   /**
    * A verbal commitment that never became a roster spot because the class
    * filled before he got there. He is not signed anywhere else — the

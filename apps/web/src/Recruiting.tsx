@@ -56,6 +56,9 @@ export function Recruiting({ game, locked, pending, onQueue }: {
     ? selectedProspectId
     : visible[0]?.prospect.id;
   const selected = visible.find((item) => item.prospect.id === activeProspectId);
+  const bulkOfferCandidates = visible
+    .filter((item) => item.prospect.status === "AVAILABLE" && !item.offered)
+    .slice(0, Math.max(0, ledger.projectedOpenings - ledger.activeScholarshipOffers));
 
   useEffect(() => {
     if (activeProspectId !== selectedProspectId) setSelectedProspectId(activeProspectId);
@@ -84,7 +87,7 @@ export function Recruiting({ game, locked, pending, onQueue }: {
   };
 
   return <section className="recruiting-layout war-room" aria-labelledby="war-room-title">
-    <RecruitingHud game={game} ledger={ledger} boardCount={board.length} />
+    <RecruitingHud game={game} ledger={ledger} boardCount={board.length} rooms={rooms} />
 
     {!locked && <ScoutingMarket
       pointsAvailable={ledger.pointsAvailable}
@@ -100,7 +103,9 @@ export function Recruiting({ game, locked, pending, onQueue }: {
           <p className="muted">Your scouting department begins work when you accept the roster and start the season.</p>
         </article>
       : <>
-        <RecruitingBoardControls filters={filters} onChange={setFilters} count={visible.length} total={board.length} />
+        <RecruitingBoardControls filters={filters} onChange={setFilters} count={visible.length} total={board.length}
+          bulkOfferCount={bulkOfferCandidates.length}
+          onBulkOffer={() => bulkOfferCandidates.forEach((item) => onQueue({ type: "OFFER_PROSPECT", programId, prospectId: item.prospect.id, extend: true }))} />
         <div className="war-room-workspace">
           <section className="war-room-board" aria-labelledby="prospect-board-title">
             <div className="war-room-section-head">
@@ -135,12 +140,14 @@ export function Recruiting({ game, locked, pending, onQueue }: {
   </section>;
 }
 
-function RecruitingHud({ game, ledger, boardCount }: {
+function RecruitingHud({ game, ledger, boardCount, rooms }: {
   game: RecruitingGameView;
   ledger: RecruitingLedger;
   boardCount: number;
+  rooms: Record<Position, PositionRoom>;
 }): ReactElement {
   const program = game.state.programs[game.playerProgramId]!;
+  const thinRooms = positions.filter((position) => rooms[position].plan === "THIN");
   return <article className="panel war-room-hud">
     <div className="war-room-brand">
       <p className="eyebrow">{program.abbreviation} recruiting command</p>
@@ -155,6 +162,7 @@ function RecruitingHud({ game, ledger, boardCount }: {
       <LedgerItem label="NIL capacity / week" value={formatMoney(ledger.nilCapacity)} note={`${formatMoney(ledger.nilFree)} free`} />
       <LedgerItem label="NIL committed / week" value={formatMoney(ledger.nilCommitted)} note={`${formatMoney(ledger.nilReserved)} reserved`} />
     </div>
+    {thinRooms.length > 0 && <p className="roster-warning" role="status"><strong>Roster warning:</strong> {thinRooms.join(", ")} project below the room plan. Recruit those positions first; late scholarships only restore minimum playable depth.</p>}
   </article>;
 }
 
@@ -192,11 +200,13 @@ function ScoutingMarket({ pointsAvailable, position, onPosition, onSearch }: {
   </article>;
 }
 
-function RecruitingBoardControls({ filters, onChange, count, total }: {
+function RecruitingBoardControls({ filters, onChange, count, total, bulkOfferCount, onBulkOffer }: {
   filters: RecruitingFilters;
   onChange: (filters: RecruitingFilters) => void;
   count: number;
   total: number;
+  bulkOfferCount: number;
+  onBulkOffer: () => void;
 }): ReactElement {
   const update = <Key extends keyof RecruitingFilters>(key: Key, value: RecruitingFilters[Key]): void => onChange({ ...filters, [key]: value });
   return <article className="panel board-controls" aria-label="Recruiting board filters">
@@ -205,6 +215,7 @@ function RecruitingBoardControls({ filters, onChange, count, total }: {
     <label>Status<select value={filters.status} onChange={(event) => update("status", event.target.value as RecruitingFilters["status"])}><option value="ALL">All statuses</option><option value="AVAILABLE">Available</option><option value="MINE">My commitments</option><option value="FLIP">Flip targets</option></select></label>
     <label>Sort<select value={filters.sort} onChange={(event) => update("sort", event.target.value as RecruitingFilters["sort"])}><option value="STATUS">Priority status</option><option value="PURSUIT">Pursuit points</option><option value="FIT">Program fit</option><option value="OVERALL">Scouted overall</option><option value="NEED">Roster plan</option><option value="NAME">Name</option></select></label>
     <label className="offered-filter"><input type="checkbox" checked={filters.offeredOnly} onChange={(event) => update("offeredOnly", event.target.checked)} /> Scholarship offers only</label>
+    <button className="bulk-offer" disabled={bulkOfferCount === 0} onClick={onBulkOffer}>Offer visible targets ({bulkOfferCount})</button>
     <div className="filter-count"><strong>{count}/{total}</strong><span>targets shown</span>{(count !== total || filters.query) && <button onClick={() => onChange({ query: "", position: "ALL", status: "ALL", offeredOnly: false, sort: "STATUS" })}>Clear filters</button>}</div>
   </article>;
 }

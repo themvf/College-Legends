@@ -55,4 +55,32 @@ describe("Recruiting War Room", () => {
       extend: true
     });
   });
+
+  it("moves the detail panel to a visible prospect when filters hide the selection", async () => {
+    const user = userEvent.setup();
+    const game = fixture("war-room-filter-selection");
+    render(<Recruiting game={game} locked={false} pending={[]} onQueue={() => undefined} />);
+    const list = await screen.findByRole("list", { name: "Recruiting targets" });
+    const first = within(list).getAllByRole("button")[0]!;
+    await user.click(first);
+    const otherPosition = Object.values(game.state.prospects).find((prospect) => prospect.position !== first.textContent?.match(/\b(QB|RB|WR|TE|OL|DL|LB|DB|K|P)\b/)?.[1])!.position;
+    await user.selectOptions(screen.getByRole("combobox", { name: "Position" }), otherPosition);
+    const filteredFirst = within(screen.getByRole("list", { name: "Recruiting targets" })).getAllByRole("button")[0]!;
+    expect(filteredFirst).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("heading", { level: 2, name: filteredFirst.querySelector("strong")!.textContent! })).toBeInTheDocument();
+  });
+
+  it("can offer every visible eligible target without exceeding projected openings", async () => {
+    const user = userEvent.setup();
+    const game = fixture("war-room-bulk-offer");
+    const onQueue = vi.fn();
+    render(<Recruiting game={game} locked={false} pending={[]} onQueue={onQueue} />);
+    const button = await screen.findByRole("button", { name: /Offer visible targets/ });
+    const count = Number(button.textContent?.match(/\((\d+)\)/)?.[1]);
+    expect(count).toBeGreaterThan(0);
+    await user.click(button);
+    expect(onQueue).toHaveBeenCalledTimes(count);
+    expect(new Set(onQueue.mock.calls.map(([command]) => command.prospectId)).size).toBe(count);
+    expect(onQueue.mock.calls.every(([command]) => command.type === "OFFER_PROSPECT" && command.extend)).toBe(true);
+  });
 });

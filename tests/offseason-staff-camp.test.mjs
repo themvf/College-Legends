@@ -118,7 +118,8 @@ test("camp on the playbook buys execution and camp on conditioning buys health",
     state = advanceOffseasonStep(state, focus
       ? [{ type: "SET_TRAINING_CAMP_FOCUS", programId, focus }]
       : []).state;
-    assert.equal(state.phase, "REGULAR_SEASON");
+    assert.equal(state.phase, "ROSTER_REVIEW");
+    state = beginSeason(state);
     const player = Object.values(state.players).find((candidate) =>
       candidate.programId === programId && candidate.eligibility.rosterStatus === "SCHOLARSHIP");
     return {
@@ -152,6 +153,7 @@ test("camp is a head start, not a season-long buff", () => {
   state = advanceOffseasonStep(state, [
     { type: "SET_TRAINING_CAMP_FOCUS", programId, focus: "INSTALL" }
   ]).state;
+  state = beginSeason(state);
   const opening = planExecution(state, programId, "OFFENSE").expected;
   for (let week = 0; week < TRAINING_CAMP_WEEKS; week += 1) state = advanceWeek(state).state;
   assert.equal(state.trainingCamp[programId].weeksRemaining, 0, "camp runs out");
