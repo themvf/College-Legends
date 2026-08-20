@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "program": "College Legends V2",
-  "updatedAt": "2026-08-15",
+  "updatedAt": "2026-08-20",
   "managerSkill": "$college-legends-v2-manager",
   "specification": "docs/V2_FIXES.md",
   "statusPolicy": {
@@ -95,6 +95,24 @@
               "reference": "Independent ARCH-001 P0 expansion verification",
               "result": "The P0 expansion and standing-market closure pass. ARCH-001 remains in progress because generic non-weekly AI selection is not yet bounded by a knowledge-complete recorded view and the canonical lifecycle is not yet adopted by every live decision surface; the raw simulator CLI also requires an explicit scope decision or migration.",
               "date": "2026-08-15"
+            },
+            {
+              "type": "code",
+              "reference": "apps/simulator-cli/src/orchestration.ts; apps/simulator-cli/src/index.ts",
+              "result": "The raw simulator CLI now advances roster review, weekly play, and every offseason boundary through the same attributed decision wrappers as the production worker while preserving its legacy report-event contract. Weekly and offseason AI actors record truthful phase policy identities.",
+              "date": "2026-08-20"
+            },
+            {
+              "type": "test",
+              "reference": "pnpm test; pnpm build; node --test tests/simulator-cli-lifecycle.test.mjs; node --test tests/simulator-cli-lifecycle.test.mjs tests/decision-contracts.test.mjs tests/ai-knowledge-boundary.test.mjs; git diff --check",
+              "result": "Passed: 195/195 Node tests, 13/13 web tests, 3/3 CLI lifecycle tests, and 35/35 combined CLI/decision/AI tests. The focused suite proves legacy state and domain-event parity, deterministic replay, truthful policy attribution, terminal standing outcomes, and exact immediate and outcome cause references across roster review, a regular week, and all four offseason stages.",
+              "date": "2026-08-20"
+            },
+            {
+              "type": "review",
+              "reference": "Independent ARCH-001 simulator CLI verification and product review",
+              "result": "The corrected CLI lifecycle migration is approved with no simulation-honesty or attribution defect remaining. ARCH-001 remains in progress because generic non-weekly AI knowledge recording is not yet complete and the canonical lifecycle is not yet adopted by every live decision surface.",
+              "date": "2026-08-20"
             }
           ],
           "waiver": null
@@ -444,6 +462,11 @@
     }
   ],
   "changeLog": [
+    {
+      "date": "2026-08-20",
+      "change": "Verified the ARCH-001 simulator CLI migration onto attributed roster-review, weekly, and offseason boundaries with legacy outcome parity, deterministic replay, truthful policy attribution, and exact causal links. Kept ARCH-001 in progress for generic non-weekly AI knowledge completeness and system-wide lifecycle adoption.",
+      "actor": "$college-legends-v2-manager"
+    },
     {
       "date": "2026-08-15",
       "change": "Verified the ARCH-001 attributed phase-batch, exact causal event, autosave ordering, controlled delegation, full-season retention, and standing-market outcome slices. Kept ARCH-001 in progress for system-wide AI knowledge boundaries and lifecycle adoption.",

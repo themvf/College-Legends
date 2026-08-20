@@ -2,8 +2,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { GameEvent } from "@college-legends/model";
 import { summarize } from "@college-legends/analytics";
-import { planOffseasonCommands, planWeeklyCommands } from "@college-legends/ai";
-import { advanceOffseasonStep, advanceWeek, beginSeason, createFictionalLeague } from "@college-legends/simulation";
+import { createFictionalLeague } from "@college-legends/simulation";
+import { advanceHeadlessCareerStep } from "./orchestration.js";
 
 const args = new Map<string, string>();
 for (let index = 0; index < process.argv.length; index += 1) {
@@ -13,16 +13,11 @@ for (let index = 0; index < process.argv.length; index += 1) {
 const seasons = Number(args.get("seasons") ?? 50);
 const seed = String(args.get("seed") ?? "college-legends-baseline");
 const output = resolve(String(args.get("output") ?? "reports/latest"));
-let state = beginSeason(createFictionalLeague(seed));
+let state = advanceHeadlessCareerStep(createFictionalLeague(seed)).state;
 const events: GameEvent[] = [];
 const initialSeason = state.season;
 while (state.season < initialSeason + seasons) {
-  // A career alternates weeks with offseason steps, and rivals plan for both.
-  const result = state.phase === "ROSTER_REVIEW"
-    ? { state: beginSeason(state), events: [] as GameEvent[] }
-    : state.phase === "OFFSEASON"
-      ? advanceOffseasonStep(state, planOffseasonCommands(state))
-      : advanceWeek(state, planWeeklyCommands(state));
+  const result = advanceHeadlessCareerStep(state);
   state = result.state;
   events.push(...result.events);
 }
