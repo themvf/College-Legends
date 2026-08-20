@@ -6,7 +6,10 @@ import {
   planOffseasonCommands,
   planWeeklyCommands,
   selectCoachingChange,
+  selectTrainingCampFocus,
   selectWeeklyFocusAndScouting,
+  trainingCampPlanningKnowledgeSnapshot,
+  trainingCampPlanningKnowledgeView,
   weeklyPlanningKnowledgeView
 } from "../packages/ai/dist/index.js";
 import { advanceOffseasonStep, advanceWeek, beginSeason, createFictionalLeague } from "../packages/simulation/dist/index.js";
@@ -20,6 +23,14 @@ const coachingWindow = (seed) => {
   let state = activeLeague(seed);
   while (state.phase !== "OFFSEASON") state = advanceWeek(state, planWeeklyCommands(state)).state;
   while (state.offseasonStep !== "COACHING") {
+    state = advanceOffseasonStep(state, planOffseasonCommands(state)).state;
+  }
+  return state;
+};
+
+const trainingCampWindow = (seed) => {
+  let state = coachingWindow(seed);
+  while (state.offseasonStep !== "TRAINING_CAMP") {
     state = advanceOffseasonStep(state, planOffseasonCommands(state)).state;
   }
   return state;
@@ -205,4 +216,66 @@ test("hidden league data cannot affect coaching selection, while declared inputs
     for (const candidate of post.candidates) candidate.rating = post.incumbentRating;
   }
   assert.deepEqual(selectCoachingChange(noUpgrade), []);
+});
+
+test("training-camp AI preserves the established deterministic focuses", () => {
+  const state = trainingCampWindow("training-camp-view-0");
+  assert.deepEqual(planOffseasonCommands(state), [
+    { type: "SET_TRAINING_CAMP_FOCUS", programId: "program-1", focus: "CONDITIONING" },
+    { type: "SET_TRAINING_CAMP_FOCUS", programId: "program-2", focus: "CONDITIONING" },
+    { type: "SET_TRAINING_CAMP_FOCUS", programId: "program-3", focus: "CONDITIONING" },
+    { type: "SET_TRAINING_CAMP_FOCUS", programId: "program-4", focus: "CONDITIONING" }
+  ]);
+  for (const programId of Object.keys(state.programs)) {
+    const view = trainingCampPlanningKnowledgeView(state, programId);
+    assert.deepEqual(selectTrainingCampFocus(view), planOffseasonCommands(state).find((command) => command.programId === programId));
+    assert.deepEqual(selectTrainingCampFocus(view), selectTrainingCampFocus(view));
+  }
+});
+
+test("the training-camp selector receives only its exact frozen program view", () => {
+  const state = trainingCampWindow("training-camp-view-0");
+  const view = trainingCampPlanningKnowledgeView(state, "program-1");
+  assert.deepEqual(Object.keys(view).sort(), [
+    "kind", "programId", "scholarshipLimit", "scholarshipRosterSize"
+  ]);
+  assert.equal(view.kind, "TRAINING_CAMP_PLANNING_KNOWLEDGE_V1");
+  assert.equal(Object.isFrozen(view), true);
+  assert.ok(!JSON.stringify(view).match(/rating|potential|injury|player|rival/i));
+  assert.throws(() => { view.scholarshipRosterSize = 85; }, TypeError);
+
+  const snapshot = trainingCampPlanningKnowledgeSnapshot(state, "program-1");
+  assert.equal(snapshot.facts.length, 1);
+  assert.equal(snapshot.facts[0].key, "trainingCampPlanning.view.v1");
+  assert.deepEqual(JSON.parse(snapshot.facts[0].value), view);
+});
+
+test("hidden player data cannot affect camp selection, while the declared 85 percent threshold can", () => {
+  const state = trainingCampWindow("training-camp-view-0");
+  const expected = trainingCampPlanningKnowledgeView(state, "program-1");
+  const changed = structuredClone(state);
+  for (const player of Object.values(changed.players)) {
+    player.overall = player.overall > 65 ? 32 : 99;
+    player.potential = player.potential > 80 ? 40 : 99;
+    player.injury = player.injury ? null : { severity: "MAJOR", bodyPart: "Knee" };
+    player.injuryWeeksRemaining = player.injury ? 8 : 0;
+  }
+  for (const program of Object.values(changed.programs)) {
+    if (program.id !== "program-1") program.scholarshipLimit += 50;
+  }
+  assert.deepEqual(trainingCampPlanningKnowledgeView(changed, "program-1"), expected);
+  assert.deepEqual(selectTrainingCampFocus(trainingCampPlanningKnowledgeView(changed, "program-1")), selectTrainingCampFocus(expected));
+
+  assert.deepEqual(selectTrainingCampFocus({
+    kind: "TRAINING_CAMP_PLANNING_KNOWLEDGE_V1",
+    programId: "program-1",
+    scholarshipRosterSize: 84,
+    scholarshipLimit: 100
+  }), { type: "SET_TRAINING_CAMP_FOCUS", programId: "program-1", focus: "CONDITIONING" });
+  assert.deepEqual(selectTrainingCampFocus({
+    kind: "TRAINING_CAMP_PLANNING_KNOWLEDGE_V1",
+    programId: "program-1",
+    scholarshipRosterSize: 85,
+    scholarshipLimit: 100
+  }), { type: "SET_TRAINING_CAMP_FOCUS", programId: "program-1", focus: "INSTALL" });
 });

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
-import { coachingPlanningKnowledgeView, planOffseasonCommands, planWeeklyCommands } from "@college-legends/ai";
+import { coachingPlanningKnowledgeView, planOffseasonCommands, planWeeklyCommands, trainingCampPlanningKnowledgeView } from "@college-legends/ai";
 import { advanceOffseasonStep, advanceWeek, beginSeason, createFictionalLeague, encodeSave } from "@college-legends/simulation";
 
 const storage = vi.hoisted(() => ({
@@ -256,7 +256,7 @@ describe("simulation worker decision routing", () => {
     expect(secondAudit?.causes.map((cause) => cause.eventType)).toEqual(["SCHEME_SET"]);
   }, 30_000);
 
-  it("records the exact coaching knowledge view for rival offseason decisions", async () => {
+  it("records exact coaching and training-camp knowledge views for rival offseason decisions", async () => {
     let state = beginSeason(createFictionalLeague("coaching-view-0", 4));
     while (state.phase !== "OFFSEASON") state = advanceWeek(state, planWeeklyCommands(state)).state;
     while (state.offseasonStep !== "COACHING") {
@@ -287,5 +287,31 @@ describe("simulation worker decision routing", () => {
     expect(completed.events.some((event) =>
       event.type === "STAFF_REPLACED" && event.decisionCauseId === audit?.causes[0]?.id
     )).toBe(true);
+
+    const campState = completed.state;
+    expect(campState.offseasonStep).toBe("TRAINING_CAMP");
+    dispatch({
+      type: "ADVANCE_OFFSEASON",
+      requestId: "advance-training-camp",
+      playerProgramId,
+      commands: []
+    });
+    const campCompleted = response("advance-training-camp", "COMPLETE");
+    if (campCompleted.type !== "COMPLETE") throw new Error("Expected completed training-camp step.");
+    const campAudits = campCompleted.state.decisionAudits?.filter((candidate) =>
+      candidate.commandType === "SET_TRAINING_CAMP_FOCUS") ?? [];
+    expect(campAudits).toHaveLength(Object.keys(campState.programs).length - 1);
+    for (const campAudit of campAudits) {
+      expect(campAudit.actor.mode).toBe("AI");
+      if (campAudit.actor.mode !== "AI") throw new Error("Expected an AI training-camp decision.");
+      expect(campAudit.actor.policyId).toBe("offseason-plan-v1");
+      const campFact = campAudit.knowledge.facts.find((candidate) => candidate.key === "trainingCampPlanning.view.v1");
+      expect(campFact).toBeDefined();
+      expect(JSON.parse(String(campFact?.value))).toEqual(trainingCampPlanningKnowledgeView(campState, campAudit.programId));
+      expect(campAudit.causes.map((cause) => cause.eventType)).toEqual(["TRAINING_CAMP_SET"]);
+      expect(campCompleted.events.some((event) =>
+        event.type === "TRAINING_CAMP_SET" && event.decisionCauseId === campAudit.causes[0]?.id
+      )).toBe(true);
+    }
   }, 30_000);
 });

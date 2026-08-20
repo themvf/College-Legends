@@ -131,6 +131,24 @@
               "reference": "Independent ARCH-001 coaching knowledge-view verification and product review",
               "result": "The coaching boundary is approved with no remaining simulation-honesty or attribution defect in the slice. ARCH-001 remains in progress because other generic planner knowledge boundaries and system-wide lifecycle adoption are still open.",
               "date": "2026-08-20"
+            },
+            {
+              "type": "code",
+              "reference": "packages/ai/src/index.ts; apps/web/src/simulation.worker.ts; apps/simulator-cli/src/orchestration.ts",
+              "result": "Training-camp AI now selects its focus exclusively from a frozen program-scoped roster-capacity view and records the exact serialized pre-resolution input in worker and CLI audits with truthful offseason policy identity.",
+              "date": "2026-08-20"
+            },
+            {
+              "type": "test",
+              "reference": "pnpm check; pnpm build; node --test tests/ai-knowledge-boundary.test.mjs tests/offseason-ai.test.mjs tests/simulator-cli-lifecycle.test.mjs tests/decision-contracts.test.mjs; pnpm --filter @college-legends/web test; git diff --check",
+              "result": "Passed: typecheck, build, 15 focused AI/CLI tests, 32 offseason-AI/decision-contract tests, and 14 web tests. A 12-window independent sweep found 0 mismatches across 48 program decisions; focused coverage proves the exact 85 percent threshold, hidden-data isolation, exact recorded views, and matching TRAINING_CAMP_SET cause IDs.",
+              "date": "2026-08-20"
+            },
+            {
+              "type": "review",
+              "reference": "Independent ARCH-001 training-camp knowledge-view verification and product review",
+              "result": "The training-camp boundary is approved with no behavior, scope, knowledge-honesty, or attribution defect. ARCH-001 remains in progress for the portal and generic weekly planner boundaries plus system-wide lifecycle adoption.",
+              "date": "2026-08-20"
             }
           ],
           "waiver": null
@@ -480,6 +498,11 @@
     }
   ],
   "changeLog": [
+    {
+      "date": "2026-08-20",
+      "change": "Verified the ARCH-001 training-camp AI boundary with exact legacy threshold parity, a frozen program-scoped view, hidden-data isolation, exact worker and CLI snapshots, truthful offseason policy attribution, and linked causal events. Kept ARCH-001 in progress for portal, generic weekly planners, and system-wide lifecycle adoption.",
+      "actor": "$college-legends-v2-manager"
+    },
     {
       "date": "2026-08-20",
       "change": "Verified the ARCH-001 coaching AI knowledge boundary with deterministic behavior parity, exact recorded pre-resolution views, hidden-data isolation, truthful worker and CLI policy attribution, and exact causal resolution links. Kept ARCH-001 in progress for the remaining generic planners and system-wide lifecycle adoption.",

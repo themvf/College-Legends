@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import type { CareerPath, DecisionActor, GameCommand, GameState, ProgramId } from "@college-legends/model";
 import { CAREER_PATHS } from "@college-legends/content";
-import { coachingPlanningKnowledgeSnapshot, planOffseasonCommands, planWeeklyCommands, selectWeeklyFocusAndScouting, weeklyPlanningKnowledgeSnapshot, weeklyPlanningKnowledgeView } from "@college-legends/ai";
+import { coachingPlanningKnowledgeSnapshot, planOffseasonCommands, planWeeklyCommands, selectWeeklyFocusAndScouting, trainingCampPlanningKnowledgeSnapshot, weeklyPlanningKnowledgeSnapshot, weeklyPlanningKnowledgeView } from "@college-legends/ai";
 import { advanceOffseasonStepWithDecisions, advanceWeekWithDecisions, beginSeasonWithDecisions, commitWeeklyDecision, createDelegatedWeeklyPlanningDecision, createFictionalLeague, createGameDecision, createWeeklyPlanningDecision, decodeSave, encodeSave, prepareWeekWithDecisions, programPreviews, type WeeklyPlanningCommand } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 import { deleteSave, readSave, savedBytes, storageAvailable, writeSave } from "./storage.js";
@@ -214,7 +214,9 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
             sequence,
             command.type === "REPLACE_STAFF"
               ? coachingPlanningKnowledgeSnapshot(activeState!, command.programId)
-              : undefined
+              : command.type === "SET_TRAINING_CAMP_FOCUS"
+                ? trainingCampPlanningKnowledgeSnapshot(activeState!, command.programId)
+                : undefined
           )),
         ...request.commands.filter((command) => command.type !== "CONTINUE_OFFSEASON").map((command, sequence) =>
           createGameDecision(activeState!, command, manualActor(request.playerProgramId), rivals.length + sequence))

@@ -76,6 +76,14 @@ export interface CoachingPlanningKnowledgeView {
   }[];
 }
 
+/** The complete program-scoped input used to choose an offseason camp focus. */
+export interface TrainingCampPlanningKnowledgeView {
+  readonly kind: "TRAINING_CAMP_PLANNING_KNOWLEDGE_V1";
+  readonly programId: string;
+  readonly scholarshipRosterSize: number;
+  readonly scholarshipLimit: number;
+}
+
 /** Build the redacted view at the state boundary; never pass state to selection. */
 export function weeklyPlanningKnowledgeView(
   state: Readonly<GameState>,
@@ -171,6 +179,45 @@ export function coachingPlanningKnowledgeSnapshot(
       key: "coachingPlanning.view.v1",
       value: JSON.stringify(view),
       source: "STAFF_ESTIMATE" as const,
+      entityId: programId,
+      observedSeason: state.season,
+      observedWeek: state.week
+    })])
+  });
+}
+
+/** Build the redacted camp view at the state boundary; selection never receives GameState. */
+export function trainingCampPlanningKnowledgeView(
+  state: Readonly<GameState>,
+  programId: string
+): TrainingCampPlanningKnowledgeView {
+  const program = state.programs[programId];
+  if (!program) throw new Error("A training-camp knowledge view needs an existing program.");
+  const scholarshipRosterSize = Object.values(state.players).filter((player) =>
+    player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP").length;
+  return Object.freeze({
+    kind: "TRAINING_CAMP_PLANNING_KNOWLEDGE_V1" as const,
+    programId,
+    scholarshipRosterSize,
+    scholarshipLimit: program.scholarshipLimit
+  });
+}
+
+/** The exact redacted camp selector input persisted with an attributed AI choice. */
+export function trainingCampPlanningKnowledgeSnapshot(
+  state: Readonly<GameState>,
+  programId: string
+): DecisionKnowledgeSnapshot {
+  const view = trainingCampPlanningKnowledgeView(state, programId);
+  return Object.freeze({
+    programId,
+    season: state.season,
+    week: state.week,
+    phase: state.phase,
+    facts: Object.freeze([Object.freeze({
+      key: "trainingCampPlanning.view.v1",
+      value: JSON.stringify(view),
+      source: "PROGRAM_INTERNAL" as const,
       entityId: programId,
       observedSeason: state.season,
       observedWeek: state.week
@@ -483,7 +530,7 @@ export function planOffseasonCommands(state: Readonly<GameState>, excludedProgra
     if (program.id === excludedProgramId) return [];
     if (step === "PORTAL") return planPortalBids(state, program.id);
     if (step === "COACHING") return selectCoachingChange(coachingPlanningKnowledgeView(state, program.id));
-    if (step === "TRAINING_CAMP") return [planTrainingCamp(state, program.id)];
+    if (step === "TRAINING_CAMP") return [selectTrainingCampFocus(trainingCampPlanningKnowledgeView(state, program.id))];
     return [];
   });
 }
@@ -599,12 +646,10 @@ export function selectCoachingChange(view: Readonly<CoachingPlanningKnowledgeVie
 }
 
 /**
- * Camp follows the roster. A thin, banged-up squad protects itself; a program
- * with depth to spare spends the week on the playbook instead.
+ * Camp follows roster capacity. A thin squad protects itself; a program with
+ * depth to spare spends the week on the playbook instead.
  */
-function planTrainingCamp(state: Readonly<GameState>, programId: string): GameCommand {
-  const roster = Object.values(state.players).filter((player) =>
-    player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP");
-  const thin = roster.length < state.programs[programId]!.scholarshipLimit * 0.85;
-  return { type: "SET_TRAINING_CAMP_FOCUS", programId, focus: thin ? "CONDITIONING" : "INSTALL" };
+export function selectTrainingCampFocus(view: Readonly<TrainingCampPlanningKnowledgeView>): GameCommand {
+  const thin = view.scholarshipRosterSize < view.scholarshipLimit * 0.85;
+  return { type: "SET_TRAINING_CAMP_FOCUS", programId: view.programId, focus: thin ? "CONDITIONING" : "INSTALL" };
 }

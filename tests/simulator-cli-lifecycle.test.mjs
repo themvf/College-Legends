@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { coachingPlanningKnowledgeView, planOffseasonCommands, planWeeklyCommands } from "../packages/ai/dist/index.js";
+import { coachingPlanningKnowledgeView, planOffseasonCommands, planWeeklyCommands, trainingCampPlanningKnowledgeView } from "../packages/ai/dist/index.js";
 import {
   advanceOffseasonStep,
   advanceWeek,
@@ -108,6 +108,16 @@ test("the simulator CLI uses attributed resolution at every offseason boundary",
       assert.ok(fact);
       assert.deepEqual(JSON.parse(fact.value), coachingPlanningKnowledgeView(state, audit.programId));
       assert.deepEqual(audit.causes.map((cause) => cause.eventType), ["STAFF_REPLACED"]);
+    }
+    if (state.offseasonStep === "TRAINING_CAMP") {
+      const campAudits = audits.filter((candidate) => candidate.commandType === "SET_TRAINING_CAMP_FOCUS");
+      assert.equal(campAudits.length, Object.keys(state.programs).length);
+      for (const audit of campAudits) {
+        const fact = audit.knowledge.facts.find((candidate) => candidate.key === "trainingCampPlanning.view.v1");
+        assert.ok(fact);
+        assert.deepEqual(JSON.parse(fact.value), trainingCampPlanningKnowledgeView(state, audit.programId));
+        assert.deepEqual(audit.causes.map((cause) => cause.eventType), ["TRAINING_CAMP_SET"]);
+      }
     }
     assert.deepEqual(advanceHeadlessCareerStep(state), attributed, `${state.offseasonStep} must replay deterministically`);
     state = legacy.state;

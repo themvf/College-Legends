@@ -3,6 +3,7 @@ import {
   coachingPlanningKnowledgeSnapshot,
   planOffseasonCommands,
   planWeeklyCommands,
+  trainingCampPlanningKnowledgeSnapshot,
   weeklyPlanningKnowledgeSnapshot
 } from "@college-legends/ai";
 import {
@@ -57,7 +58,9 @@ export function advanceHeadlessCareerStep(input: Readonly<GameState>): Simulatio
         sequence,
         command.type === "REPLACE_STAFF"
           ? coachingPlanningKnowledgeSnapshot(input, command.programId)
-          : undefined
+          : command.type === "SET_TRAINING_CAMP_FOCUS"
+            ? trainingCampPlanningKnowledgeSnapshot(input, command.programId)
+            : undefined
       ));
     return advanceOffseasonStepWithDecisions(input, decisions, continuations);
   }
