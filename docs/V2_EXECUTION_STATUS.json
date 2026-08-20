@@ -1,0 +1,473 @@
+{
+  "schemaVersion": 1,
+  "program": "College Legends V2",
+  "updatedAt": "2026-08-15",
+  "managerSkill": "$college-legends-v2-manager",
+  "specification": "docs/V2_FIXES.md",
+  "statusPolicy": {
+    "allowed": [
+      "not_started",
+      "ready",
+      "in_progress",
+      "verification",
+      "blocked",
+      "complete",
+      "deferred"
+    ],
+    "completionRequiresEvidence": true,
+    "maximumActiveWaves": 1,
+    "waiverRequiresExplicitUserApproval": true
+  },
+  "waves": [
+    {
+      "id": "W0",
+      "order": 0,
+      "priority": "P0",
+      "name": "Shared architecture and release gates",
+      "status": "in_progress",
+      "dependsOn": [],
+      "waiver": null,
+      "targets": [
+        {
+          "id": "ARCH-001",
+          "name": "Unify decision, projection, resolution, and audit contracts",
+          "v2": ["V2-002", "V2-003", "V2-004", "V2-011"],
+          "priority": "P0",
+          "status": "in_progress",
+          "dependsOn": [],
+          "acceptance": [
+            "One typed status vocabulary and lifecycle is used by every decision surface.",
+            "Manual, delegated, and AI actors submit the same legal commands through knowledge-bounded projections.",
+            "Every committed decision records causal outcome and attribution without duplicate sources of truth."
+          ],
+          "blockedBy": [],
+          "evidence": [
+            {
+              "type": "code",
+              "reference": "packages/model/src/index.ts; packages/simulation/src/decisions.ts; packages/simulation/src/index.ts; apps/web/src/simulation.worker.ts",
+              "result": "Foundation slice adds the canonical six-state lifecycle, redacted projection inputs, actor-attributed weekly planning, single-batch weekly resolution, and bounded save-safe audit records.",
+              "date": "2026-08-15"
+            },
+            {
+              "type": "test",
+              "reference": "pnpm check; pnpm build; node --test tests/decision-contracts.test.mjs; pnpm --filter @college-legends/web test; node --test tests/simulation.test.mjs",
+              "result": "Passed: typecheck, build, 9 decision-contract tests, 9 web tests, and 45 simulation regression tests. The focused suite proves exact legacy-versus-attributed weekly equivalence and retains 126/126 audits across a noisy 72-program save/load.",
+              "date": "2026-08-15"
+            },
+            {
+              "type": "review",
+              "reference": "Independent ARCH-001 verifier re-check",
+              "result": "The two discovered regressions are fixed. ARCH-001 remains in progress because AI selection knowledge boundaries, all-surface lifecycle adoption, broader command/delegation coverage, downstream causal correlation, worker-handler coverage, and long-term audit retention remain open.",
+              "date": "2026-08-15"
+            },
+            {
+              "type": "code",
+              "reference": "packages/ai/src/index.ts; packages/simulation/src/index.ts; apps/web/src/simulation.worker.ts; apps/web/src/weekly-priority-decision.ts; apps/web/src/App.tsx",
+              "result": "Continuation slice enforces a typed redacted AI planning boundary before selection, closes worker ownership and unattributed-route bypasses, shares the weekly-priority lifecycle across three live surfaces, and preserves exact causal payoff links through save/resume, carried plans, future targets, and blocked replacements.",
+              "date": "2026-08-15"
+            },
+            {
+              "type": "test",
+              "reference": "pnpm check; pnpm build; pnpm web:build; node --test tests/ai-knowledge-boundary.test.mjs tests/decision-contracts.test.mjs; pnpm --filter @college-legends/web test; node --test tests/simulation.test.mjs; git diff --check",
+              "result": "Passed: typecheck, builds, 19 focused AI/decision tests, 12 web tests, and 45 simulation regressions. Production probes verified worker authorization and attribution routes, exact redacted snapshots in 122/122 AI audits, correct links in 71/71 same-pass AI payoffs, and retention of the prior effective submission after a blocked replacement.",
+              "date": "2026-08-15"
+            },
+            {
+              "type": "review",
+              "reference": "Independent ARCH-001 continuation verification",
+              "result": "Continuation slice passed with no slice-specific defect remaining. ARCH-001 stays in progress because the shared envelope and lifecycle are not yet system-wide and production delegated submission is still absent.",
+              "date": "2026-08-15"
+            },
+            {
+              "type": "code",
+              "reference": "packages/model/src/index.ts; packages/simulation/src/decisions.ts; packages/simulation/src/index.ts; packages/simulation/src/persistence.ts; apps/web/src/protocol.ts; apps/web/src/simulation.worker.ts",
+              "result": "P0 expansion routes live worker commands through attributed phase batches, requires exact domain-event causes, preserves effective origins through a noisy 72-program season, serializes autosaves, selects delegated weekly plans inside the worker from redacted knowledge, and durably closes NIL/portal standing outcomes including superseded, withdrawn, lost, won, and unclaimed results.",
+              "date": "2026-08-15"
+            },
+            {
+              "type": "test",
+              "reference": "pnpm test; pnpm check; pnpm build; node --test tests/decision-contracts.test.mjs tests/ai-knowledge-boundary.test.mjs; pnpm --filter @college-legends/web test; git diff --check",
+              "result": "Passed after the standing-outcome fixes: 192/192 Node tests and 13/13 web tests, 32/32 focused decision/AI contracts, typecheck, build, and diff check. Independent probes verified board-close withdrawal, same-pass supersession before winning, save-resumed causal links, 10,000-row domain-history parity, exact same-type entity matching, worker authority, and 72-program full-season retention.",
+              "date": "2026-08-15"
+            },
+            {
+              "type": "review",
+              "reference": "Independent ARCH-001 P0 expansion verification",
+              "result": "The P0 expansion and standing-market closure pass. ARCH-001 remains in progress because generic non-weekly AI selection is not yet bounded by a knowledge-complete recorded view and the canonical lifecycle is not yet adopted by every live decision surface; the raw simulator CLI also requires an explicit scope decision or migration.",
+              "date": "2026-08-15"
+            }
+          ],
+          "waiver": null
+        },
+        {
+          "id": "ARCH-002",
+          "name": "Create migration, deterministic replay, parity, and performance gates",
+          "v2": ["CROSS-CUTTING"],
+          "priority": "P0",
+          "status": "not_started",
+          "dependsOn": ["ARCH-001"],
+          "acceptance": [
+            "Save migrations and idempotent phase boundaries are tested.",
+            "Seeded replay produces stable outcomes across save and resume.",
+            "A shared 24- and 72-program test harness checks AI parity, long-horizon balance, and performance."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        }
+      ]
+    },
+    {
+      "id": "W1",
+      "order": 1,
+      "priority": "P0",
+      "name": "Financial truth vertical slice",
+      "status": "not_started",
+      "dependsOn": ["W0"],
+      "waiver": null,
+      "targets": [
+        {
+          "id": "FIN-001",
+          "name": "Implement reconciled ledger, cash, obligations, forecast, and runway",
+          "v2": ["V2-005"],
+          "priority": "P0",
+          "status": "not_started",
+          "dependsOn": ["ARCH-002"],
+          "acceptance": [
+            "Every dollar-changing event reconciles to categorized ledger entries and displayed cash.",
+            "The player can inspect obligations, runway, and the cause of forecast changes.",
+            "Historical statements survive save, resume, and season rollover."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        },
+        {
+          "id": "FIN-002",
+          "name": "Replace fixed tier economics with dynamic core P&L and one operating plan",
+          "v2": ["V2-005"],
+          "priority": "P0",
+          "status": "not_started",
+          "dependsOn": ["FIN-001"],
+          "acceptance": [
+            "Revenue and expenses resolve from named dynamic components rather than unexplained tier grants.",
+            "One preseason operating plan creates visible financial and football tradeoffs.",
+            "Winning does not guarantee solvency and money does not directly purchase wins."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        },
+        {
+          "id": "FIN-003",
+          "name": "Prove the core business loop through a deterministic full season",
+          "v2": ["V2-005"],
+          "priority": "P0",
+          "status": "not_started",
+          "dependsOn": ["FIN-002"],
+          "acceptance": [
+            "A complete season traces operating choices to football capacity, outcomes, audience, revenue, and reinvestment.",
+            "Multi-program tests show bounded budgets with no automatic losing-team windfall.",
+            "At least three declared operating strategies remain viable in long-horizon seeded tests."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        }
+      ]
+    },
+    {
+      "id": "W2",
+      "order": 2,
+      "priority": "P0",
+      "name": "Unified command center and matchup truth",
+      "status": "not_started",
+      "dependsOn": ["W1"],
+      "waiver": null,
+      "targets": [
+        {
+          "id": "UX-001",
+          "name": "Merge the live checklist and scan-first Coach's Desk",
+          "v2": ["V2-002", "V2-011"],
+          "priority": "P0",
+          "status": "not_started",
+          "dependsOn": ["FIN-003"],
+          "acceptance": [
+            "The dashboard shows no more than three unique unresolved decisions and one dominant next action.",
+            "Pending, done, delegated, blocked, required, and optional states update immediately and survive navigation.",
+            "At least 90 percent of first-time testers identify the next action and readiness within five seconds."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        },
+        {
+          "id": "RAT-001",
+          "name": "Expose offense, defense, overall, and matchup projections",
+          "v2": ["V2-003"],
+          "priority": "P1",
+          "status": "not_started",
+          "dependsOn": ["UX-001"],
+          "acceptance": [
+            "Team ratings derive from actual eligible lineups and scheme usage.",
+            "Matchup projections expose favorite or underdog status with scouting-aware uncertainty.",
+            "Displayed projections match the resolving simulation inputs and distinguish skill from readiness."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        },
+        {
+          "id": "UX-002",
+          "name": "Establish shared UI, accessibility, and telemetry contracts",
+          "v2": ["V2-002", "V2-011"],
+          "priority": "P1",
+          "status": "not_started",
+          "dependsOn": ["UX-001", "RAT-001"],
+          "acceptance": [
+            "Reusable decision, status, comparison, projection, round, and result components cover all defined states.",
+            "The core weekly flow passes touch, keyboard, controller, screen-reader, forced-color, zoom, and localization checks.",
+            "Telemetry distinguishes impression, expansion, selection, commit, rejection, correction, and advance."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        }
+      ]
+    },
+    {
+      "id": "W3",
+      "order": 3,
+      "priority": "P1",
+      "name": "Development recommendations and delegation pilot",
+      "status": "not_started",
+      "dependsOn": ["W2"],
+      "waiver": null,
+      "targets": [
+        {
+          "id": "DEV-001",
+          "name": "Recommend development work by marginal benefit",
+          "v2": ["V2-001"],
+          "priority": "P1",
+          "status": "not_started",
+          "dependsOn": ["UX-002"],
+          "acceptance": [
+            "Recommendations rank eligible choices by expected marginal value rather than fragile labels.",
+            "The recommendation explains the affected player or room, real projected gain, opportunity cost, and uncertainty.",
+            "Deterministic tests cover thin rooms, ceilings, injuries, positional value, and equal-value ties."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        },
+        {
+          "id": "DEL-001",
+          "name": "Pilot staff delegation for depth chart, scouting, and development",
+          "v2": ["V2-004"],
+          "priority": "P1",
+          "status": "not_started",
+          "dependsOn": ["DEV-001"],
+          "acceptance": [
+            "Manual, recommend, and automatic modes use the same commands, projections, costs, and information boundaries.",
+            "Guardrails, named staff attribution, preview, override, and exception escalation are visible and reversible.",
+            "Successful delegated work collapses from the attention count while blocked or risky work resurfaces."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        }
+      ]
+    },
+    {
+      "id": "W4",
+      "order": 4,
+      "priority": "P1",
+      "name": "Progression history and season transition",
+      "status": "not_started",
+      "dependsOn": ["W3"],
+      "waiver": null,
+      "targets": [
+        {
+          "id": "DEV-002",
+          "name": "Unify in-season skill, readiness, potential, and development history",
+          "v2": ["V2-010", "V2-001", "V2-009"],
+          "priority": "P1",
+          "status": "not_started",
+          "dependsOn": ["DEV-001"],
+          "acceptance": [
+            "Permanent skill, temporary readiness, and potential are mechanically and visually distinct.",
+            "Every material rating change has a durable causal record without excessive save growth.",
+            "Weekly and offseason growth remain inside declared long-horizon rating distributions."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        },
+        {
+          "id": "REC-001",
+          "name": "Add the mandatory scan-first season recap phase",
+          "v2": ["V2-006"],
+          "priority": "P1",
+          "status": "not_started",
+          "dependsOn": ["DEV-002", "FIN-003", "RAT-001"],
+          "acceptance": [
+            "Season rollover enters recap exactly once before any offseason market or camp.",
+            "The default recap communicates verdict, three material outcomes, and next phase within ten seconds.",
+            "Financial, football, player, and staff snapshots remain archived and stable across later changes."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        }
+      ]
+    },
+    {
+      "id": "W5",
+      "order": 5,
+      "priority": "P1",
+      "name": "Shared offseason market and coaching carousel",
+      "status": "not_started",
+      "dependsOn": ["W4"],
+      "waiver": null,
+      "targets": [
+        {
+          "id": "MKT-001",
+          "name": "Build one simultaneous multi-round market engine and UI shell",
+          "v2": ["V2-007", "V2-008"],
+          "priority": "P1",
+          "status": "not_started",
+          "dependsOn": ["REC-001", "ARCH-002", "UX-002"],
+          "acceptance": [
+            "Standing offers, portfolios, capacity, simultaneous matching, addressable RNG, movement reports, and save boundaries are shared.",
+            "Unchanged terms require no maintenance clicks and inactive rounds skip safely.",
+            "Market results are invariant to program iteration and command submission order."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        },
+        {
+          "id": "COACH-001",
+          "name": "Implement contracts, vacancies, and coaching carousel",
+          "v2": ["V2-008"],
+          "priority": "P1",
+          "status": "not_started",
+          "dependsOn": ["MKT-001"],
+          "acceptance": [
+            "Every coach has a contract term and vacancies require replacement or an explicit interim.",
+            "Retention, expiration, firing, poaching, promotion, offers, matching, and cascades use the shared market rules.",
+            "Staff continuity affects schemes and players through visible, bounded, deterministic rules."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        }
+      ]
+    },
+    {
+      "id": "W6",
+      "order": 6,
+      "priority": "P1",
+      "name": "Transfer portal and offseason training",
+      "status": "not_started",
+      "dependsOn": ["W5"],
+      "waiver": null,
+      "targets": [
+        {
+          "id": "PORTAL-001",
+          "name": "Implement the three-to-five-round portal pursuit",
+          "v2": ["V2-007"],
+          "priority": "P2",
+          "status": "not_started",
+          "dependsOn": ["COACH-001", "MKT-001"],
+          "acceptance": [
+            "Each retained round changes information, leverage, terms, shortlist position, or commitment risk.",
+            "Promises, visits, NIL, capacity, withdrawals, and simultaneous commitments remain enforceable and auditable.",
+            "Routine portal rounds meet the declared attention and performance budgets for 24- and 72-program leagues."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        },
+        {
+          "id": "CAMP-001",
+          "name": "Resolve and show offseason player improvement",
+          "v2": ["V2-009"],
+          "priority": "P1",
+          "status": "not_started",
+          "dependsOn": ["PORTAL-001", "DEV-002"],
+          "acceptance": [
+            "Camp resolves after carousel, portal, enrollment, and final roster assembly.",
+            "Real attribute changes, health effects, team-rating movement, and depth-chart implications are shown separately.",
+            "The scan-first result checkpoint cannot duplicate gains and remains calibrated with weekly development."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        }
+      ]
+    },
+    {
+      "id": "W7",
+      "order": 7,
+      "priority": "P2",
+      "name": "Expanded business portfolios and governance",
+      "status": "not_started",
+      "dependsOn": ["W6"],
+      "waiver": null,
+      "targets": [
+        {
+          "id": "FIN-004",
+          "name": "Expand sponsorship, media, donors, capital, debt, and governance",
+          "v2": ["V2-005"],
+          "priority": "P2",
+          "status": "not_started",
+          "dependsOn": ["FIN-003", "DEL-001", "CAMP-001"],
+          "acceptance": [
+            "Expanded systems post through the common ledger and forecast without creating isolated minigames.",
+            "Governance, interventions, recovery, and dismissal respond to declared business objectives and evidence.",
+            "AI programs use the same contracts, resources, capital constraints, and consequences."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        }
+      ]
+    }
+  ],
+  "deferredItems": [
+    {
+      "id": "OPEN-001",
+      "name": "Decide whether DB splits into CB, FS, and SS",
+      "status": "deferred",
+      "reason": "Requires a separate roster, scheme, recruiting, simulation, migration, and UI scope decision before entering a gated wave."
+    }
+  ],
+  "changeLog": [
+    {
+      "date": "2026-08-15",
+      "change": "Verified the ARCH-001 attributed phase-batch, exact causal event, autosave ordering, controlled delegation, full-season retention, and standing-market outcome slices. Kept ARCH-001 in progress for system-wide AI knowledge boundaries and lifecycle adoption.",
+      "actor": "$college-legends-v2-manager"
+    },
+    {
+      "date": "2026-08-15",
+      "change": "Verified the ARCH-001 AI-boundary, worker-routing, weekly-priority lifecycle, and causal-link continuation slice. Kept ARCH-001 in progress pending system-wide command coverage and a production delegated submission route.",
+      "actor": "$college-legends-v2-manager"
+    },
+    {
+      "date": "2026-08-15",
+      "change": "Recorded the first verified ARCH-001 foundation slice. Kept the target in progress because its full acceptance criteria are not yet satisfied across every decision surface and command path.",
+      "actor": "$college-legends-v2-manager"
+    },
+    {
+      "date": "2026-08-15",
+      "change": "Started ARCH-001 on codex/v2-arch-001 after validating that W0 is the first eligible wave.",
+      "actor": "$college-legends-v2-manager"
+    },
+    {
+      "date": "2026-08-15",
+      "change": "Initialized the evidence-gated V2 execution program from the reconciled AAA panel priorities.",
+      "actor": "$college-legends-v2-manager"
+    }
+  ]
+}

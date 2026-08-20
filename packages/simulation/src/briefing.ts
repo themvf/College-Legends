@@ -1,4 +1,4 @@
-import type { GameState, OpponentDossier } from "@college-legends/model";
+import type { DecisionStatus, GameState, OpponentDossier } from "@college-legends/model";
 import { fairTicketPrice } from "./business.js";
 import { DOSSIER_THRESHOLDS, MARQUEE_VALUE, WORTH_SCOUTING } from "./department.js";
 import { activeFocuses, focusCapacity, scoutingTargetFor, weekPriorities } from "./priorities.js";
@@ -21,12 +21,17 @@ export type BriefingDestination =
 
 export interface BriefingItem {
   id: string;
-  /** DO_THIS is costing you something now. WORTH_A_LOOK is upside left on the table. */
-  urgency: "DO_THIS" | "WORTH_A_LOOK";
+  /** Canonical unresolved lifecycle state shared with every decision surface. */
+  status: Extract<DecisionStatus, "REQUIRED" | "OPTIONAL">;
   headline: string;
   detail: string;
   action: string;
   destination: BriefingDestination;
+}
+
+export interface BriefingOptions {
+  /** A migrated lifecycle surface owns weekly priorities and must be removed before the display cap. */
+  excludeWeeklyPriorities?: boolean;
 }
 
 export interface SeasonExpectation {
@@ -87,7 +92,8 @@ export function seasonExpectation(state: Readonly<GameState>, programId: string)
 export function weeklyBriefing(
   state: Readonly<GameState>,
   programId: string,
-  board: readonly OpponentDossier[]
+  board: readonly OpponentDossier[],
+  options: BriefingOptions = {}
 ): BriefingItem[] {
   const program = state.programs[programId];
   if (!program) return [];
@@ -103,7 +109,7 @@ export function weeklyBriefing(
       offer.weeklyPayment > best.weeklyPayment ? offer : best);
     items.push({
       id: "SPONSORSHIP",
-      urgency: "DO_THIS",
+      status: "REQUIRED",
       headline: "The program has no primary sponsor",
       detail: `${safest.sponsorName} is offering $${safest.weeklyPayment.toLocaleString()} guaranteed every week. A week without a contract is money you cannot recover later.`,
       action: "Choose a sponsor",
@@ -118,7 +124,7 @@ export function weeklyBriefing(
   if (chosen.length < capacity.capacity) {
     items.push({
       id: "WEEK_FOCUS",
-      urgency: "DO_THIS",
+      status: "REQUIRED",
       headline: `Your staff has ${capacity.capacity - chosen.length} priorit${capacity.capacity - chosen.length === 1 ? "y" : "ies"} nobody has claimed`,
       detail: "A week your coaches don't put behind something is a week they spend on nothing in particular. Nothing banks.",
       action: "Set the week",
@@ -136,7 +142,7 @@ export function weeklyBriefing(
   if (missed && chosen.length >= capacity.capacity) {
     items.push({
       id: `WEEK_FOCUS:${missed.focus}`,
-      urgency: "WORTH_A_LOOK",
+      status: "OPTIONAL",
       headline: `"${missed.label}" looks worth more this week than what you're chasing`,
       detail: `${missed.stakesNote} Left alone: ${missed.baseline}. Chased: ${missed.focused}.`,
       action: "Change the week",
@@ -154,7 +160,7 @@ export function weeklyBriefing(
     const them = state.programs[bigGame.opponentProgramId];
     items.push({
       id: "SCOUT_AHEAD",
-      urgency: "WORTH_A_LOOK",
+      status: "OPTIONAL",
       headline: `${them?.name ?? "A ranked opponent"} in week ${bigGame.week} is the game of your season`,
       detail: `${bigGame.valueNote} One week of film won't cover it — point the department at them now or arrive with half a file.`,
       action: "Move the film room",
@@ -164,7 +170,7 @@ export function weeklyBriefing(
   if (thisWeek && thisWeek.tiers.length === 0 && !bigGame) {
     items.push({
       id: "SCOUT_THIS_WEEK",
-      urgency: "DO_THIS",
+      status: "REQUIRED",
       headline: `You know nothing about ${opponent?.name ?? "Saturday's opponent"}`,
       detail: "Your film room has an empty file on the team you play in five days, and your guys go in cold.",
       action: "Open a file",
@@ -180,7 +186,7 @@ export function weeklyBriefing(
     if (fit >= 0.78) continue;
     items.push({
       id: `SCHEME_FIT:${member.id}`,
-      urgency: "DO_THIS",
+      status: "REQUIRED",
       headline: `${member.name} doesn't coach what you're running`,
       detail: `He installs about ${Math.round((1 - fit) * 100)}% less of it than a coach who knows the scheme. Replace him, or change what you run.`,
       action: "Look at the staff",
@@ -196,7 +202,7 @@ export function weeklyBriefing(
   if (recruitingPoints >= 25) {
     items.push({
       id: "RECRUITING",
-      urgency: "WORTH_A_LOOK",
+      status: "OPTIONAL",
       headline: `${recruitingPoints} recruiting points are sitting unspent`,
       detail: "They bank week to week, but the class signs during the season — points still idle at the end sign nobody. Spend them finding players or chasing the ones you've found.",
       action: "Work the phones",
@@ -208,7 +214,7 @@ export function weeklyBriefing(
   if (!state.developmentSpotlights?.[programId]) {
     items.push({
       id: "DEVELOPMENT",
-      urgency: "WORTH_A_LOOK",
+      status: "OPTIONAL",
       headline: "Nobody is getting extra coaching this week",
       detail: "One player gets your staff's attention every week. Skipping it is a week of growth you don't get back.",
       action: "Pick somebody",
@@ -221,7 +227,7 @@ export function weeklyBriefing(
   if (program.ticketPrice < fair * 0.8) {
     items.push({
       id: "TICKET_PRICE",
-      urgency: "WORTH_A_LOOK",
+      status: "OPTIONAL",
       headline: "You're charging well under what this program can get",
       detail: `Tickets are $${program.ticketPrice} and comparable programs get about $${fair}. You're leaving money on the table every home date.`,
       action: "Set the price",
@@ -230,7 +236,7 @@ export function weeklyBriefing(
   } else if (program.ticketPrice > fair * 1.25) {
     items.push({
       id: "TICKET_PRICE",
-      urgency: "DO_THIS",
+      status: "REQUIRED",
       headline: "You're pricing your own fans out",
       detail: `Tickets are $${program.ticketPrice} against a fair price of about $${fair}. Seats go empty and people stop following the program.`,
       action: "Set the price",
@@ -242,7 +248,7 @@ export function weeklyBriefing(
   if (program.budget < 0) {
     items.push({
       id: "BUDGET",
-      urgency: "DO_THIS",
+      status: "REQUIRED",
       headline: "The program is in the red",
       detail: `You're at ${program.budget < -1_000_000 ? `-$${(Math.abs(program.budget) / 1_000_000).toFixed(1)}M` : `-$${Math.round(Math.abs(program.budget) / 1000)}K`}. Athletic directors notice this before they notice your record.`,
       action: "Check the books",
@@ -250,8 +256,11 @@ export function weeklyBriefing(
     });
   }
 
-  const order = { DO_THIS: 0, WORTH_A_LOOK: 1 };
-  return items.sort((left, right) => order[left.urgency] - order[right.urgency]).slice(0, 6);
+  const order: Record<BriefingItem["status"], number> = { REQUIRED: 0, OPTIONAL: 1 };
+  const visible = options.excludeWeeklyPriorities
+    ? items.filter((item) => item.id !== "WEEK_FOCUS" && !item.id.startsWith("WEEK_FOCUS:"))
+    : items;
+  return visible.sort((left, right) => order[left.status] - order[right.status]).slice(0, 6);
 }
 
 /** Fixtures worth knowing about, for the "what's coming" strip. */

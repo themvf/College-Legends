@@ -62,7 +62,11 @@ export function preparationWeeklyPoints(state: Readonly<GameState>, programId: s
   // on both sides is always out of reach, however good the staff is. A strong
   // staff is rewarded through the *quality* of each rep in `planInstaller`, not
   // by escaping the choice.
-  return Math.round(clampValue(hours * (0.85 + program.facilities.TRAINING * 0.05), 2, MAXIMUM_PRACTICE_HOURS));
+  return Math.ceil(clampValue(
+    hours * (1.12 + program.facilities.TRAINING * 0.05),
+    2,
+    MAXIMUM_PRACTICE_HOURS
+  ));
 }
 
 /** A week only holds so much practice, whoever is running it. */

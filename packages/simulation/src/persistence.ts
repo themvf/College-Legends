@@ -4,6 +4,7 @@ import type {
   PlayerSeasonStatLine,
   Season
 } from "@college-legends/model";
+import { retainedDecisionAudits, retainedDecisionEventHistory } from "./decisions.js";
 
 /**
  * Saving a dynasty.
@@ -124,11 +125,13 @@ export function foldSeasonStats(
  * games a season — so a loaded career matches the one that was never saved.
  */
 export function saveablePayload(state: Readonly<GameState>): GameState {
+  const decisionAudits = retainedDecisionAudits(state.decisionAudits ?? []);
   return {
     ...state,
     playerGameStats: state.playerGameStats.filter((row) =>
       row.season === state.season || row.gameId.startsWith("playoff:")),
-    eventHistory: state.eventHistory.slice(-SAVED_EVENT_LIMIT)
+    decisionAudits,
+    eventHistory: retainedDecisionEventHistory(state.eventHistory, decisionAudits, SAVED_EVENT_LIMIT)
   } as GameState;
 }
 
@@ -223,6 +226,10 @@ export async function decodeSave(bytes: Uint8Array): Promise<LoadedSave> {
   state.playerSeasonStats ??= [];
   state.weekFocus ??= {};
   state.scoutingTarget ??= {};
+  state.decisionAudits = (state.decisionAudits ?? []).map((audit) => ({
+    ...audit,
+    standingOutcome: audit.standingOutcome ?? null
+  }));
   return {
     state,
     playerProgramId: envelope.playerProgramId ?? null,

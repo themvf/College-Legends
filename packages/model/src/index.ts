@@ -897,6 +897,8 @@ export interface GameState {
   playerSeasonStats: PlayerSeasonStatLine[];
   schedule: ScheduledGame[];
   seasonHistory: SeasonHistory[];
+  /** Bounded, save-safe attribution records. Domain events own resolved values. */
+  decisionAudits?: DecisionAuditRecord[];
   eventHistory: GameEvent[];
 }
 
@@ -992,7 +994,186 @@ export type GameCommand =
    */
   | { type: "SET_TRAINING_CAMP_FOCUS"; programId: ProgramId; focus: TrainingCampFocus };
 
-export type GameEvent =
+/**
+ * The shared vocabulary every decision surface uses.
+ *
+ * `REQUIRED` and `OPTIONAL` describe an unresolved choice, `DELEGATED` names
+ * who owns it, `PENDING` means it has been queued for the engine, and the two
+ * terminal presentation states are `DONE` and `BLOCKED`. The simulation owns
+ * the legal transition rules; features must not introduce local synonyms.
+ */
+export const DECISION_STATUSES = [
+  "REQUIRED",
+  "OPTIONAL",
+  "DELEGATED",
+  "PENDING",
+  "DONE",
+  "BLOCKED"
+] as const;
+export type DecisionStatus = typeof DECISION_STATUSES[number];
+
+/** Manual users, delegated staff, and autonomous programs share GameCommand. */
+export type DecisionActor =
+  | {
+      mode: "MANUAL";
+      actorId: string;
+      displayName: string;
+    }
+  | {
+      mode: "DELEGATED";
+      actorId: string;
+      displayName: string;
+      staffId: string;
+      delegatedByActorId: string;
+      policyId: string | null;
+    }
+  | {
+      mode: "AI";
+      actorId: string;
+      displayName: string;
+      policyId: string;
+    };
+
+export type DecisionKnowledgeSource =
+  | "PUBLIC"
+  | "PROGRAM_INTERNAL"
+  | "SCOUTED"
+  | "STAFF_ESTIMATE";
+
+/**
+ * The complete information boundary used to calculate a projection. Keeping
+ * this explicit prevents a delegated or AI actor from quietly reading hidden
+ * ratings that the manual player could not see.
+ */
+export type DecisionKnownValue = string | number | boolean | null;
+
+export interface DecisionKnownFact {
+  key: string;
+  value: DecisionKnownValue;
+  source: DecisionKnowledgeSource;
+  entityId: string | null;
+  observedSeason: Season;
+  observedWeek: number;
+}
+
+export interface DecisionKnowledgeSnapshot {
+  programId: ProgramId;
+  season: Season;
+  week: number;
+  phase: GamePhase;
+  /** The complete redacted input given to the projection function. */
+  facts: readonly DecisionKnownFact[];
+}
+
+export type DecisionEffectDomain =
+  | "FOOTBALL"
+  | "FINANCE"
+  | "ROSTER"
+  | "DEVELOPMENT"
+  | "STAFF"
+  | "RECRUITING"
+  | "RISK";
+
+/** A real-unit projection; ranges express uncertainty rather than false precision. */
+export interface DecisionProjectedEffect {
+  key: string;
+  domain: DecisionEffectDomain;
+  unit: string;
+  low: number;
+  high: number;
+  confidence: number;
+  source: string;
+}
+
+export interface DecisionClock {
+  season: Season;
+  week: number;
+  phase: GamePhase;
+  /** Stable within one caller's batch; never wall-clock time. */
+  sequence: number;
+}
+
+/** An unresolved card has ownership and urgency, but no fabricated command. */
+export interface DecisionItem {
+  id: string;
+  status: Extract<DecisionStatus, "REQUIRED" | "OPTIONAL" | "DELEGATED">;
+  programId: ProgramId;
+  actor: DecisionActor;
+}
+
+/**
+ * The exact command only becomes a record when it is submitted. This is an
+ * attribution envelope around GameCommand, not a parallel actor-specific
+ * command hierarchy.
+ */
+export interface DecisionRecord<TCommand extends GameCommand = GameCommand> {
+  id: string;
+  /** Unique deterministic attempt within the stable decision id. */
+  submissionId: string;
+  status: Extract<DecisionStatus, "PENDING">;
+  command: TCommand;
+  actor: DecisionActor;
+  knowledge: DecisionKnowledgeSnapshot;
+  submittedAt: DecisionClock;
+}
+
+/** Pure preview of one option for an unresolved item, using only redacted facts. */
+export interface DecisionProjection<TCommand extends GameCommand = GameCommand> {
+  item: DecisionItem;
+  command: TCommand;
+  knowledge: DecisionKnowledgeSnapshot;
+  effects: readonly DecisionProjectedEffect[];
+}
+
+/** A reference to a domain event caused by a committed decision. */
+export interface DecisionCause {
+  /** Stable within the submission so flattened event lists remain traceable. */
+  id: string;
+  eventType: string;
+  /** Index within the command's result event list. */
+  ordinal: number;
+}
+
+export type StandingDecisionResult = "WON" | "LOST" | "WITHDRAWN" | "UNCLAIMED" | "SUPERSEDED";
+
+export interface StandingDecisionOutcome {
+  result: StandingDecisionResult;
+  causes: readonly DecisionCause[];
+}
+
+/**
+ * Durable attribution without duplicating resolved state. `commandKey` points
+ * back to the exact canonical GameCommand while domain events remain the source
+ * of truth for money, ratings, roster changes, and every other consequence.
+ */
+export interface DecisionAuditRecord {
+  decisionId: string;
+  submissionId: string;
+  commandType: GameCommand["type"];
+  commandKey: string;
+  programId: ProgramId;
+  actor: DecisionActor;
+  knowledge: DecisionKnowledgeSnapshot;
+  submittedAt: DecisionClock;
+  status: Extract<DecisionStatus, "DONE" | "BLOCKED">;
+  /** Immediate command-boundary result; standing market outcomes arrive later. */
+  resolution: "IMMEDIATE" | "STANDING" | "REJECTED";
+  outcomePending: boolean;
+  /** Separate from accepted intent; populated when the standing market closes. */
+  standingOutcome: StandingDecisionOutcome | null;
+  causes: readonly DecisionCause[];
+  rejectionReason: string | null;
+}
+
+export type GameEvent = (
+  | {
+      type: "DECISION_AUDITED";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      /** Reference into GameState.decisionAudits, the sole persisted audit record. */
+      submissionId: string;
+    }
   | {
       type: "PLAYER_DEVELOPED";
       season: Season;
@@ -1105,6 +1286,7 @@ export type GameEvent =
       week: number;
       programId: ProgramId;
       searchType: RecruitingSearchType;
+      position?: Position;
       prospectIds: ProspectId[];
       pointsSpent: number;
     }
@@ -1124,6 +1306,41 @@ export type GameEvent =
       programId: ProgramId;
       prospectId: ProspectId;
       extended: boolean;
+      /** False when the requested offer state was already in effect. */
+      changed: boolean;
+    }
+  | {
+      /** Accepted standing-market intent; recruitment resolves later. */
+      type: "NIL_OFFER_SET";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      prospectId: ProspectId;
+      weeklyAmount: number;
+      previousWeeklyAmount: number;
+    }
+  | {
+      /** Correlation receipt for one program's offer in a resolved recruiting contest. */
+      type: "NIL_OFFER_RESOLVED";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      prospectId: ProspectId;
+      weeklyAmount: number;
+      winnerProgramId: ProgramId | null;
+      result: "WON" | "LOST" | "WITHDRAWN";
+      reason: "PROSPECT_CHOSE_PROGRAM" | "PROSPECT_CHOSE_OTHER_PROGRAM" | "BOARD_CLOSED";
+    }
+  | {
+      /** Accepted standing-market intent; the portal winner resolves later. */
+      type: "PORTAL_BID_SET";
+      season: Season;
+      week: number;
+      programId: ProgramId;
+      playerId: PlayerId;
+      points: number;
+      weeklyNil: number;
+      withdrawn: boolean;
     }
   | {
       type: "RECRUITING_VISIT_SCHEDULED";
@@ -1314,6 +1531,10 @@ export type GameEvent =
       week: number;
       programId: ProgramId;
       focuses: WeekFocus[];
+      /** The committed weekly-priority decision that produced this result. */
+      weeklyPrioritySubmissionId: string | null;
+      /** The committed film-room assignment used for the readiness result. */
+      scoutingTargetSubmissionId: string | null;
       offensiveExecution: number;
       defensiveExecution: number;
       scoutingReadiness: number;
@@ -1382,6 +1603,12 @@ export type GameEvent =
       guaranteePaid: number;
       weeklyNet: number;
     }
-  | { type: "COMMAND_REJECTED"; programId: ProgramId; command: GameCommand; reason: string };
+  | { type: "COMMAND_REJECTED"; programId: ProgramId; command: GameCommand; reason: string }
+) & {
+  /** Stable audit reference; the event remains the sole domain fact. */
+  decisionCauseId?: string;
+  /** A shared market result may close multiple standing submissions. */
+  decisionOutcomeCauseIds?: string[];
+};
 
 export interface SimulationResult { state: GameState; events: GameEvent[]; }

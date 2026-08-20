@@ -1412,9 +1412,9 @@ test("the dashboard tells the player what is being wasted, and where to fix it",
   );
   assert.ok(opening.length <= 6, "a list nobody can read is the same as no list");
   // Ordered so the things costing you now come before the upside.
-  const urgencies = opening.map((item) => item.urgency);
-  assert.deepEqual(urgencies, [...urgencies].sort((left, right) =>
-    (left === "DO_THIS" ? 0 : 1) - (right === "DO_THIS" ? 0 : 1)));
+  const statuses = opening.map((item) => item.status);
+  assert.deepEqual(statuses, [...statuses].sort((left, right) =>
+    (left === "REQUIRED" ? 0 : 1) - (right === "REQUIRED" ? 0 : 1)));
 
   // Acting on an item must clear it immediately — priorities settle before the
   // week is advanced, so the dashboard reflects the decision the moment it is

@@ -1,4 +1,4 @@
-import type { DevelopmentFocus, FacilityType, GameState, GameCommand, Player, PortalListingState, Position, Prospect, WeekFocus } from "@college-legends/model";
+import type { DecisionKnowledgeSnapshot, DevelopmentFocus, FacilityType, GameState, GameCommand, Player, PortalListingState, Position, Prospect, TeamUnitRatings, WeekFocus } from "@college-legends/model";
 import {
   FACILITY_UPGRADE_COST,
   focusCapacity,
@@ -30,13 +30,85 @@ import {
  * only gets to chase one thing, and also has to decide whether the game in three
  * weeks is worth more than this Saturday.
  */
-function planFocus(state: Readonly<GameState>, programId: string): GameCommand[] {
-  const capacity = focusCapacity(state, programId).capacity;
-  const board = scoutingBoard(state, programId);
+export type WeeklyPlanningSelectionCommand = Extract<
+  GameCommand,
+  { type: "SET_WEEK_FOCUS" | "SET_SCOUTING_TARGET" }
+>;
+
+/**
+ * Everything the weekly focus/scouting selector is allowed to know. The adapter
+ * may inspect GameState, but selection cannot: no opponent player ratings,
+ * prospect potential, or another program's private recruiting interest fits in
+ * this view.
+ */
+export interface WeeklyPlanningKnowledgeView {
+  readonly kind: "WEEKLY_PLANNING_KNOWLEDGE_V1";
+  programId: string;
+  week: number;
+  staffFocusCapacity: number;
+  ownUnitRatings: TeamUnitRatings;
+  currentScoutingTarget: string | null;
+  scoutingOptions: readonly {
+    opponentProgramId: string;
+    week: number;
+    value: number;
+  }[];
+}
+
+/** Build the redacted view at the state boundary; never pass state to selection. */
+export function weeklyPlanningKnowledgeView(
+  state: Readonly<GameState>,
+  programId: string
+): WeeklyPlanningKnowledgeView {
+  const ownUnitRatings = Object.freeze({ ...programUnitRatings(state, programId) });
+  const scoutingOptions = Object.freeze(scoutingBoard(state, programId).map((dossier) => Object.freeze({
+    opponentProgramId: dossier.opponentProgramId,
+    week: dossier.week,
+    value: dossier.value
+  })));
+  return Object.freeze({
+    kind: "WEEKLY_PLANNING_KNOWLEDGE_V1" as const,
+    programId,
+    week: state.week,
+    staffFocusCapacity: focusCapacity(state, programId).capacity,
+    ownUnitRatings,
+    currentScoutingTarget: state.scoutingTarget?.[programId] ?? null,
+    scoutingOptions
+  });
+}
+
+/** The exact redacted selector input persisted with an attributed AI choice. */
+export function weeklyPlanningKnowledgeSnapshot(
+  state: Readonly<GameState>,
+  programId: string
+): DecisionKnowledgeSnapshot {
+  const view = weeklyPlanningKnowledgeView(state, programId);
+  return Object.freeze({
+    programId,
+    season: state.season,
+    week: state.week,
+    phase: state.phase,
+    facts: Object.freeze([Object.freeze({
+      key: "weeklyPlanning.view.v1",
+      value: JSON.stringify(view),
+      source: "STAFF_ESTIMATE" as const,
+      entityId: programId,
+      observedSeason: state.season,
+      observedWeek: state.week
+    })])
+  });
+}
+
+/** Pure selection from explicit public, scouted, and program-internal facts. */
+export function selectWeeklyFocusAndScouting(
+  view: Readonly<WeeklyPlanningKnowledgeView>
+): WeeklyPlanningSelectionCommand[] {
+  const capacity = view.staffFocusCapacity;
+  const board = view.scoutingOptions;
   const prize = board
-    .filter((dossier) => dossier.week <= state.week + 3 && dossier.value >= WORTH_SCOUTING)
+    .filter((dossier) => dossier.week <= view.week + 3 && dossier.value >= WORTH_SCOUTING)
     .sort((left, right) => right.value - left.value || left.week - right.week)[0];
-  const units = programUnitRatings(state, programId);
+  const units = view.ownUnitRatings;
   const offenseFirst = units.passOffense + units.rushOffense >= units.passDefense + units.rushDefense;
 
   // Weighted so the season has a shape rather than a fixed ordering. Drilling the
@@ -49,20 +121,20 @@ function planFocus(state: Readonly<GameState>, programId: string): GameCommand[]
     { focus: offenseFirst ? "INSTALL_OFFENSE" : "INSTALL_DEFENSE", weight: 85 },
     { focus: "SCOUT", weight: prize ? 35 + prize.value * 0.75 : 18 },
     { focus: offenseFirst ? "INSTALL_DEFENSE" : "INSTALL_OFFENSE", weight: 52 },
-    { focus: "RECRUIT", weight: 22 + state.week * 5.5 },
-    { focus: "DEVELOP", weight: 62 - state.week * 3.2 }
+    { focus: "RECRUIT", weight: 22 + view.week * 5.5 },
+    { focus: "DEVELOP", weight: 62 - view.week * 3.2 }
   ];
   const focuses = ranked
     .sort((left, right) => right.weight - left.weight)
     .slice(0, capacity)
     .map((entry) => entry.focus);
 
-  const commands: GameCommand[] = [
-    { type: "SET_WEEK_FOCUS", programId, focuses }
+  const commands: WeeklyPlanningSelectionCommand[] = [
+    { type: "SET_WEEK_FOCUS", programId: view.programId, focuses }
   ];
-  const target = prize ?? board.find((dossier) => dossier.week === state.week) ?? board[0];
-  if (target && state.scoutingTarget?.[programId] !== target.opponentProgramId) {
-    commands.push({ type: "SET_SCOUTING_TARGET", programId, opponentProgramId: target.opponentProgramId });
+  const target = prize ?? board.find((dossier) => dossier.week === view.week) ?? board[0];
+  if (target && view.currentScoutingTarget !== target.opponentProgramId) {
+    commands.push({ type: "SET_SCOUTING_TARGET", programId: view.programId, opponentProgramId: target.opponentProgramId });
   }
   return commands;
 }
@@ -152,7 +224,7 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
     if (program.id === excludedProgramId) return [];
     const commands: GameCommand[] = [];
 
-    commands.push(...planFocus(state, program.id));
+    commands.push(...selectWeeklyFocusAndScouting(weeklyPlanningKnowledgeView(state, program.id)));
     commands.push(...planBooster(state, program.id));
     commands.push(...planSponsorship(state, program.id));
 

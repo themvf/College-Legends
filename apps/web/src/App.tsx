@@ -29,7 +29,7 @@ import type {
   WeekFocus
 } from "@college-legends/model";
 import { CAREER_PATHS, DIVISION_NAMES } from "@college-legends/content";
-import type { BoxScore, BoxScoreTeam, ProgramPreview, WeeklyStory } from "@college-legends/simulation";
+import type { BoxScore, BoxScoreTeam, ProgramPreview, WeeklyPlanningCommand, WeeklyStory } from "@college-legends/simulation";
 import {
   DEFAULT_GAME_PLAN,
   DEFENSIVE_IDENTITY_LABELS,
@@ -133,6 +133,7 @@ import {
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 import { Recruiting as WarRoomRecruiting } from "./Recruiting.js";
 import { recruitingCommandKey } from "./recruiting-view-model.js";
+import { weeklyPriorityDecision } from "./weekly-priority-decision.js";
 
 type GameView = { state: GameState; playerProgramId: ProgramId; events: GameEvent[] };
 type Screen = "DASHBOARD" | "THIS_WEEK" | "WEEKLY_RECAPS" | "ROSTER" | "DEPTH_CHART" | "PLAYER_STATS" | "HONORS" | "DEVELOPMENT" | "PLAYER_MEDIA" | "SCHEDULE" | "DIVISIONS" | "STAFF" | "FINANCES" | "RECRUITING" | "INBOX";
@@ -189,6 +190,7 @@ export function App(): ReactElement {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [pendingCommands, setPendingCommands] = useState<GameCommand[]>([]);
+  const [inFlightDecision, setInFlightDecision] = useState<{ requestId: string; command: WeeklyPlanningCommand }>();
   /** The jobs on offer, between choosing a career path and taking one. */
   const [offers, setOffers] = useState<{ careerPath: CareerPath; previews: ProgramPreview[] }>();
   /** Scheme and staff are settled once, at takeover, before the first season. */
@@ -206,6 +208,9 @@ export function App(): ReactElement {
     worker.postMessage({ type: "HAS_SAVE", requestId: nextRequestId() });
     worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
       const response = event.data;
+      if ("requestId" in response) {
+        setInFlightDecision((current) => current?.requestId === response.requestId ? undefined : current);
+      }
       setBusy(false);
       if (response.type === "ERROR") { setError(response.message); return; }
       if (response.type === "CANDIDATES") {
@@ -240,6 +245,13 @@ export function App(): ReactElement {
         setScreen("ROSTER");
       }
       if (response.type === "COMPLETE") {
+        const responseAuditIds = new Set(response.events
+          .filter((gameEvent): gameEvent is Extract<GameEvent, { type: "DECISION_AUDITED" }> =>
+            gameEvent.type === "DECISION_AUDITED" && gameEvent.programId === playerProgramIdRef.current)
+          .map((gameEvent) => gameEvent.submissionId));
+        const blockedDecision = response.state.decisionAudits?.find((audit) =>
+          responseAuditIds.has(audit.submissionId) && audit.status === "BLOCKED");
+        if (blockedDecision?.rejectionReason) setError(blockedDecision.rejectionReason);
         const playedGame = response.events.some((gameEvent) =>
           gameEvent.type === "WEEKLY_RECAP"
           && gameEvent.programId === playerProgramIdRef.current
@@ -290,9 +302,29 @@ export function App(): ReactElement {
     if (!game) return;
     send({ type: "PREPARE", requestId: nextRequestId(), playerProgramId: game.playerProgramId, commands: [command] });
   };
+  const prepareDecision = (command: WeeklyPlanningCommand): void => {
+    if (!game || inFlightDecision) return;
+    const requestId = nextRequestId();
+    setInFlightDecision({ requestId, command });
+    send({
+      type: "PREPARE_DECISION",
+      requestId,
+      playerProgramId: game.playerProgramId,
+      command,
+      actor: {
+        mode: "MANUAL",
+        actorId: `player:${game.playerProgramId}`,
+        displayName: "Player"
+      }
+    });
+  };
   const queue = (command: GameCommand): void => {
     // These settle now rather than on advance, so the screens and the dashboard
     // briefing reflect the decision the moment it is made.
+    if (command.type === "SET_WEEK_FOCUS" || command.type === "SET_SCOUTING_TARGET") {
+      prepareDecision(command);
+      return;
+    }
     if (command.type === "ALLOCATE_SCOUTING" || command.type === "SET_PRACTICE_REPS"
       || command.type === "SET_STAFF_ALLOCATION" || command.type === "SET_WEEK_HOURS"
       || command.type === "CHOOSE_BOOSTER") { prepare(command); return; }
@@ -371,6 +403,7 @@ export function App(): ReactElement {
   if (!game) return <NewGame busy={busy} onStart={(path) => startGame(path)} resumable={resumable} saved={saved} onResume={resume} onAbandon={abandon} />;
   return <>
     <Dashboard game={game} screen={screen} busy={busy} error={error} pendingCommands={pendingCommands}
+      inFlightDecision={inFlightDecision?.command ?? null}
       onNavigate={(next, tab) => { setWeekTab(tab); setScreen(next); }}
       weekTab={weekTab} onQueue={queue} onBegin={begin} onAdvance={advance} />
     <BoosterPopup game={game} busy={busy} onChoose={(optionId) =>
@@ -865,8 +898,9 @@ function ProgramNav({ screen, isReview, onNavigate }: {
   </div>;
 }
 
-function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, weekTab, onQueue, onBegin, onAdvance }: {
+function Dashboard({ game, screen, busy, error, pendingCommands, inFlightDecision, onNavigate, weekTab, onQueue, onBegin, onAdvance }: {
   game: GameView; screen: Screen; busy: boolean; error: string | undefined; pendingCommands: GameCommand[];
+  inFlightDecision: WeeklyPlanningCommand | null;
   onNavigate: (screen: Screen, tab?: WeekTab) => void; weekTab: WeekTab | undefined;
   onQueue: (command: GameCommand) => void; onBegin: () => void; onAdvance: () => void;
 }): ReactElement {
@@ -903,8 +937,8 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, wee
       <Metric label="Roster" value={`${roster.length}/${program.scholarshipLimit}`} />
     </section>
     <ProgramNav screen={screen} isReview={isReview} onNavigate={onNavigate} />
-    {screen === "DASHBOARD" && <ProgramDashboard game={game} roster={roster} onNavigate={onNavigate} />}
-    {screen === "THIS_WEEK" && <WeekHub game={game} pending={pendingCommands} onQueue={onQueue} initialTab={weekTab} />}
+    {screen === "DASHBOARD" && <ProgramDashboard game={game} roster={roster} inFlightDecision={inFlightDecision} onNavigate={onNavigate} />}
+    {screen === "THIS_WEEK" && <WeekHub game={game} busy={busy} inFlightDecision={inFlightDecision} pending={pendingCommands} onQueue={onQueue} initialTab={weekTab} />}
     {screen === "WEEKLY_RECAPS" && <WeeklyRecaps game={game} />}
     {screen === "ROSTER" && <Roster game={game} roster={roster} />}
     {screen === "DEPTH_CHART" && <DepthChart game={game} roster={roster} pending={pendingCommands} onQueue={onQueue} />}
@@ -930,16 +964,18 @@ function Dashboard({ game, screen, busy, error, pendingCommands, onNavigate, wee
  * expectation, then a ranked list of what actually needs them this week, each
  * one a button that goes straight to the screen that fixes it.
  */
-function ProgramDashboard({ game, roster, onNavigate }: {
-  game: GameView; roster: Player[]; onNavigate: (screen: Screen, tab?: WeekTab) => void;
+function ProgramDashboard({ game, roster, inFlightDecision, onNavigate }: {
+  game: GameView; roster: Player[]; inFlightDecision: WeeklyPlanningCommand | null;
+  onNavigate: (screen: Screen, tab?: WeekTab) => void;
 }): ReactElement {
   const program = game.state.programs[game.playerProgramId]!;
-  const briefing = weeklyBriefing(game.state, game.playerProgramId);
+  const board = scoutingBoard(game.state, game.playerProgramId);
+  const priorityDecision = weeklyPriorityDecision(game.state, game.playerProgramId, inFlightDecision);
+  const briefing = weeklyBriefing(game.state, game.playerProgramId, { excludeWeeklyPriorities: true });
   const expectation = seasonExpectation(game.state, game.playerProgramId);
   const nextGame = game.state.schedule.find((item) => !item.played && (item.homeProgramId === program.id || item.awayProgramId === program.id));
   const opponentId = nextGame ? (nextGame.homeProgramId === program.id ? nextGame.awayProgramId : nextGame.homeProgramId) : undefined;
   const opponent = opponentId ? game.state.programs[opponentId] : undefined;
-  const board = scoutingBoard(game.state, game.playerProgramId);
   const file = board.find((dossier) => dossier.opponentProgramId === opponentId);
   const recap = [...game.state.eventHistory].reverse().find(
     (event): event is Extract<GameEvent, { type: "WEEKLY_RECAP" }> => event.type === "WEEKLY_RECAP" && event.programId === program.id
@@ -955,6 +991,10 @@ function ProgramDashboard({ game, roster, onNavigate }: {
       && Boolean(currentInjury(game.state.players[event.playerId]!))
       && (event.wasStarter || event.seasonEnding || event.emergencyQuarterback)
   );
+  const priorityUnresolved = priorityDecision.attention || priorityDecision.status === "PENDING";
+  const unresolvedCount = briefing.length + (priorityUnresolved ? 1 : 0);
+  const urgentCount = briefing.filter((item) => item.status === "REQUIRED").length
+    + (priorityDecision.status === "REQUIRED" || priorityDecision.status === "BLOCKED" ? 1 : 0);
 
   const go = (destination: string): void => {
     if (destination === "WEEK_DECISIONS") return onNavigate("THIS_WEEK", "BUSINESS");
@@ -984,21 +1024,31 @@ function ProgramDashboard({ game, roster, onNavigate }: {
 
     <article className="panel span-two briefing-panel">
       <p className="eyebrow">What needs you this week</p>
-      {briefing.length === 0
+      {unresolvedCount === 0
         ? <><h2>You're square</h2><p className="muted">Nothing is being wasted. Advance the week whenever you're ready.</p></>
-        : <><h2>{(() => {
-          const urgent = briefing.filter((item) => item.urgency === "DO_THIS").length;
-          if (urgent === 0) return `${briefing.length} thing${briefing.length === 1 ? "" : "s"} worth a look`;
-          return `${urgent} thing${urgent === 1 ? "" : "s"} ${urgent === 1 ? "is" : "are"} costing you right now`;
-        })()}</h2>
-          <div className="briefing-list">{briefing.map((item) =>
-            <button className={`briefing-item ${item.urgency.toLowerCase()}`} key={item.id} onClick={() => go(item.destination)}>
-              <span className="briefing-flag">{item.urgency === "DO_THIS" ? "Fix this" : "Worth a look"}</span>
+        : <><h2>{urgentCount === 0
+          ? `${unresolvedCount} thing${unresolvedCount === 1 ? "" : "s"} worth a look`
+          : `${urgentCount} thing${urgentCount === 1 ? "" : "s"} ${urgentCount === 1 ? "is" : "are"} costing you right now`}</h2>
+          <div className="briefing-list">
+            {priorityUnresolved && <button
+              className={`briefing-item ${priorityDecision.status.toLowerCase()}`}
+              onClick={() => onNavigate("THIS_WEEK", "WEEK")}>
+              <span className="briefing-flag">{priorityDecision.status[0]}{priorityDecision.status.slice(1).toLowerCase()}</span>
+              <strong>Weekly priorities</strong>
+              <span className="briefing-detail">{priorityDecision.summary}</span>
+              <span className="briefing-action">{priorityDecision.action} →</span>
+            </button>}
+            {briefing.map((item) =>
+            <button className={`briefing-item ${item.status.toLowerCase()}`} key={item.id} onClick={() => go(item.destination)}>
+              <span className="briefing-flag">{item.status === "REQUIRED" ? "Required" : "Optional"}</span>
               <strong>{item.headline}</strong>
               <span className="briefing-detail">{item.detail}</span>
               <span className="briefing-action">{item.action} →</span>
             </button>)}
           </div></>}
+      {priorityDecision.status === "DONE" && <p className="decision-confirmation" aria-live="polite">
+        <strong>Done ✓ · Weekly priorities</strong><span>{priorityDecision.summary}</span>
+      </p>}
     </article>
 
     {currentInjuryEvent && (() => {
@@ -1882,6 +1932,7 @@ const INBOX_NOISE: ReadonlySet<GameEvent["type"]> = new Set([
   "GAME_PLAN_SET", "SCHEME_SET", "DEVELOPMENT_SPOTLIGHT_SET", "PLAYER_MEDIA_ACTION_SET",
   "DEPTH_CHART_UPDATED", "WEEKLY_FINANCES", "PLAYER_BRAND_UPDATED", "GAME_PLAN_REPORT",
   "WEEKLY_RECAP", "RANKINGS_UPDATED", "COMMAND_REJECTED",
+  "DECISION_AUDITED",
   // Every program emits these weekly; the player's own payoff already has a
   // home on the postgame screen. Left unfiltered they were twelve identical
   // rows — the same defect the "Prep Points Added" purge fixed once before.
@@ -2101,8 +2152,9 @@ const gamePlanLabels: Record<keyof GamePlan, string> = {
  * other. They are one screen now, and the tab bar is the intermediate step —
  * pick the part of the week to work on, then see only its controls.
  */
-function WeekHub({ game, pending, onQueue, initialTab }: {
-  game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void; initialTab: WeekTab | undefined;
+function WeekHub({ game, busy, inFlightDecision, pending, onQueue, initialTab }: {
+  game: GameView; busy: boolean; inFlightDecision: WeeklyPlanningCommand | null;
+  pending: GameCommand[]; onQueue: (command: GameCommand) => void; initialTab: WeekTab | undefined;
 }): ReactElement {
   const programId = game.playerProgramId;
   const [tab, setTab] = useState<WeekTab>(initialTab ?? "WEEK");
@@ -2117,12 +2169,13 @@ function WeekHub({ game, pending, onQueue, initialTab }: {
   const opponent = fixture ? game.state.programs[atHome ? fixture.awayProgramId : fixture.homeProgramId] ?? null : null;
 
   const capacity = focusCapacity(game.state, programId);
-  const chosen = activeFocuses(game.state, programId);
+  const priorityDecision = weeklyPriorityDecision(game.state, programId, inFlightDecision);
+  const chosen = priorityDecision.focuses;
   const scoutTargetId = scoutingTargetFor(game.state, programId);
   const flagged: Record<WeekTab, number> = {
     // A priority nobody claimed is a week the staff spends on nothing in
     // particular, and nothing banks. That is what the badge is for.
-    WEEK: chosen.length < capacity.capacity ? 1 : 0,
+    WEEK: priorityDecision.attention ? 1 : 0,
     SCOUTING: scouting.opponentProgramId && scouting.tiers.length === 0 ? 1 : 0,
     BUSINESS: decisions.filter((decision) => decision.attention).length,
     REPORT: 0
@@ -2135,9 +2188,9 @@ function WeekHub({ game, pending, onQueue, initialTab }: {
       </p>
       <h2>{opponent ? `${atHome ? "Hosting" : "At"} ${opponent.name}` : "No game this week"}</h2>
       <ul className="decision-list">
-        <li className={chosen.length < capacity.capacity ? "attention-row" : ""}>
-          <span>This week your staff is chasing</span>
-          <strong>{chosen.length > 0 ? chosen.map((focus) => WEEK_FOCUS_LABELS[focus]).join(" · ") : "nothing"}</strong>
+        <li className={priorityDecision.attention ? "attention-row" : ""}>
+          <span>{priorityDecision.status[0]}{priorityDecision.status.slice(1).toLowerCase()} · Weekly priorities</span>
+          <strong>{priorityDecision.summary}</strong>
         </li>
         <li>
           <span>Practice reps</span>
@@ -2159,8 +2212,8 @@ function WeekHub({ game, pending, onQueue, initialTab }: {
         <span>{entry.detail}</span>
       </button>)}
     </nav>
-    {tab === "WEEK" && <WeekPriorities game={game} pending={pending} onQueue={onQueue} />}
-    {tab === "SCOUTING" && <WeekScouting game={game} pending={pending} onQueue={onQueue} />}
+    {tab === "WEEK" && <WeekPriorities game={game} busy={busy} inFlightDecision={inFlightDecision} onQueue={onQueue} />}
+    {tab === "SCOUTING" && <WeekScouting game={game} busy={busy} inFlightDecision={inFlightDecision} onQueue={onQueue} />}
     {tab === "BUSINESS" && <WeekDecisions game={game} pending={pending} onQueue={onQueue} />}
     {tab === "REPORT" && <WeekReport game={game} />}
   </section>;
@@ -2182,20 +2235,18 @@ function WeekHub({ game, pending, onQueue, initialTab }: {
  * if you leave it alone, what happens if you pick it, and why it might matter
  * this particular week.
  */
-function WeekPriorities({ game, pending, onQueue }: {
-  game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void;
+function WeekPriorities({ game, busy, inFlightDecision, onQueue }: {
+  game: GameView; busy: boolean; inFlightDecision: WeeklyPlanningCommand | null;
+  onQueue: (command: GameCommand) => void;
 }): ReactElement {
   const programId = game.playerProgramId;
   const program = game.state.programs[programId]!;
   const capacity = focusCapacity(game.state, programId);
   const identity = program.schemeIdentity;
 
-  // The queued pick wins over what is committed, so the screen answers instantly
-  // rather than after the week is advanced.
-  const queued = [...pending].reverse()
-    .find((command): command is Extract<GameCommand, { type: "SET_WEEK_FOCUS" }> => command.type === "SET_WEEK_FOCUS");
+  const priorityDecision = weeklyPriorityDecision(game.state, programId, inFlightDecision);
   const cards = weekPriorities(game.state, programId);
-  const chosen: WeekFocus[] = queued ? queued.focuses : cards.filter((card) => card.chosen).map((card) => card.focus);
+  const chosen = priorityDecision.focuses;
   const isChosen = (focus: WeekFocus) => chosen.includes(focus);
 
   const toggle = (focus: WeekFocus): void => {
@@ -2207,15 +2258,13 @@ function WeekPriorities({ game, pending, onQueue }: {
     onQueue({ type: "SET_WEEK_FOCUS", programId, focuses: next });
   };
 
-  const ranked = [...cards].sort((left, right) => right.stakes - left.stakes);
-  const suggestion = ranked.find((card) => !isChosen(card.focus) && !card.blocked && card.stakes >= 55);
-
   return <div className="week-tab-body">
     <article className="panel focus-header">
       <p className="eyebrow">Week {game.state.week} · {capacity.power} staff rating</p>
-      <h2>{chosen.length === capacity.capacity
-        ? `Your staff is chasing ${chosen.length === 1 ? "one thing" : `${chosen.length} things`}`
-        : `Pick ${capacity.capacity - chosen.length} more`}</h2>
+      <div className={`decision-status-line ${priorityDecision.status.toLowerCase()}`} aria-live="polite">
+        <strong>{priorityDecision.status[0]}{priorityDecision.status.slice(1).toLowerCase()} · Weekly priorities</strong>
+        <span>{priorityDecision.summary}</span>
+      </div>
       <p className="muted">
         Everything below happens anyway — your coaches turn up and do their jobs. What you choose here is what they
         put the week into. <strong>{capacity.note}</strong>
@@ -2225,8 +2274,8 @@ function WeekPriorities({ game, pending, onQueue }: {
           <span className={index < chosen.length ? "focus-pip filled" : "focus-pip"} key={index} />)}
         <span className="muted">{chosen.length} of {capacity.capacity}</span>
       </div>
-      {suggestion && <p className="focus-suggestion">
-        <strong>Worth a look:</strong> {suggestion.label} — {suggestion.stakesNote}
+      {priorityDecision.status === "OPTIONAL" && <p className="focus-suggestion">
+        <strong>Optional:</strong> {priorityDecision.detail}
       </p>}
     </article>
 
@@ -2253,9 +2302,9 @@ function WeekPriorities({ game, pending, onQueue }: {
         </div>
         <p className="focus-why">{card.blocked ?? card.stakesNote}</p>
         <button className={picked ? "focus-button picked" : "focus-button"}
-          disabled={Boolean(card.blocked)}
+          disabled={busy || priorityDecision.status === "PENDING" || Boolean(card.blocked)}
           onClick={() => toggle(card.focus)}>
-          {picked ? "Chasing this" : card.blocked ? "Not available" : "Make it a priority"}
+          {priorityDecision.status === "PENDING" ? "Applying…" : picked ? "Chasing this" : card.blocked ? "Not available" : "Make it a priority"}
         </button>
       </article>;
     })}</div>
@@ -2421,17 +2470,18 @@ function WeekDecisions({ game, pending, onQueue }: {
  * probably is not worth opening at all. Points are allocated forward, so the
  * week a big game arrives is far too late to start.
  */
-function WeekScouting({ game, pending, onQueue }: {
-  game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void;
+function WeekScouting({ game, busy, inFlightDecision, onQueue }: {
+  game: GameView; busy: boolean; inFlightDecision: WeeklyPlanningCommand | null;
+  onQueue: (command: GameCommand) => void;
 }): ReactElement {
   const programId = game.playerProgramId;
   const program = game.state.programs[programId]!;
   const board = scoutingBoard(game.state, programId);
   const scouting = scoutingReport(game.state, programId);
   const level = program.facilities.SCOUTING ?? 1;
-  const queuedTarget = [...pending].reverse()
-    .find((command): command is Extract<GameCommand, { type: "SET_SCOUTING_TARGET" }> => command.type === "SET_SCOUTING_TARGET");
-  const target = queuedTarget ? queuedTarget.opponentProgramId : scoutingTargetFor(game.state, programId);
+  const target = inFlightDecision?.type === "SET_SCOUTING_TARGET" && inFlightDecision.programId === programId
+    ? inFlightDecision.opponentProgramId
+    : scoutingTargetFor(game.state, programId);
   const scoutFocused = activeFocuses(game.state, programId).includes("SCOUT");
 
   return <div className="week-tab-body">
@@ -2494,8 +2544,9 @@ function WeekScouting({ game, pending, onQueue }: {
             {nextTier ? ` · ${DOSSIER_THRESHOLDS[nextTier] - dossier.points} more points open ${SCOUTING_TIER_LABELS[nextTier].toLowerCase()}` : " · complete"}
           </p>
           <button className={isTarget ? "focus-button picked" : "focus-button"}
+            disabled={busy || inFlightDecision !== null}
             onClick={() => onQueue({ type: "SET_SCOUTING_TARGET", programId, opponentProgramId: dossier.opponentProgramId })}>
-            {isTarget ? "The film room is on this one" : `Put the film room on ${opponent.name}`}
+            {inFlightDecision?.type === "SET_SCOUTING_TARGET" ? "Applying…" : isTarget ? "The film room is on this one" : `Put the film room on ${opponent.name}`}
           </button>
         </div>;
       })}

@@ -1,5 +1,7 @@
-import type { CareerPath, GameCommand, GameEvent, GameState, ProgramId } from "@college-legends/model";
-import type { ProgramPreview } from "@college-legends/simulation";
+import type { CareerPath, DecisionActor, GameCommand, GameEvent, GameState, ProgramId } from "@college-legends/model";
+import type { DelegatedWeeklyPlanningDomain, DelegationPolicyId, ProgramPreview, WeeklyPlanningCommand } from "@college-legends/simulation";
+
+type ManualDecisionActor = Extract<DecisionActor, { mode: "MANUAL" }>;
 
 export type WorkerRequest =
   /** Generates a league and offers the jobs available at that career path's tier. */
@@ -9,6 +11,10 @@ export type WorkerRequest =
   | { type: "ADVANCE_WEEK"; requestId: string; playerProgramId: ProgramId; commands: GameCommand[] }
   /** Scouting resolves before the week is advanced, so the report can inform the plan. */
   | { type: "PREPARE"; requestId: string; playerProgramId: ProgramId; commands: GameCommand[] }
+  /** A weekly planning command resolved through the attributed decision contract. */
+  | { type: "PREPARE_DECISION"; requestId: string; playerProgramId: ProgramId; command: WeeklyPlanningCommand; actor: ManualDecisionActor }
+  /** Controlled engine-owned seam; the worker constructs and validates the staff actor. */
+  | { type: "PREPARE_DELEGATED"; requestId: string; playerProgramId: ProgramId; domain: DelegatedWeeklyPlanningDomain; staffId: string; policyId: DelegationPolicyId }
   /**
    * Closes the open offseason step for the whole league. One step at a time —
    * the player sees each one, and rivals plan against the same step.

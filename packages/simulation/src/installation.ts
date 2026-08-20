@@ -144,12 +144,16 @@ export function planExecution(
   // A camp spent on the playbook is still paying for the first few weeks.
   const camp = state.trainingCamp?.[programId];
   const campBonus = camp && camp.weeksRemaining > 0 && camp.focus === "INSTALL" ? TRAINING_CAMP_INSTALL_BONUS : 0;
-  const centre = base + repsBonus + facility + campBonus;
+  const uncampedCentre = base + repsBonus + facility;
+  const centre = uncampedCentre + campBonus;
   const width = clamp(0.32 - installer.rating / 100 * 0.16, 0.08, 0.32);
 
   const low = Number(clamp(centre - width / 2, 0.1, 0.99).toFixed(3));
   const high = Number(clamp(centre + width / 2, 0.12, 0.99).toFixed(3));
-  const expected = Number(((low + high) / 2).toFixed(3));
+  const uncampedLow = Number(clamp(uncampedCentre - width / 2, 0.1, 0.99).toFixed(3));
+  const uncampedHigh = Number(clamp(uncampedCentre + width / 2, 0.12, 0.99).toFixed(3));
+  const uncampedExpected = Number(((uncampedLow + uncampedHigh) / 2).toFixed(3));
+  const expected = Number(clamp(uncampedExpected + campBonus, 0.1, 0.99).toFixed(3));
 
   const limits: string[] = [];
   if (!installer.staff) limits.push("Nobody on staff is running practice. Your guys are figuring it out themselves.");

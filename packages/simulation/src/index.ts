@@ -1,8 +1,10 @@
 import type { OffseasonStep, PortalListingState, Recruitable, WeekFocus, AwardCandidate, DecisionAlert, DefensiveIdentity, DepthChart, GamePlan, InjurySeverity, MatchupOutcome, OffensiveIdentity, OpponentScoutingReport, PlayerInjury, SchemeIdentity, ScoutingTier, TeamUnit, TeamUnitRatings, DevelopmentFocus, DivisionId, FacilityType, GameCommand, GameEvent, GameState, Player, PlayerGameStatLine, PlayerMediaAction, PlayerRating, PlayerRatings, PlayoffSeed, Position, PostseasonGame, PostseasonRound, Program, Prospect, ProspectScoutingState, RecruitPriority, RecruitingEvaluation, RecruitingProgramState, RecruitingSearchType, SeasonAward, SeasonAwardType, SeasonHistory, SimulationResult, StaffFocus, StaffMember, StaffRole, OpponentDossier } from "@college-legends/model";
+import type { DecisionActor, DecisionAuditRecord, DecisionItem, DecisionKnowledgeSnapshot, DecisionRecord, StandingDecisionResult } from "@college-legends/model";
 import { DEFAULT_BALANCE, FICTIONAL_PROGRAMS, fictionalPersonName, PROGRAM_CHARACTERS } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
+import { createDecisionAudit, createDecisionProjection, decisionCommandKey, retainedDecisionAudits, retainedDecisionEventHistory, submitDecisionProjection } from "./decisions.js";
 import { attributeByRole, attributesFor, computeOverall, ratingByRole, type AttributeDefinition } from "./attributes.js";
-import { weeklyBriefing as buildBriefing, type BriefingItem } from "./briefing.js";
+import { weeklyBriefing as buildBriefing, type BriefingItem, type BriefingOptions } from "./briefing.js";
 import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES, bestSchemeFor, programRoster, coachSchemeFit, schemePersonnel } from "./scheme.js";
 import { DEFENSIVE_SPOTS, MINIMUM_SNAP_SHARE, OFFENSIVE_SPOTS, personnelLabel, schemeSpots, snapShares, spotsForRoom } from "./rotation.js";
 import { DEFAULT_GAME_PLAN, IDENTITY_BASE_DEFENSE, IDENTITY_BASE_PLAN, OFFENSIVE_IDENTITY_LABELS, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
@@ -247,6 +249,14 @@ export { boxScore, latestBoxScore } from "./boxscore.js";
 export type { BoxScore, BoxScoreGroup, BoxScoreRow, BoxScoreTeam, BoxScoreTeamStat } from "./boxscore.js";
 export type { BriefingDestination, BriefingItem, SeasonExpectation } from "./briefing.js";
 export { AddressableRng } from "./rng.js";
+export {
+  canTransitionDecisionStatus,
+  createDecisionAudit,
+  createDecisionProjection,
+  DECISION_AUDIT_LIMIT,
+  decisionCommandKey,
+  submitDecisionProjection
+} from "./decisions.js";
 
 const clamp = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value));
 const clone = <T>(value: T): T => structuredClone(value);
@@ -258,15 +268,17 @@ const clone = <T>(value: T): T => structuredClone(value);
  * mutable graph and copy the append-only arrays instead.
  */
 function cloneGameState(value: Readonly<GameState>): GameState {
-  const { playerGameStats, playerSeasonStats, eventHistory, ...mutable } = value;
+  const { playerGameStats, playerSeasonStats, decisionAudits = [], eventHistory, ...mutable } = value;
   const state = structuredClone({
     ...mutable,
     playerGameStats: [],
     playerSeasonStats: [],
+    decisionAudits: [],
     eventHistory: []
   }) as GameState;
   state.playerGameStats = [...playerGameStats];
   state.playerSeasonStats = [...(playerSeasonStats ?? [])];
+  state.decisionAudits = [...decisionAudits];
   state.eventHistory = [...eventHistory];
   return state;
 }
@@ -939,7 +951,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
     // content carried one set of development rates and every league ever created
     // carried another, so tuning the balance file changed nothing at all.
     identity: { rootSeed, balanceConfiguration: clone(DEFAULT_BALANCE), simulationVersion: "0.1.0" },
-    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, sponsorships: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, weekFocus: {}, scoutingTarget: {}, dossiers: {}, boosters: {}, nil: {}, staff: {}, depthCharts: {}, playerGameStats: [], playerSeasonStats: [], schedule: [], seasonHistory: [], eventHistory: []
+    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, sponsorships: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, weekFocus: {}, scoutingTarget: {}, dossiers: {}, boosters: {}, nil: {}, staff: {}, depthCharts: {}, playerGameStats: [], playerSeasonStats: [], schedule: [], seasonHistory: [], decisionAudits: [], eventHistory: []
   };
   const rosterPositions = Object.entries(ROSTER_COMPOSITION).flatMap(([position, count]) =>
     Array.from({ length: count }, () => position as Position)
@@ -1430,7 +1442,11 @@ function balanceHomeAndAway(schedule: GameState["schedule"]): void {
   }
 }
 
-export function advanceWeek(input: Readonly<GameState>, commands: readonly GameCommand[] = []): SimulationResult {
+export function advanceWeek(
+  input: Readonly<GameState>,
+  commands: readonly GameCommand[] = [],
+  deferStandingClosure = false
+): SimulationResult {
   const state = cloneGameState(input);
   if (state.phase !== "REGULAR_SEASON") {
     throw new Error("Review the opening roster and begin the season before advancing a week.");
@@ -1486,8 +1502,11 @@ export function advanceWeek(input: Readonly<GameState>, commands: readonly GameC
   // no schedule to prepare against until the new one is built.
   if (state.week > 14) rolloverSeason(state, events);
   else refreshPreparation(state, events);
+  if (!deferStandingClosure) closeStandingDecisionAudits(state, events);
   state.eventHistory.push(...events);
-  if (state.eventHistory.length > 10_000) state.eventHistory = state.eventHistory.slice(-10_000);
+  if (state.eventHistory.length > 10_000) {
+    state.eventHistory = retainedDecisionEventHistory(state.eventHistory, state.decisionAudits ?? [], 10_000);
+  }
   return { state, events };
 }
 
@@ -1574,6 +1593,19 @@ function captureFocusInputs(state: Readonly<GameState>): Map<string, FocusInputs
  * previously never mentioned again after it was used, which is a large part of
  * why it read as optional homework rather than as the decision it is.
  */
+function latestEffectiveDecisionSubmission(
+  state: Readonly<GameState>,
+  command: Readonly<GameCommand>
+): string | null {
+  const key = decisionCommandKey(command);
+  const latestEffective = [...(state.decisionAudits ?? [])].reverse().find((audit) =>
+    audit.programId === command.programId
+    && audit.commandType === command.type
+    && audit.status === "DONE"
+    && audit.commandKey === key);
+  return latestEffective?.submissionId ?? null;
+}
+
 function recordFocusPayoffs(state: GameState, inputs: Map<string, FocusInputs>, events: GameEvent[]): void {
   const developedByPlayer = new Map<string, number>();
   const recruitingByProgram = new Map<string, number>();
@@ -1601,6 +1633,14 @@ function recordFocusPayoffs(state: GameState, inputs: Map<string, FocusInputs>, 
       week: state.week,
       programId,
       focuses: [...focuses],
+      weeklyPrioritySubmissionId: latestEffectiveDecisionSubmission(
+        state,
+        { type: "SET_WEEK_FOCUS", programId, focuses }
+      ),
+      scoutingTargetSubmissionId: latestEffectiveDecisionSubmission(
+        state,
+        { type: "SET_SCOUTING_TARGET", programId, opponentProgramId: captured.scoutedOpponentId }
+      ),
       offensiveExecution: captured.offensiveExecution,
       defensiveExecution: captured.defensiveExecution,
       scoutingReadiness: captured.scoutingReadiness,
@@ -1660,7 +1700,10 @@ function applyWeekFocus(state: GameState, programId: string, events?: GameEvent[
   state.weekFocus ??= {};
   state.scoutingTarget ??= {};
   const stored = state.weekFocus[programId];
-  if (!Array.isArray(stored) || stored.length === 0) {
+  // Missing means the program has never chosen and receives the standing
+  // default. An explicit empty array is a legal "chase nothing" decision; it
+  // must remain empty so the UI's lost-capacity warning is simulation truth.
+  if (!Array.isArray(stored)) {
     state.weekFocus[programId] = defaultFocuses(state, programId);
   }
   const focuses = activeFocuses(state, programId);
@@ -1783,8 +1826,699 @@ export function prepareWeek(input: Readonly<GameState>, commands: readonly GameC
     resolveCommands(state, preparationCommands, new AddressableRng(state.identity.rootSeed).fork("preparation", String(state.season), String(state.week)), events);
   }
   state.eventHistory.push(...events);
-  if (state.eventHistory.length > 10_000) state.eventHistory = state.eventHistory.slice(-10_000);
+  if (state.eventHistory.length > 10_000) {
+    state.eventHistory = retainedDecisionEventHistory(state.eventHistory, state.decisionAudits ?? [], 10_000);
+  }
   return { state, events };
+}
+
+/**
+ * The first shared decision integration: weekly priorities and scouting use the
+ * exact GameCommand path they used before, with actor and knowledge attribution
+ * added around it. New decision surfaces should expand this command union only
+ * after their accepted path emits a causal domain event.
+ */
+export type WeeklyPlanningCommand = Extract<
+  GameCommand,
+  { type: "SET_WEEK_FOCUS" | "SET_SCOUTING_TARGET" }
+>;
+
+export interface DecisionSimulationResult extends SimulationResult {
+  audit: DecisionAuditRecord;
+}
+
+export interface DecisionBatchSimulationResult extends SimulationResult {
+  audits: DecisionAuditRecord[];
+}
+
+export type DelegationPolicyId = "WEEKLY_PLANNING";
+export type DelegatedWeeklyPlanningDomain = "WEEK_FOCUS" | "SCOUTING_TARGET";
+
+const RETIRED_COMPATIBILITY_COMMAND_TYPES = new Set<GameCommand["type"]>([
+  "RED_SHIRT",
+  "SET_GAME_PLAN",
+  "SET_WEEK_HOURS",
+  "SET_STAFF_ALLOCATION",
+  "SET_PRACTICE_REPS",
+  "ALLOCATE_SCOUTING",
+  "CONTINUE_OFFSEASON"
+]);
+
+function commandDecisionSlot(command: Readonly<GameCommand>): string {
+  switch (command.type) {
+    case "OFFER_PROSPECT":
+    case "SCHEDULE_VISIT":
+    case "INVEST_RECRUITING_POINTS":
+    case "SET_NIL_OFFER":
+      return `${command.type}:${command.prospectId}`;
+    case "EVALUATE_PROSPECT":
+      return `${command.type}:${command.prospectId}:${command.evaluation}`;
+    case "SEARCH_PROSPECTS":
+      return `${command.type}:${command.searchType}:${command.position ?? "ALL"}`;
+    case "RED_SHIRT":
+    case "SET_REDSHIRT":
+      return `${command.type}:${command.playerId}`;
+    case "SET_DEPTH_CHART":
+      return `${command.type}:${command.position}`;
+    case "SET_DEVELOPMENT_SPOTLIGHT":
+    case "SET_PLAYER_MEDIA_ACTION":
+      return command.type;
+    case "UPGRADE_FACILITY":
+      return `${command.type}:${command.facility}`;
+    case "SET_STAFF_ALLOCATION":
+    case "REPLACE_STAFF":
+      return `${command.type}:${command.staffId}`;
+    case "SET_WEEK_HOURS":
+      return `${command.type}:${command.focus}`;
+    case "SET_SCOUTING_TARGET":
+    case "SET_WEEK_FOCUS":
+    case "SET_GAME_PLAN":
+    case "SET_TICKET_PRICE":
+    case "SET_ADVERTISING":
+    case "ACCEPT_SPONSORSHIP":
+    case "SET_PRACTICE_REPS":
+    case "CHOOSE_BOOSTER":
+    case "SET_SCHEME":
+    case "CONTINUE_OFFSEASON":
+    case "SET_TRAINING_CAMP_FOCUS":
+    case "SCHEDULE_MARQUEE_HOME_GAME":
+      return command.type;
+    case "ALLOCATE_SCOUTING":
+      return `${command.type}:${command.opponentProgramId}`;
+    case "BID_PORTAL_PLAYER":
+      return `${command.type}:${command.playerId}`;
+  }
+}
+
+function commandDecisionDomain(command: Readonly<GameCommand>): "FOOTBALL" | "FINANCE" | "ROSTER" | "DEVELOPMENT" | "STAFF" | "RECRUITING" | "RISK" {
+  if (command.type === "SET_TICKET_PRICE" || command.type === "SET_ADVERTISING"
+    || command.type === "ACCEPT_SPONSORSHIP" || command.type === "UPGRADE_FACILITY") return "FINANCE";
+  if (command.type === "SET_DEPTH_CHART" || command.type === "RED_SHIRT"
+    || command.type === "SET_REDSHIRT" || command.type === "BID_PORTAL_PLAYER") return "ROSTER";
+  if (command.type === "SET_DEVELOPMENT_SPOTLIGHT" || command.type === "SET_TRAINING_CAMP_FOCUS") return "DEVELOPMENT";
+  if (command.type === "SET_STAFF_ALLOCATION" || command.type === "SET_WEEK_HOURS"
+    || command.type === "SET_WEEK_FOCUS" || command.type === "REPLACE_STAFF") return "STAFF";
+  if (command.type === "OFFER_PROSPECT" || command.type === "SCHEDULE_VISIT"
+    || command.type === "SEARCH_PROSPECTS" || command.type === "EVALUATE_PROSPECT"
+    || command.type === "INVEST_RECRUITING_POINTS" || command.type === "SET_NIL_OFFER") return "RECRUITING";
+  return "FOOTBALL";
+}
+
+function genericDecisionKnowledge(state: Readonly<GameState>, command: Readonly<GameCommand>): DecisionKnowledgeSnapshot {
+  return {
+    programId: command.programId,
+    season: state.season,
+    week: state.week,
+    phase: state.phase,
+    facts: [
+      {
+        key: "calendar.week",
+        value: state.week,
+        source: "PUBLIC",
+        entityId: null,
+        observedSeason: state.season,
+        observedWeek: state.week
+      },
+      {
+        key: "command.type",
+        value: command.type,
+        source: "PROGRAM_INTERNAL",
+        entityId: command.programId,
+        observedSeason: state.season,
+        observedWeek: state.week
+      }
+    ]
+  };
+}
+
+/**
+ * Engine-owned attribution envelope for non-delegated commands. The resolver
+ * remains GameCommand; this adds no actor-specific legality path.
+ */
+export function createGameDecision<TCommand extends GameCommand>(
+  state: Readonly<GameState>,
+  command: TCommand,
+  actor: Exclude<DecisionActor, { mode: "DELEGATED" }>,
+  sequence?: number,
+  knowledgeOverride?: DecisionKnowledgeSnapshot
+): DecisionRecord<TCommand> {
+  if (RETIRED_COMPATIBILITY_COMMAND_TYPES.has(command.type)) {
+    throw new Error(`${command.type} is a retired compatibility command, not a live attributed decision.`);
+  }
+  if (actor.mode === "AI" && actor.actorId !== `ai:${command.programId}`) {
+    throw new Error("An AI decision actor must belong to the command program.");
+  }
+  const knowledge = knowledgeOverride ?? genericDecisionKnowledge(state, command);
+  if (knowledge.programId !== command.programId
+    || knowledge.season !== state.season
+    || knowledge.week !== state.week
+    || knowledge.phase !== state.phase) {
+    throw new Error("Decision knowledge must match the command program and current simulation boundary.");
+  }
+  const item: DecisionItem = {
+    id: `command:${state.season}:${state.week}:${command.programId}:${commandDecisionSlot(command)}`,
+    status: "REQUIRED",
+    programId: command.programId,
+    actor
+  };
+  const submissionSequence = sequence ?? (state.decisionAudits ?? [])
+    .filter((audit) => audit.decisionId === item.id).length;
+  const projection = createDecisionProjection(item, command, knowledge, () => [{
+    key: "command-submission",
+    domain: commandDecisionDomain(command),
+    unit: "COMMAND",
+    low: 1,
+    high: 1,
+    confidence: 1,
+    source: command.type
+  }]);
+  return submitDecisionProjection(projection, {
+    season: state.season,
+    week: state.week,
+    phase: state.phase,
+    sequence: submissionSequence
+  });
+}
+
+/**
+ * Build the redacted submission envelope for the two weekly planning commands.
+ * Callers provide an actor, never a second resolver. The projection callback
+ * receives only this snapshot, so opponent ratings and other hidden state are
+ * not available to the decision projection.
+ */
+export function createWeeklyPlanningDecision(
+  state: Readonly<GameState>,
+  command: WeeklyPlanningCommand,
+  actor: DecisionActor,
+  sequence?: number,
+  knowledgeOverride?: DecisionKnowledgeSnapshot
+): DecisionRecord<WeeklyPlanningCommand> {
+  const item: DecisionItem = {
+    id: `${command.type === "SET_WEEK_FOCUS" ? "weekly-priorities" : "scouting-target"}:${state.season}:${state.week}:${command.programId}`,
+    status: actor.mode === "DELEGATED" ? "DELEGATED" : "REQUIRED",
+    programId: command.programId,
+    actor
+  };
+  const commonFacts: DecisionKnowledgeSnapshot["facts"] = [
+    {
+      key: "calendar.week",
+      value: state.week,
+      source: "PUBLIC",
+      entityId: null,
+      observedSeason: state.season,
+      observedWeek: state.week
+    }
+  ];
+  const facts: DecisionKnowledgeSnapshot["facts"] = command.type === "SET_WEEK_FOCUS"
+    ? [...commonFacts, {
+        key: "staff.focusCapacity",
+        value: focusCapacity(state, command.programId).capacity,
+        source: "PROGRAM_INTERNAL" as const,
+        entityId: command.programId,
+        observedSeason: state.season,
+        observedWeek: state.week
+      }]
+    : [...commonFacts, {
+        key: "scouting.currentDossierPoints",
+        value: command.opponentProgramId === null
+          ? 0
+          : state.dossiers?.[command.programId]?.[command.opponentProgramId] ?? 0,
+        source: "SCOUTED" as const,
+        entityId: command.opponentProgramId,
+        observedSeason: state.season,
+        observedWeek: state.week
+      }];
+  const defaultKnowledge: DecisionKnowledgeSnapshot = {
+    programId: command.programId,
+    season: state.season,
+    week: state.week,
+    phase: state.phase,
+    facts
+  };
+  const knowledge = knowledgeOverride ?? defaultKnowledge;
+  if (knowledge.programId !== command.programId
+    || knowledge.season !== state.season
+    || knowledge.week !== state.week
+    || knowledge.phase !== state.phase) {
+    throw new Error("Decision knowledge must match the command program and current simulation boundary.");
+  }
+  const submissionSequence = sequence ?? (state.decisionAudits ?? []).filter((audit) =>
+    audit.decisionId === item.id
+    && audit.submittedAt.season === state.season
+    && audit.submittedAt.week === state.week).length;
+  const projection = createDecisionProjection(item, command, knowledge, () => command.type === "SET_WEEK_FOCUS"
+    ? [{
+        key: "selected-priorities",
+        domain: "STAFF",
+        unit: "PRIORITIES",
+        low: command.focuses.length,
+        high: command.focuses.length,
+        confidence: 1,
+        source: "SET_WEEK_FOCUS"
+      }]
+    : [{
+        key: "scouting-target",
+        domain: "FOOTBALL",
+        unit: "ASSIGNMENT",
+        low: command.opponentProgramId === null ? 0 : 1,
+        high: command.opponentProgramId === null ? 0 : 1,
+        confidence: 1,
+        source: "SET_SCOUTING_TARGET"
+      }]);
+  return submitDecisionProjection(projection, {
+    season: state.season,
+    week: state.week,
+    phase: state.phase,
+    sequence: submissionSequence
+  });
+}
+
+export interface DelegatedWeeklyPlanningAuthority {
+  staffId: string;
+  delegatedByActorId: string;
+  policyId: DelegationPolicyId;
+}
+
+/**
+ * Controlled production seam for delegation. V2 W3 may add policies later;
+ * ARCH-001 authorizes only the program's head coach to own weekly planning.
+ */
+export function createDelegatedWeeklyPlanningDecision(
+  state: Readonly<GameState>,
+  command: WeeklyPlanningCommand,
+  authority: DelegatedWeeklyPlanningAuthority,
+  sequence?: number,
+  selectionKnowledge?: DecisionKnowledgeSnapshot
+): DecisionRecord<WeeklyPlanningCommand> {
+  const staff = state.staff[authority.staffId];
+  if (!staff || staff.programId !== command.programId) {
+    throw new Error("Delegated staff must belong to the command program.");
+  }
+  if (authority.policyId !== "WEEKLY_PLANNING" || staff.role !== "HEAD_COACH") {
+    throw new Error("That staff member is not authorized for the weekly planning policy.");
+  }
+  if (authority.delegatedByActorId !== `player:${command.programId}`) {
+    throw new Error("Delegated weekly planning must be granted by the program's player actor.");
+  }
+  const actor: Extract<DecisionActor, { mode: "DELEGATED" }> = {
+    mode: "DELEGATED",
+    actorId: staff.id,
+    displayName: staff.name,
+    staffId: staff.id,
+    delegatedByActorId: authority.delegatedByActorId,
+    policyId: authority.policyId
+  };
+  const base = createWeeklyPlanningDecision(state, command, actor, sequence, selectionKnowledge);
+  const knowledge: DecisionKnowledgeSnapshot = {
+    ...base.knowledge,
+    facts: [...base.knowledge.facts, {
+      key: "delegation.authorization.v1",
+      value: `${staff.id}:${authority.policyId}`,
+      source: "PROGRAM_INTERNAL",
+      entityId: staff.id,
+      observedSeason: state.season,
+      observedWeek: state.week
+    }]
+  };
+  return createWeeklyPlanningDecision(state, command, actor, sequence, knowledge);
+}
+
+function isWeeklyPlanningDecision(
+  decision: Readonly<DecisionRecord<GameCommand>>
+): decision is DecisionRecord<WeeklyPlanningCommand> {
+  return decision.command.type === "SET_WEEK_FOCUS" || decision.command.type === "SET_SCOUTING_TARGET";
+}
+
+function sameOrderedValues<T>(left: readonly T[], right: readonly T[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function eventMatchesAcceptedCommand(event: Readonly<GameEvent>, command: Readonly<GameCommand>): boolean {
+  if (!("programId" in event) || event.programId !== command.programId) return false;
+  switch (command.type) {
+    case "OFFER_PROSPECT":
+      return event.type === "PROSPECT_OFFERED" && event.prospectId === command.prospectId && event.extended === command.extend;
+    case "SCHEDULE_VISIT":
+      return event.type === "RECRUITING_VISIT_SCHEDULED" && event.prospectId === command.prospectId;
+    case "SEARCH_PROSPECTS":
+      return event.type === "PROSPECTS_DISCOVERED" && event.searchType === command.searchType
+        && event.position === command.position;
+    case "EVALUATE_PROSPECT":
+      return event.type === "PROSPECT_EVALUATED" && event.prospectId === command.prospectId
+        && event.evaluation === command.evaluation;
+    case "INVEST_RECRUITING_POINTS":
+      return event.type === "RECRUITING_INVESTMENT" && event.prospectId === command.prospectId
+        && event.pointsSpent === Math.trunc(command.points);
+    case "SET_REDSHIRT":
+      return event.type === "REDSHIRT_STATUS_CHANGED" && event.playerId === command.playerId
+        && (command.enabled ? event.status === "REDSHIRTING" : event.status !== "REDSHIRTING");
+    case "SET_DEPTH_CHART":
+      return event.type === "DEPTH_CHART_UPDATED" && event.position === command.position
+        && sameOrderedValues(event.playerIds, command.playerIds);
+    case "SET_DEVELOPMENT_SPOTLIGHT":
+      return event.type === "DEVELOPMENT_SPOTLIGHT_SET" && event.focus === command.focus
+        && JSON.stringify(event.target) === JSON.stringify(command.target);
+    case "UPGRADE_FACILITY":
+      return event.type === "FACILITY_UPGRADED" && event.facility === command.facility;
+    case "SET_PLAYER_MEDIA_ACTION":
+      return event.type === "PLAYER_MEDIA_ACTION_SET" && event.playerId === command.playerId
+        && event.action === command.action;
+    case "SET_TICKET_PRICE":
+      return event.type === "TICKET_PRICE_SET" && event.price === Math.round(command.price);
+    case "SET_ADVERTISING":
+      return event.type === "ADVERTISING_SET" && event.spend === Math.round(command.spend);
+    case "ACCEPT_SPONSORSHIP":
+      return event.type === "SPONSORSHIP_ACCEPTED" && event.offerId === command.offerId;
+    case "SET_WEEK_FOCUS":
+      return event.type === "WEEK_FOCUS_SET" && sameOrderedValues(event.focuses, [...new Set(command.focuses)]);
+    case "SET_SCOUTING_TARGET":
+      return event.type === "SCOUTING_TARGET_SET" && event.opponentProgramId === command.opponentProgramId;
+    case "CHOOSE_BOOSTER":
+      return event.type === "BOOSTER_RESOLVED" && event.optionId === command.optionId;
+    case "SET_NIL_OFFER":
+      return event.type === "NIL_OFFER_SET" && event.prospectId === command.prospectId
+        && event.weeklyAmount === Math.max(0, Math.round(command.weeklyAmount));
+    case "SET_SCHEME":
+      return event.type === "SCHEME_SET" && Object.entries(command.scheme)
+        .every(([key, value]) => event.scheme[key as keyof SchemeIdentity] === value);
+    case "REPLACE_STAFF":
+      return event.type === "STAFF_REPLACED" && event.departingStaffId === command.staffId
+        && event.arrivingStaffId === `${command.programId}-staff-${command.candidateId.replace(/[^A-Za-z0-9]/g, "-")}`;
+    case "SCHEDULE_MARQUEE_HOME_GAME":
+      return event.type === "MARQUEE_GAME_SCHEDULED" && event.opponentProgramId === command.opponentProgramId;
+    case "BID_PORTAL_PLAYER":
+      return event.type === "PORTAL_BID_SET" && event.playerId === command.playerId
+        && event.points === Math.trunc(command.points)
+        && event.weeklyNil === Math.max(0, Math.round(command.weeklyNil));
+    case "SET_TRAINING_CAMP_FOCUS":
+      return event.type === "TRAINING_CAMP_SET" && event.focus === command.focus;
+    case "RED_SHIRT":
+    case "SET_GAME_PLAN":
+    case "SET_PRACTICE_REPS":
+    case "SET_STAFF_ALLOCATION":
+    case "SET_WEEK_HOURS":
+    case "ALLOCATE_SCOUTING":
+    case "CONTINUE_OFFSEASON":
+      return false;
+  }
+}
+
+function createTaggedDecisionAudit(
+  decision: Readonly<DecisionRecord<GameCommand>>,
+  events: GameEvent[],
+  rejectionReason: string | null,
+  resolution: "IMMEDIATE" | "STANDING" = "IMMEDIATE"
+): DecisionAuditRecord {
+  events.forEach((event, ordinal) => {
+    event.decisionCauseId = `${decision.submissionId}:event:${ordinal}`;
+  });
+  return createDecisionAudit(decision, events, rejectionReason, resolution);
+}
+
+type StandingCommand = Extract<GameCommand, { type: "SET_NIL_OFFER" | "BID_PORTAL_PLAYER" }>;
+
+function standingCommand(audit: Readonly<DecisionAuditRecord>): StandingCommand | null {
+  if (audit.commandType !== "SET_NIL_OFFER" && audit.commandType !== "BID_PORTAL_PLAYER") return null;
+  try {
+    return JSON.parse(audit.commandKey) as StandingCommand;
+  } catch {
+    return null;
+  }
+}
+
+function closeStandingAudit(
+  audit: Readonly<DecisionAuditRecord>,
+  event: GameEvent,
+  result: StandingDecisionResult
+): DecisionAuditRecord {
+  if (!audit.outcomePending) return audit as DecisionAuditRecord;
+  const causeId = `${audit.submissionId}:outcome:0`;
+  event.decisionOutcomeCauseIds = [...new Set([...(event.decisionOutcomeCauseIds ?? []), causeId])].sort();
+  return {
+    ...audit,
+    outcomePending: false,
+    standingOutcome: {
+      result,
+      causes: [{ id: causeId, eventType: event.type, ordinal: 0 }]
+    }
+  };
+}
+
+/** Close standing submissions against exact market results without rewriting intent. */
+function closeStandingDecisionAudits(state: GameState, events: GameEvent[]): void {
+  let audits = state.decisionAudits ?? [];
+  const close = (event: GameEvent, resultFor: (audit: DecisionAuditRecord, command: StandingCommand) => StandingDecisionResult | null): void => {
+    audits = audits.map((audit) => {
+      if (!audit.outcomePending) return audit;
+      const command = standingCommand(audit);
+      const result = command ? resultFor(audit, command) : null;
+      return result ? closeStandingAudit(audit, event, result) : audit;
+    });
+  };
+
+  // A newer absolute offer/bid replaces the old submission for the same slot.
+  for (const event of events) {
+    if (event.type !== "NIL_OFFER_SET" && event.type !== "PORTAL_BID_SET") continue;
+    const matching = audits.filter((audit) => {
+      if (!audit.outcomePending) return false;
+      const command = standingCommand(audit);
+      return event.type === "NIL_OFFER_SET"
+        ? command?.type === "SET_NIL_OFFER" && command.programId === event.programId && command.prospectId === event.prospectId
+        : command?.type === "BID_PORTAL_PLAYER" && command.programId === event.programId && command.playerId === event.playerId;
+    });
+    const latestSubmissionId = [...matching].sort((left, right) =>
+      left.submittedAt.season - right.submittedAt.season
+      || left.submittedAt.week - right.submittedAt.week
+      || left.submittedAt.sequence - right.submittedAt.sequence
+      || left.submissionId.localeCompare(right.submissionId)).at(-1)?.submissionId;
+    const withdrawn = event.type === "NIL_OFFER_SET" ? event.weeklyAmount === 0 : event.withdrawn;
+    close(event, (audit, command) => {
+      const sameSlot = event.type === "NIL_OFFER_SET"
+        ? command.type === "SET_NIL_OFFER" && command.programId === event.programId && command.prospectId === event.prospectId
+        : command.type === "BID_PORTAL_PLAYER" && command.programId === event.programId && command.playerId === event.playerId;
+      if (!sameSlot) return null;
+      if (withdrawn) return "WITHDRAWN";
+      return audit.submissionId === latestSubmissionId ? null : "SUPERSEDED";
+    });
+  }
+
+  for (const event of events) {
+    if (event.type === "NIL_OFFER_RESOLVED") {
+      close(event, (_audit, command) => command.type === "SET_NIL_OFFER"
+        && command.programId === event.programId && command.prospectId === event.prospectId
+        ? event.result
+        : null);
+    }
+    if (event.type === "PORTAL_PLAYER_SIGNED") {
+      close(event, (_audit, command) => command.type === "BID_PORTAL_PLAYER" && command.playerId === event.playerId
+        ? (command.programId === event.programId ? "WON" : "LOST")
+        : null);
+    }
+    if (event.type === "PORTAL_PLAYER_UNCLAIMED") {
+      close(event, (_audit, command) => command.type === "BID_PORTAL_PLAYER" && command.playerId === event.playerId
+        ? "UNCLAIMED"
+        : null);
+    }
+  }
+  state.decisionAudits = audits;
+}
+
+function orderedDecisions(
+  input: Readonly<GameState>,
+  decisions: readonly DecisionRecord<GameCommand>[]
+): DecisionRecord<GameCommand>[] {
+  const ordered = [...decisions].sort((left, right) =>
+    decisionCommandKey(left.command).localeCompare(decisionCommandKey(right.command))
+    || left.submissionId.localeCompare(right.submissionId));
+  const seenIds = new Set<string>();
+  for (const decision of ordered) {
+    if (decision.status !== "PENDING") throw new Error("Only a pending decision record can be committed.");
+    if (RETIRED_COMPATIBILITY_COMMAND_TYPES.has(decision.command.type)) {
+      throw new Error(`${decision.command.type} is a retired compatibility command, not a live attributed decision.`);
+    }
+    if (seenIds.has(decision.id)) throw new Error(`Duplicate decision id: ${decision.id}`);
+    seenIds.add(decision.id);
+    if (decision.command.programId !== decision.knowledge.programId) {
+      throw new Error("Decision command and knowledge must belong to the same program.");
+    }
+    if (decision.knowledge.season !== input.season
+      || decision.knowledge.week !== input.week
+      || decision.knowledge.phase !== input.phase) {
+      throw new Error("This decision record is stale for the current simulation boundary.");
+    }
+    if (decision.actor.mode === "AI" && decision.actor.actorId !== `ai:${decision.command.programId}`) {
+      throw new Error("An AI decision actor must belong to the command program.");
+    }
+    if (decision.actor.mode === "DELEGATED") {
+      const staff = input.staff[decision.actor.staffId];
+      const authorization = `${decision.actor.staffId}:WEEKLY_PLANNING`;
+      if (!isWeeklyPlanningDecision(decision)
+        || decision.actor.policyId !== "WEEKLY_PLANNING"
+        || !staff
+        || staff.id !== decision.actor.actorId
+        || staff.name !== decision.actor.displayName
+        || staff.programId !== decision.command.programId
+        || staff.role !== "HEAD_COACH"
+        || decision.actor.delegatedByActorId !== `player:${decision.command.programId}`
+        || !decision.knowledge.facts.some((fact) =>
+          fact.key === "delegation.authorization.v1"
+          && fact.value === authorization
+          && fact.entityId === staff.id)) {
+        throw new Error("Delegated decision authority is not valid for this command.");
+      }
+    }
+  }
+  return ordered;
+}
+
+function attachDecisionAudits(
+  input: Readonly<GameState>,
+  resolved: SimulationResult,
+  ordered: readonly DecisionRecord<GameCommand>[]
+): DecisionBatchSimulationResult {
+  const audits = ordered.map((decision) => {
+    const commandKey = decisionCommandKey(decision.command);
+    const rejection = resolved.events.find((event): event is Extract<GameEvent, { type: "COMMAND_REJECTED" }> =>
+      event.type === "COMMAND_REJECTED"
+      && event.programId === decision.command.programId
+      && decisionCommandKey(event.command) === commandKey);
+    if (rejection) return createTaggedDecisionAudit(decision, [rejection], rejection.reason);
+
+    const resolution = decision.command.type === "SET_NIL_OFFER" || decision.command.type === "BID_PORTAL_PLAYER"
+      ? "STANDING"
+      : "IMMEDIATE";
+    const domainEvents = resolved.events.filter((event) => eventMatchesAcceptedCommand(event, decision.command));
+    if (domainEvents.length !== 1) {
+      throw new Error(`Decision ${decision.id} must resolve to exactly one causal domain event; found ${domainEvents.length}.`);
+    }
+    return createTaggedDecisionAudit(decision, domainEvents, null, resolution);
+  });
+  for (const audit of audits) {
+    if (audit.status !== "DONE") continue;
+    for (const event of resolved.events) {
+      if (event.type !== "WEEK_FOCUS_PAYOFF" || event.programId !== audit.programId) continue;
+      if (audit.commandType === "SET_WEEK_FOCUS"
+        && audit.commandKey === decisionCommandKey({ type: "SET_WEEK_FOCUS", programId: event.programId, focuses: event.focuses })) {
+        event.weeklyPrioritySubmissionId = audit.submissionId;
+      }
+      if (audit.commandType === "SET_SCOUTING_TARGET"
+        && audit.commandKey === decisionCommandKey({
+          type: "SET_SCOUTING_TARGET",
+          programId: event.programId,
+          opponentProgramId: event.scoutedOpponentId
+        })) {
+        event.scoutingTargetSubmissionId = audit.submissionId;
+      }
+    }
+  }
+  const auditEvents: GameEvent[] = audits.map((audit) => ({
+    type: "DECISION_AUDITED",
+    season: input.season,
+    week: input.week,
+    programId: audit.programId,
+    submissionId: audit.submissionId
+  }));
+  resolved.state.decisionAudits = retainedDecisionAudits([...(resolved.state.decisionAudits ?? []), ...audits]);
+  closeStandingDecisionAudits(resolved.state, resolved.events);
+  if (resolved.state.eventHistory.length > 10_000) {
+    resolved.state.eventHistory = retainedDecisionEventHistory(
+      resolved.state.eventHistory,
+      resolved.state.decisionAudits,
+      10_000
+    );
+  }
+  const settledAudits = audits.map((audit) => resolved.state.decisionAudits
+    ?.find((candidate) => candidate.submissionId === audit.submissionId) ?? audit);
+  return { state: resolved.state, events: [...resolved.events, ...auditEvents], audits: settledAudits };
+}
+
+/** Resolve preparation immediately while retaining actor attribution. */
+export function commitWeeklyDecisions(
+  input: Readonly<GameState>,
+  decisions: readonly DecisionRecord<WeeklyPlanningCommand>[]
+): DecisionBatchSimulationResult {
+  const ordered = orderedDecisions(input, decisions);
+  const resolved = prepareWeek(input, ordered.map((decision) => decision.command));
+  return attachDecisionAudits(input, resolved, ordered);
+}
+
+/**
+ * Resolve attributed planning and every other weekly command in one engine
+ * pass. Worker and CLI orchestration must use this at the Saturday boundary so
+ * preparation cannot create defaults before an explicit command is seen.
+ */
+export function advanceWeekWithDecisions(
+  input: Readonly<GameState>,
+  decisions: readonly DecisionRecord<GameCommand>[],
+  commands: readonly GameCommand[] = []
+): DecisionBatchSimulationResult {
+  const ordered = orderedDecisions(input, decisions);
+  const wrongBoundary = ordered.filter((decision) =>
+    decision.command.type === "BID_PORTAL_PLAYER" || decision.command.type === "SET_TRAINING_CAMP_FOCUS");
+  const resolved = advanceWeek(input, [
+    ...ordered.filter((decision) => !wrongBoundary.includes(decision)).map((decision) => decision.command),
+    ...commands
+  ], true);
+  for (const decision of wrongBoundary) {
+    const rejection: GameEvent = {
+      type: "COMMAND_REJECTED",
+      programId: decision.command.programId,
+      command: decision.command,
+      reason: "That decision cannot be made at the weekly season boundary."
+    };
+    resolved.events.push(rejection);
+    resolved.state.eventHistory.push(rejection);
+  }
+  return attachDecisionAudits(input, resolved, ordered);
+}
+
+export function commitWeeklyDecision(
+  input: Readonly<GameState>,
+  decision: Readonly<DecisionRecord<WeeklyPlanningCommand>>
+): DecisionSimulationResult {
+  const result = commitWeeklyDecisions(input, [decision]);
+  return { state: result.state, events: result.events, audit: result.audits[0]! };
+}
+
+/** Attributed preseason boundary; raw beginSeason remains API-compatible. */
+export function beginSeasonWithDecisions(
+  input: Readonly<GameState>,
+  decisions: readonly DecisionRecord<GameCommand>[]
+): DecisionBatchSimulationResult {
+  const ordered = orderedDecisions(input, decisions);
+  const state = beginSeason(input, ordered.map((decision) => decision.command));
+  const events = state.eventHistory.slice(input.eventHistory.length);
+  return attachDecisionAudits(input, { state, events }, ordered);
+}
+
+/** Attributed immediate preparation boundary; raw prepareWeek remains available. */
+export function prepareWeekWithDecisions(
+  input: Readonly<GameState>,
+  decisions: readonly DecisionRecord<GameCommand>[]
+): DecisionBatchSimulationResult {
+  const ordered = orderedDecisions(input, decisions);
+  const allowed = new Set<GameCommand["type"]>([
+    "SET_SCHEME", "REPLACE_STAFF", "SET_WEEK_FOCUS", "SET_SCOUTING_TARGET", "CHOOSE_BOOSTER"
+  ]);
+  if (ordered.some((decision) => !allowed.has(decision.command.type))) {
+    throw new Error("That command does not resolve at the preparation boundary.");
+  }
+  const resolved = prepareWeek(input, ordered.map((decision) => decision.command));
+  return attachDecisionAudits(input, resolved, ordered);
+}
+
+/** Attributed offseason boundary; standing bids remain pending until the market event. */
+export function advanceOffseasonStepWithDecisions(
+  input: Readonly<GameState>,
+  decisions: readonly DecisionRecord<GameCommand>[],
+  compatibilityCommands: readonly Extract<GameCommand, { type: "CONTINUE_OFFSEASON" }>[] = []
+): DecisionBatchSimulationResult {
+  const ordered = orderedDecisions(input, decisions);
+  const resolved = advanceOffseasonStep(input, [
+    ...ordered.map((decision) => decision.command),
+    ...compatibilityCommands
+  ], true);
+  return attachDecisionAudits(input, resolved, ordered);
 }
 
 function resolveCommands(state: GameState, commands: readonly GameCommand[], rng: AddressableRng, events: GameEvent[]): void {
@@ -1867,24 +2601,27 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         continue;
       }
       const alreadyOffered = recruiting.offeredProspectIds.includes(command.prospectId);
+      const changed = command.extend !== alreadyOffered;
       if (command.extend) {
-        if (alreadyOffered) continue;
-        if (projectedRecruitingOpenings(state, program.id) <= 0) {
+        if (!alreadyOffered && projectedRecruitingOpenings(state, program.id) <= 0) {
           events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The projected incoming class is full." });
           continue;
         }
-        recruiting.offeredProspectIds.push(command.prospectId);
-        recruiting.offeredProspectIds.sort();
+        if (!alreadyOffered) {
+          recruiting.offeredProspectIds.push(command.prospectId);
+          recruiting.offeredProspectIds.sort();
+        }
       } else {
-        if (!alreadyOffered) continue;
-        recruiting.offeredProspectIds = recruiting.offeredProspectIds.filter((id) => id !== command.prospectId);
+        if (alreadyOffered) {
+          recruiting.offeredProspectIds = recruiting.offeredProspectIds.filter((id) => id !== command.prospectId);
         // Rescinding is remembered, the same flat, deterministic way NIL
         // withdrawal already is. Whatever pursuit points or NIL dollars are
         // already on the table stay — this only closes the door to more.
-        prospect.interestByProgram[program.id] = Math.max(
+          prospect.interestByProgram[program.id] = Math.max(
           0,
           Number(((prospect.interestByProgram[program.id] ?? 0) - NIL_WITHDRAWAL_INTEREST_PENALTY).toFixed(3))
-        );
+          );
+        }
       }
       events.push({
         type: "PROSPECT_OFFERED",
@@ -1892,7 +2629,8 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         week: state.week,
         programId: program.id,
         prospectId: prospect.id,
-        extended: command.extend
+        extended: command.extend,
+        changed
       });
       continue;
     }
@@ -2017,6 +2755,15 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
       }
       if (amount === 0) delete nil.offersByProspect[command.prospectId];
       else nil.offersByProspect[command.prospectId] = amount;
+      events.push({
+        type: "NIL_OFFER_SET",
+        season: state.season,
+        week: state.week,
+        programId: program.id,
+        prospectId: command.prospectId,
+        weeklyAmount: amount,
+        previousWeeklyAmount: current
+      });
       continue;
     }
     if (command.type === "SET_SCHEME") {
@@ -2531,6 +3278,7 @@ function resolveProspectSearch(
     week: state.week,
     programId: program.id,
     searchType: command.searchType,
+    ...(command.position ? { position: command.position } : {}),
     prospectIds,
     pointsSpent: cost
   });
@@ -2621,6 +3369,12 @@ function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: 
     // week — settled decision: the drain begins at commitment, not enrollment.
     // Keyed by prospect id until enrollment re-keys it to the player id.
     // Every loser's offer dies with the contest, releasing its reservation.
+    const nilOffers = Object.entries(state.nil ?? {})
+      .flatMap(([programId, programNil]) => {
+        const weeklyAmount = programNil.offersByProspect[contest.prospect.id] ?? 0;
+        return weeklyAmount > 0 ? [{ programId, weeklyAmount }] : [];
+      })
+      .sort((left, right) => left.programId.localeCompare(right.programId));
     const winningOffer = state.nil?.[winnerProgramId]?.offersByProspect[contest.prospect.id] ?? 0;
     if (winningOffer > 0) {
       const winnerNil = state.nil![winnerProgramId]!;
@@ -2633,6 +3387,20 @@ function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: 
         programId: winnerProgramId,
         weeklyAmount: winningOffer,
         askingPrice: nilAskingPrice(contest.prospect, state.programs[winnerProgramId])
+      });
+    }
+    for (const offer of nilOffers) {
+      const won = offer.programId === winnerProgramId;
+      events.push({
+        type: "NIL_OFFER_RESOLVED",
+        season: state.season,
+        week: state.week,
+        programId: offer.programId,
+        prospectId: contest.prospect.id,
+        weeklyAmount: offer.weeklyAmount,
+        winnerProgramId,
+        result: won ? "WON" : "LOST",
+        reason: won ? "PROSPECT_CHOSE_PROGRAM" : "PROSPECT_CHOSE_OTHER_PROGRAM"
       });
     }
     for (const programNil of Object.values(state.nil ?? {})) {
@@ -3201,8 +3969,12 @@ export function scoutingBoard(state: Readonly<GameState>, programId: string): Op
  * What needs the coach this week, worst first. The one screen a management game
  * has to get right is the one that answers "what do I do now".
  */
-export function weeklyBriefing(state: Readonly<GameState>, programId: string): BriefingItem[] {
-  return buildBriefing(state, programId, scoutingBoard(state, programId));
+export function weeklyBriefing(
+  state: Readonly<GameState>,
+  programId: string,
+  options: BriefingOptions = {}
+): BriefingItem[] {
+  return buildBriefing(state, programId, scoutingBoard(state, programId), options);
 }
 
 /**
@@ -5055,7 +5827,20 @@ function completeOffseason(state: GameState, events: GameEvent[]): void {
   // The class is settled. Offers on prospects nobody signed die with the board,
   // and a commitment to a recruit who never made it to campus (class full) is
   // void — the money only ever follows a man who actually enrolls.
-  for (const nil of Object.values(state.nil ?? {})) {
+  for (const [programId, nil] of Object.entries(state.nil ?? {}).sort(([left], [right]) => left.localeCompare(right))) {
+    for (const [prospectId, weeklyAmount] of Object.entries(nil.offersByProspect).sort(([left], [right]) => left.localeCompare(right))) {
+      events.push({
+        type: "NIL_OFFER_RESOLVED",
+        season: state.season,
+        week: state.week,
+        programId,
+        prospectId,
+        weeklyAmount,
+        winnerProgramId: null,
+        result: "WITHDRAWN",
+        reason: "BOARD_CLOSED"
+      });
+    }
     nil.offersByProspect = {};
     for (const id of Object.keys(nil.commitmentsByPlayer)) {
       const prospect = state.prospects[id];
@@ -5097,7 +5882,11 @@ export const OFFSEASON_STEPS = ["PORTAL", "SIGNING_DAY", "COACHING", "TRAINING_C
  * is deliberately not `advanceWeek`: no games are played, and the commands
  * that are valid differ step by step.
  */
-export function advanceOffseasonStep(input: Readonly<GameState>, commands: readonly GameCommand[] = []): SimulationResult {
+export function advanceOffseasonStep(
+  input: Readonly<GameState>,
+  commands: readonly GameCommand[] = [],
+  deferStandingClosure = false
+): SimulationResult {
   const state = cloneGameState(input);
   if (state.phase !== "OFFSEASON" || !state.offseasonStep) {
     throw new Error("There is no offseason step open.");
@@ -5107,6 +5896,7 @@ export function advanceOffseasonStep(input: Readonly<GameState>, commands: reado
   const rng = new AddressableRng(state.identity.rootSeed).fork("offseason", String(state.season), step);
   resolveOffseasonCommands(state, step, commands, rng.fork("commands"), events);
   if (step === "PORTAL") resolvePortalMarket(state, rng.fork("portal-market"), events);
+  if (!deferStandingClosure) closeStandingDecisionAudits(state, events);
   const nextIndex = OFFSEASON_STEPS.indexOf(step) + 1;
   const nextStep = OFFSEASON_STEPS[nextIndex] ?? null;
   events.push({ type: "OFFSEASON_STEP_COMPLETED", season: state.season, step, nextStep });
@@ -5115,8 +5905,11 @@ export function advanceOffseasonStep(input: Readonly<GameState>, commands: reado
   } else {
     completeOffseason(state, events);
   }
+  if (!deferStandingClosure) closeStandingDecisionAudits(state, events);
   state.eventHistory.push(...events);
-  if (state.eventHistory.length > 10_000) state.eventHistory = state.eventHistory.slice(-10_000);
+  if (state.eventHistory.length > 10_000) {
+    state.eventHistory = retainedDecisionEventHistory(state.eventHistory, state.decisionAudits ?? [], 10_000);
+  }
   return { state, events };
 }
 
@@ -5199,6 +5992,16 @@ function applyPortalBid(
   const weeklyNil = Math.max(0, Math.round(command.weeklyNil));
   if (points === 0 && weeklyNil === 0) {
     delete listing.bidsByProgram[command.programId];
+    events.push({
+      type: "PORTAL_BID_SET",
+      season: state.season,
+      week: state.week,
+      programId: command.programId,
+      playerId: command.playerId,
+      points: 0,
+      weeklyNil: 0,
+      withdrawn: true
+    });
     return;
   }
   if (points < PORTAL_MINIMUM_POINTS) {
@@ -5229,6 +6032,16 @@ function applyPortalBid(
     return;
   }
   listing.bidsByProgram[command.programId] = { points, weeklyNil };
+  events.push({
+    type: "PORTAL_BID_SET",
+    season: state.season,
+    week: state.week,
+    programId: command.programId,
+    playerId: command.playerId,
+    points,
+    weeklyNil,
+    withdrawn: false
+  });
 }
 
 /** The execution head start camp is still paying, if any. */
