@@ -113,6 +113,24 @@
               "reference": "Independent ARCH-001 simulator CLI verification and product review",
               "result": "The corrected CLI lifecycle migration is approved with no simulation-honesty or attribution defect remaining. ARCH-001 remains in progress because generic non-weekly AI knowledge recording is not yet complete and the canonical lifecycle is not yet adopted by every live decision surface.",
               "date": "2026-08-20"
+            },
+            {
+              "type": "code",
+              "reference": "packages/ai/src/index.ts; apps/web/src/simulation.worker.ts; apps/simulator-cli/src/orchestration.ts",
+              "result": "Coaching AI now selects replacements exclusively from a deeply frozen, program-scoped knowledge view and records that exact serialized pre-resolution view through both production worker and headless CLI routes. Weekly and offseason actors retain truthful phase-specific policy attribution.",
+              "date": "2026-08-20"
+            },
+            {
+              "type": "test",
+              "reference": "pnpm check; pnpm build; node --test tests/ai-knowledge-boundary.test.mjs tests/offseason-ai.test.mjs tests/simulator-cli-lifecycle.test.mjs; pnpm --filter @college-legends/web test; git diff --check",
+              "result": "Passed: typecheck, build, 18 focused AI/offseason/CLI tests, and 14 web tests. Coverage proves deterministic coaching behavior parity, a complete frozen selector boundary, hidden-data invariance, permitted-input sensitivity, exact recorded-view equality, truthful policy identity, and exact STAFF_REPLACED causal linkage.",
+              "date": "2026-08-20"
+            },
+            {
+              "type": "review",
+              "reference": "Independent ARCH-001 coaching knowledge-view verification and product review",
+              "result": "The coaching boundary is approved with no remaining simulation-honesty or attribution defect in the slice. ARCH-001 remains in progress because other generic planner knowledge boundaries and system-wide lifecycle adoption are still open.",
+              "date": "2026-08-20"
             }
           ],
           "waiver": null
@@ -462,6 +480,11 @@
     }
   ],
   "changeLog": [
+    {
+      "date": "2026-08-20",
+      "change": "Verified the ARCH-001 coaching AI knowledge boundary with deterministic behavior parity, exact recorded pre-resolution views, hidden-data isolation, truthful worker and CLI policy attribution, and exact causal resolution links. Kept ARCH-001 in progress for the remaining generic planners and system-wide lifecycle adoption.",
+      "actor": "$college-legends-v2-manager"
+    },
     {
       "date": "2026-08-20",
       "change": "Verified the ARCH-001 simulator CLI migration onto attributed roster-review, weekly, and offseason boundaries with legacy outcome parity, deterministic replay, truthful policy attribution, and exact causal links. Kept ARCH-001 in progress for generic non-weekly AI knowledge completeness and system-wide lifecycle adoption.",

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
+import { coachingPlanningKnowledgeView, planOffseasonCommands, planWeeklyCommands } from "@college-legends/ai";
+import { advanceOffseasonStep, advanceWeek, beginSeason, createFictionalLeague, encodeSave } from "@college-legends/simulation";
 
 const storage = vi.hoisted(() => ({
   bytes: null as Uint8Array<ArrayBuffer> | null,
@@ -252,5 +254,38 @@ describe("simulation worker decision routing", () => {
     expect(secondAudit?.decisionId).toBe(firstAudit?.decisionId);
     expect(secondAudit?.submissionId).toMatch(/:submission:1$/);
     expect(secondAudit?.causes.map((cause) => cause.eventType)).toEqual(["SCHEME_SET"]);
+  }, 30_000);
+
+  it("records the exact coaching knowledge view for rival offseason decisions", async () => {
+    let state = beginSeason(createFictionalLeague("coaching-view-0", 4));
+    while (state.phase !== "OFFSEASON") state = advanceWeek(state, planWeeklyCommands(state)).state;
+    while (state.offseasonStep !== "COACHING") {
+      state = advanceOffseasonStep(state, planOffseasonCommands(state)).state;
+    }
+    const playerProgramId = "program-1";
+    storage.bytes = await encodeSave(state, playerProgramId) as Uint8Array<ArrayBuffer>;
+    dispatch({ type: "LOAD_SAVE", requestId: "load-coaching" });
+    await vi.waitFor(() => expect(response("load-coaching", "READY").type).toBe("READY"));
+
+    dispatch({
+      type: "ADVANCE_OFFSEASON",
+      requestId: "advance-coaching",
+      playerProgramId,
+      commands: []
+    });
+    const completed = response("advance-coaching", "COMPLETE");
+    if (completed.type !== "COMPLETE") throw new Error("Expected completed coaching step.");
+    const audit = completed.state.decisionAudits?.find((candidate) => candidate.commandType === "REPLACE_STAFF");
+    expect(audit).toBeDefined();
+    expect(audit?.actor.mode).toBe("AI");
+    if (audit?.actor.mode !== "AI") throw new Error("Expected an AI coaching decision.");
+    expect(audit.actor.policyId).toBe("offseason-plan-v1");
+    const fact = audit?.knowledge.facts.find((candidate) => candidate.key === "coachingPlanning.view.v1");
+    expect(fact).toBeDefined();
+    expect(JSON.parse(String(fact?.value))).toEqual(coachingPlanningKnowledgeView(state, audit!.programId));
+    expect(audit?.causes.map((cause) => cause.eventType)).toEqual(["STAFF_REPLACED"]);
+    expect(completed.events.some((event) =>
+      event.type === "STAFF_REPLACED" && event.decisionCauseId === audit?.causes[0]?.id
+    )).toBe(true);
   }, 30_000);
 });

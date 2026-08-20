@@ -1,5 +1,6 @@
 import type { DecisionActor, GameCommand, GameState, ProgramId, SimulationResult } from "@college-legends/model";
 import {
+  coachingPlanningKnowledgeSnapshot,
   planOffseasonCommands,
   planWeeklyCommands,
   weeklyPlanningKnowledgeSnapshot
@@ -53,7 +54,10 @@ export function advanceHeadlessCareerStep(input: Readonly<GameState>): Simulatio
         input,
         command,
         aiActor(input, command.programId, "offseason-plan-v1"),
-        sequence
+        sequence,
+        command.type === "REPLACE_STAFF"
+          ? coachingPlanningKnowledgeSnapshot(input, command.programId)
+          : undefined
       ));
     return advanceOffseasonStepWithDecisions(input, decisions, continuations);
   }

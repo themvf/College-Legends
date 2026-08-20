@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { planOffseasonCommands, planWeeklyCommands } from "../packages/ai/dist/index.js";
+import { coachingPlanningKnowledgeView, planOffseasonCommands, planWeeklyCommands } from "../packages/ai/dist/index.js";
 import {
   advanceOffseasonStep,
   advanceWeek,
@@ -69,7 +69,7 @@ test("the simulator CLI records every weekly AI command without changing simulat
 });
 
 test("the simulator CLI uses attributed resolution at every offseason boundary", () => {
-  let state = beginSeason(createFictionalLeague("cli-offseason-lifecycle", 4));
+  let state = beginSeason(createFictionalLeague("coaching-view-0", 4));
   while (state.phase !== "OFFSEASON") {
     state = advanceWeek(state, planWeeklyCommands(state)).state;
   }
@@ -101,6 +101,14 @@ test("the simulator CLI uses attributed resolution at every offseason boundary",
       || (audit.standingOutcome !== null
         && audit.standingOutcome.causes.length > 0
         && audit.standingOutcome.causes.every((cause) => outcomeCauseIds.has(cause.id)))));
+    if (state.offseasonStep === "COACHING") {
+      const audit = audits.find((candidate) => candidate.commandType === "REPLACE_STAFF");
+      assert.ok(audit, "the fixture must exercise a real coaching replacement");
+      const fact = audit.knowledge.facts.find((candidate) => candidate.key === "coachingPlanning.view.v1");
+      assert.ok(fact);
+      assert.deepEqual(JSON.parse(fact.value), coachingPlanningKnowledgeView(state, audit.programId));
+      assert.deepEqual(audit.causes.map((cause) => cause.eventType), ["STAFF_REPLACED"]);
+    }
     assert.deepEqual(advanceHeadlessCareerStep(state), attributed, `${state.offseasonStep} must replay deterministically`);
     state = legacy.state;
   }

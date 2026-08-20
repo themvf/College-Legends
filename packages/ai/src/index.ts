@@ -55,6 +55,27 @@ export interface WeeklyPlanningKnowledgeView {
   }[];
 }
 
+/** The complete program-scoped input used to consider one offseason staff change. */
+export interface CoachingPlanningKnowledgeView {
+  readonly kind: "COACHING_PLANNING_KNOWLEDGE_V1";
+  readonly programId: string;
+  readonly availableBudget: number;
+  readonly weeklyExpenses: number;
+  readonly posts: readonly {
+    readonly staffId: string;
+    readonly incumbentRating: number;
+    readonly buyout: number;
+    readonly incumbentSchemeFit: number;
+    readonly candidates: readonly {
+      readonly candidateId: string;
+      readonly rating: number;
+      readonly signingCost: number;
+      readonly schemeFit: number;
+      readonly available: boolean;
+    }[];
+  }[];
+}
+
 /** Build the redacted view at the state boundary; never pass state to selection. */
 export function weeklyPlanningKnowledgeView(
   state: Readonly<GameState>,
@@ -90,6 +111,64 @@ export function weeklyPlanningKnowledgeSnapshot(
     phase: state.phase,
     facts: Object.freeze([Object.freeze({
       key: "weeklyPlanning.view.v1",
+      value: JSON.stringify(view),
+      source: "STAFF_ESTIMATE" as const,
+      entityId: programId,
+      observedSeason: state.season,
+      observedWeek: state.week
+    })])
+  });
+}
+
+/**
+ * Build the redacted coaching view at the state boundary. Candidate generation
+ * remains an engine projection; selection cannot inspect the league state,
+ * players, prospects, rival finances, or any undisclosed candidate fields.
+ */
+export function coachingPlanningKnowledgeView(
+  state: Readonly<GameState>,
+  programId: string
+): CoachingPlanningKnowledgeView {
+  const program = state.programs[programId];
+  if (!program) throw new Error("A coaching knowledge view needs an existing program.");
+  const posts = Object.freeze(Object.values(state.staff)
+    .filter((member) => member.programId === programId)
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((member) => Object.freeze({
+      staffId: member.id,
+      incumbentRating: member.rating,
+      buyout: staffBuyout(member),
+      incumbentSchemeFit: coachSchemeFit(member, program.schemeIdentity),
+      candidates: Object.freeze(staffCandidatesFor(state, programId, member.id).map((candidate) => Object.freeze({
+        candidateId: candidate.id,
+        rating: candidate.rating,
+        signingCost: candidate.signingCost,
+        schemeFit: candidate.schemeFit,
+        available: !candidate.unavailableReason
+      })))
+    })));
+  return Object.freeze({
+    kind: "COACHING_PLANNING_KNOWLEDGE_V1" as const,
+    programId,
+    availableBudget: program.budget,
+    weeklyExpenses: program.weeklyExpenses,
+    posts
+  });
+}
+
+/** The exact redacted coaching selector input persisted with an attributed AI choice. */
+export function coachingPlanningKnowledgeSnapshot(
+  state: Readonly<GameState>,
+  programId: string
+): DecisionKnowledgeSnapshot {
+  const view = coachingPlanningKnowledgeView(state, programId);
+  return Object.freeze({
+    programId,
+    season: state.season,
+    week: state.week,
+    phase: state.phase,
+    facts: Object.freeze([Object.freeze({
+      key: "coachingPlanning.view.v1",
       value: JSON.stringify(view),
       source: "STAFF_ESTIMATE" as const,
       entityId: programId,
@@ -403,7 +482,7 @@ export function planOffseasonCommands(state: Readonly<GameState>, excludedProgra
   return Object.values(state.programs).flatMap((program) => {
     if (program.id === excludedProgramId) return [];
     if (step === "PORTAL") return planPortalBids(state, program.id);
-    if (step === "COACHING") return planCoachingChange(state, program.id);
+    if (step === "COACHING") return selectCoachingChange(coachingPlanningKnowledgeView(state, program.id));
     if (step === "TRAINING_CAMP") return [planTrainingCamp(state, program.id)];
     return [];
   });
@@ -506,22 +585,15 @@ const AI_COACHING_UPGRADE_THRESHOLD = 12;
  * economy has no real drain yet (finding 3); the rating gap and the scheme-fit
  * rule are what actually hold churn down.
  */
-function planCoachingChange(state: Readonly<GameState>, programId: string): GameCommand[] {
-  const program = state.programs[programId];
-  if (!program) return [];
-  const posts = Object.values(state.staff)
-    .filter((member) => member.programId === programId)
-    .sort((left, right) => left.id.localeCompare(right.id));
-  for (const member of posts) {
-    const buyout = staffBuyout(member);
-    const incumbentFit = coachSchemeFit(member, program.schemeIdentity);
-    const candidate = staffCandidatesFor(state, programId, member.id)
-      .filter((option) => !option.unavailableReason && option.schemeFit >= incumbentFit)
+export function selectCoachingChange(view: Readonly<CoachingPlanningKnowledgeView>): GameCommand[] {
+  for (const post of view.posts) {
+    const candidate = [...post.candidates]
+      .filter((option) => option.available && option.schemeFit >= post.incumbentSchemeFit)
       .sort((left, right) => right.rating - left.rating)[0];
     if (!candidate) continue;
-    if (candidate.rating - member.rating < AI_COACHING_UPGRADE_THRESHOLD) continue;
-    if (program.budget < candidate.signingCost + buyout + program.weeklyExpenses * 2) continue;
-    return [{ type: "REPLACE_STAFF", programId, staffId: member.id, candidateId: candidate.id }];
+    if (candidate.rating - post.incumbentRating < AI_COACHING_UPGRADE_THRESHOLD) continue;
+    if (view.availableBudget < candidate.signingCost + post.buyout + view.weeklyExpenses * 2) continue;
+    return [{ type: "REPLACE_STAFF", programId: view.programId, staffId: post.staffId, candidateId: candidate.candidateId }];
   }
   return [];
 }

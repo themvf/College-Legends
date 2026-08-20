@@ -1,12 +1,29 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { planWeeklyCommands, selectWeeklyFocusAndScouting, weeklyPlanningKnowledgeView } from "../packages/ai/dist/index.js";
-import { beginSeason, createFictionalLeague } from "../packages/simulation/dist/index.js";
+import {
+  coachingPlanningKnowledgeSnapshot,
+  coachingPlanningKnowledgeView,
+  planOffseasonCommands,
+  planWeeklyCommands,
+  selectCoachingChange,
+  selectWeeklyFocusAndScouting,
+  weeklyPlanningKnowledgeView
+} from "../packages/ai/dist/index.js";
+import { advanceOffseasonStep, advanceWeek, beginSeason, createFictionalLeague } from "../packages/simulation/dist/index.js";
 
 const activeLeague = (seed, count = 4) => beginSeason(createFictionalLeague(seed, count));
 const planningFor = (state, programId) => planWeeklyCommands(state)
   .filter((command) => command.programId === programId
     && (command.type === "SET_WEEK_FOCUS" || command.type === "SET_SCOUTING_TARGET"));
+
+const coachingWindow = (seed) => {
+  let state = activeLeague(seed);
+  while (state.phase !== "OFFSEASON") state = advanceWeek(state, planWeeklyCommands(state)).state;
+  while (state.offseasonStep !== "COACHING") {
+    state = advanceOffseasonStep(state, planOffseasonCommands(state)).state;
+  }
+  return state;
+};
 
 test("weekly AI focus and scouting preserve the established deterministic choices", () => {
   const state = activeLeague("ai-redacted-baseline");
@@ -120,4 +137,72 @@ test("the state adapter exposes only the declared weekly knowledge fields", () =
   assert.equal(Object.isFrozen(view.scoutingOptions), true);
   assert.ok(view.scoutingOptions.every(Object.isFrozen));
   assert.throws(() => { view.ownUnitRatings.passOffense = 0; }, TypeError);
+});
+
+test("coaching AI preserves the established deterministic replacement", () => {
+  const state = coachingWindow("coaching-view-0");
+  assert.deepEqual(planOffseasonCommands(state), [{
+    type: "REPLACE_STAFF",
+    programId: "program-2",
+    staffId: "program-2-staff-2",
+    candidateId: "program-2:OFFENSIVE_COORDINATOR:candidate:1"
+  }]);
+  const view = coachingPlanningKnowledgeView(state, "program-2");
+  assert.deepEqual(selectCoachingChange(view), planOffseasonCommands(state, "program-1"));
+  assert.deepEqual(selectCoachingChange(view), selectCoachingChange(view));
+});
+
+test("the coaching selector receives only its complete frozen program view", () => {
+  const state = coachingWindow("coaching-view-0");
+  const view = coachingPlanningKnowledgeView(state, "program-2");
+  assert.deepEqual(Object.keys(view).sort(), [
+    "availableBudget", "kind", "posts", "programId", "weeklyExpenses"
+  ]);
+  assert.equal(view.kind, "COACHING_PLANNING_KNOWLEDGE_V1");
+  assert.equal(Object.isFrozen(view), true);
+  assert.equal(Object.isFrozen(view.posts), true);
+  assert.ok(view.posts.every((post) => Object.isFrozen(post)
+    && Object.isFrozen(post.candidates)
+    && post.candidates.every(Object.isFrozen)));
+  assert.ok(!JSON.stringify(view).match(/player|prospect|potential|rootSeed|rival/i));
+  assert.throws(() => { view.availableBudget = 0; }, TypeError);
+  assert.throws(() => { view.posts[0].candidates[0].rating = 0; }, TypeError);
+
+  const snapshot = coachingPlanningKnowledgeSnapshot(state, "program-2");
+  assert.equal(snapshot.facts.length, 1);
+  assert.equal(snapshot.facts[0].key, "coachingPlanning.view.v1");
+  assert.deepEqual(JSON.parse(snapshot.facts[0].value), view);
+});
+
+test("hidden league data cannot affect coaching selection, while declared inputs can", () => {
+  const state = coachingWindow("coaching-view-0");
+  const expected = coachingPlanningKnowledgeView(state, "program-2");
+  const changed = structuredClone(state);
+  for (const player of Object.values(changed.players)) {
+    player.overall = player.overall > 65 ? 32 : 99;
+    player.potential = player.potential > 80 ? 40 : 99;
+  }
+  for (const prospect of Object.values(changed.prospects)) {
+    prospect.potential = prospect.potential > 80 ? 40 : 99;
+  }
+  for (const program of Object.values(changed.programs)) {
+    if (program.id !== "program-2") {
+      program.budget *= -10;
+      program.weeklyExpenses *= 10;
+    }
+  }
+  for (const member of Object.values(changed.staff)) {
+    if (member.programId !== "program-2") member.rating = member.rating > 70 ? 20 : 99;
+  }
+  assert.deepEqual(coachingPlanningKnowledgeView(changed, "program-2"), expected);
+  assert.deepEqual(selectCoachingChange(coachingPlanningKnowledgeView(changed, "program-2")), selectCoachingChange(expected));
+
+  const unaffordable = structuredClone(expected);
+  unaffordable.availableBudget = 0;
+  assert.deepEqual(selectCoachingChange(unaffordable), []);
+  const noUpgrade = structuredClone(expected);
+  for (const post of noUpgrade.posts) {
+    for (const candidate of post.candidates) candidate.rating = post.incumbentRating;
+  }
+  assert.deepEqual(selectCoachingChange(noUpgrade), []);
 });

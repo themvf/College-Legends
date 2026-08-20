@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import type { CareerPath, DecisionActor, GameCommand, GameState, ProgramId } from "@college-legends/model";
 import { CAREER_PATHS } from "@college-legends/content";
-import { planOffseasonCommands, planWeeklyCommands, selectWeeklyFocusAndScouting, weeklyPlanningKnowledgeSnapshot, weeklyPlanningKnowledgeView } from "@college-legends/ai";
+import { coachingPlanningKnowledgeSnapshot, planOffseasonCommands, planWeeklyCommands, selectWeeklyFocusAndScouting, weeklyPlanningKnowledgeSnapshot, weeklyPlanningKnowledgeView } from "@college-legends/ai";
 import { advanceOffseasonStepWithDecisions, advanceWeekWithDecisions, beginSeasonWithDecisions, commitWeeklyDecision, createDelegatedWeeklyPlanningDecision, createFictionalLeague, createGameDecision, createWeeklyPlanningDecision, decodeSave, encodeSave, prepareWeekWithDecisions, programPreviews, type WeeklyPlanningCommand } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 import { deleteSave, readSave, savedBytes, storageAvailable, writeSave } from "./storage.js";
@@ -40,13 +40,17 @@ function manualActor(programId: ProgramId): Extract<DecisionActor, { mode: "MANU
   return { mode: "MANUAL", actorId: `player:${programId}`, displayName: "Player" };
 }
 
-function aiActor(state: Readonly<GameState>, programId: ProgramId): Extract<DecisionActor, { mode: "AI" }> {
+function aiActor(
+  state: Readonly<GameState>,
+  programId: ProgramId,
+  policyId: "weekly-plan-v1" | "offseason-plan-v1"
+): Extract<DecisionActor, { mode: "AI" }> {
   const program = state.programs[programId];
   return {
     mode: "AI",
     actorId: `ai:${programId}`,
     displayName: program ? `${program.abbreviation} staff` : "Program AI",
-    policyId: "weekly-plan-v1"
+    policyId
   };
 }
 
@@ -203,7 +207,15 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         command.type === "CONTINUE_OFFSEASON");
       const decisions = [
         ...rivals.filter((command) => command.type !== "CONTINUE_OFFSEASON").map((command, sequence) =>
-          createGameDecision(activeState!, command, aiActor(activeState!, command.programId), sequence)),
+          createGameDecision(
+            activeState!,
+            command,
+            aiActor(activeState!, command.programId, "offseason-plan-v1"),
+            sequence,
+            command.type === "REPLACE_STAFF"
+              ? coachingPlanningKnowledgeSnapshot(activeState!, command.programId)
+              : undefined
+          )),
         ...request.commands.filter((command) => command.type !== "CONTINUE_OFFSEASON").map((command, sequence) =>
           createGameDecision(activeState!, command, manualActor(request.playerProgramId), rivals.length + sequence))
       ];
@@ -225,7 +237,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       return createWeeklyPlanningDecision(
         activeState!,
         command,
-        aiActor(activeState!, command.programId),
+        aiActor(activeState!, command.programId, "weekly-plan-v1"),
         sequence,
         weeklyPlanningKnowledgeSnapshot(activeState!, command.programId)
       );
@@ -235,7 +247,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       .map((command, sequence) => createGameDecision(
         activeState!,
         command,
-        aiActor(activeState!, command.programId),
+        aiActor(activeState!, command.programId, "weekly-plan-v1"),
         aiDecisions.length + sequence
       ));
     const playerDecisions = request.commands.map((command, sequence) => createGameDecision(
