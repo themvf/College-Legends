@@ -5485,7 +5485,7 @@ interface PortalProposal {
 }
 
 /** Open scholarships that can actually be occupied during this portal window. */
-function portalScholarshipOpenings(state: Readonly<GameState>, programId: string): number {
+export function portalScholarshipOpenings(state: Readonly<GameState>, programId: string): number {
   const program = state.programs[programId];
   if (!program) return 0;
   const scholarships = Object.values(state.players).filter((player) =>

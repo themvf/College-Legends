@@ -6,6 +6,8 @@ import {
   beginSeason,
   createFictionalLeague,
   portalAskingPrice,
+  portalScholarshipOpenings,
+  projectedRecruitingOpenings,
   PORTAL_MINIMUM_POINTS
 } from "../packages/simulation/dist/index.js";
 
@@ -34,6 +36,24 @@ function scholarshipCount(state, programId) {
     player.programId === programId && player.eligibility.rosterStatus === "SCHOLARSHIP"
   ).length;
 }
+
+test("portal capacity reports the same current openings the market can fill", () => {
+  const { state } = toPortalWindow("portal-visible-capacity");
+  const programId = Object.keys(state.programs)[0];
+  const actualOpenings = state.programs[programId].scholarshipLimit - scholarshipCount(state, programId);
+  assert.equal(portalScholarshipOpenings(state, programId), Math.max(0, actualOpenings));
+
+  const returningPlayer = Object.values(state.players).find((player) =>
+    player.programId === programId
+    && player.eligibility.rosterStatus === "SCHOLARSHIP"
+    && player.eligibility.seasonsRemaining === 1
+  );
+  assert.ok(returningPlayer, "the fixture needs a senior who still occupies a scholarship next season");
+  assert.ok(
+    projectedRecruitingOpenings(state, programId) > portalScholarshipOpenings(state, programId),
+    "preseason recruiting projections must not be displayed as immediately usable portal capacity"
+  );
+});
 
 test("everyone who leaves is listed, and the listing names his old program", () => {
   const { state, events } = toPortalWindow("portal-listing");

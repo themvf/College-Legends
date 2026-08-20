@@ -106,7 +106,6 @@ import {
   marqueeGameOptions,
   playerMediaPayoff,
   projectedDevelopmentPayoff,
-  projectedRecruitingOpenings,
   prospectScoutingReport,
   staffBuyout,
   recruitingEvaluationCost,
@@ -119,6 +118,7 @@ import {
   portalAskingPrice,
   portalListings,
   portalRecruitable,
+  portalScholarshipOpenings,
   prospectProgramFit,
   PORTAL_MINIMUM_POINTS,
   TRAINING_CAMP_CONDITIONING_RISK,
@@ -2892,7 +2892,7 @@ function PortalBoard({ game, busy, pending, onQueue }: {
   const nilCommitted = bids.reduce((sum, bid) => sum + bid.weeklyNil, 0);
   const pointsLeft = recruiting.points - pointsCommitted;
   const nilLeft = freeNilCapacity(game.state, programId) - nilCommitted;
-  const openings = projectedRecruitingOpenings(game.state, programId);
+  const openings = portalScholarshipOpenings(game.state, programId);
 
   const yours = listings.filter((entry) => entry.listing.previousProgramId === programId);
   const others = listings
@@ -2912,8 +2912,9 @@ function PortalBoard({ game, busy, pending, onQueue }: {
         <p className="eyebrow">Portal window</p>
         <h2>{pointsLeft} Recruiting Points and {money(Math.max(0, nilLeft))} a week left to spend</h2>
         <p className="muted">
-          A bid costs points now and NIL dollars every week he is on your roster. Everything resolves at once when
-          you close the window — nobody wins by bidding first, and nobody sees what anybody else offered.
+          A bid reserves points and NIL room now; only a completed signing spends the points and commits the weekly
+          NIL. Everything resolves at once when you close the window — nobody wins by bidding first, and nobody sees
+          what anybody else offered.
         </p>
       </div>
       <div className="recruiting-metrics">
