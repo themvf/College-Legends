@@ -1,4 +1,4 @@
-import type { DecisionKnowledgeSnapshot, DevelopmentFocus, FacilityType, GameState, GameCommand, Player, PortalListingState, Position, Prospect, TeamUnitRatings, WeekFocus } from "@college-legends/model";
+import type { DecisionKnowledgeSnapshot, DevelopmentFocus, FacilityType, GameState, GameCommand, Player, Position, Prospect, TeamUnitRatings, WeekFocus } from "@college-legends/model";
 import {
   FACILITY_UPGRADE_COST,
   focusCapacity,
@@ -83,6 +83,33 @@ export interface TrainingCampPlanningKnowledgeView {
   readonly scholarshipRosterSize: number;
   readonly scholarshipLimit: number;
 }
+
+export type PortalPlanningSelectionCommand = Extract<GameCommand, { type: "BID_PORTAL_PLAYER" }>;
+
+/**
+ * The complete, program-scoped input used to select V1 portal bids. Target
+ * values are staff projections made at the state boundary: the selector never
+ * receives a player, listing, rival bid, or raw private-interest map.
+ */
+export interface PortalPlanningKnowledgeView {
+  readonly kind: "PORTAL_PLANNING_KNOWLEDGE_V1";
+  readonly programId: string;
+  readonly season: number;
+  readonly week: number;
+  readonly phase: "OFFSEASON";
+  readonly offseasonStep: "PORTAL";
+  readonly projectedOpenings: number;
+  readonly recruitingPoints: number;
+  readonly freeWeeklyNilCapacity: number;
+  readonly targets: readonly {
+    readonly playerId: string;
+    readonly targetValue: number;
+    readonly askingPrice: number;
+    readonly maximumBidPoints: number;
+  }[];
+}
+
+export type PortalPlanningKnowledgeViews = Readonly<Record<string, PortalPlanningKnowledgeView>>;
 
 /** Build the redacted view at the state boundary; never pass state to selection. */
 export function weeklyPlanningKnowledgeView(
@@ -218,6 +245,127 @@ export function trainingCampPlanningKnowledgeSnapshot(
       key: "trainingCampPlanning.view.v1",
       value: JSON.stringify(view),
       source: "PROGRAM_INTERNAL" as const,
+      entityId: programId,
+      observedSeason: state.season,
+      observedWeek: state.week
+    })])
+  });
+}
+
+/** Build every program's portal view in one league pass. */
+export function portalPlanningKnowledgeViews(
+  state: Readonly<GameState>
+): PortalPlanningKnowledgeViews {
+  if (state.phase !== "OFFSEASON" || state.offseasonStep !== "PORTAL") {
+    throw new Error("Portal planning knowledge requires the open portal boundary.");
+  }
+  const programIds = Object.keys(state.programs);
+  const rosterSizes = new Map<string, number>();
+  const departures = new Map<string, number>();
+  const commitments = new Map<string, number>();
+  const returningDepth = new Map<string, Map<Position, number>>();
+  for (const programId of programIds) {
+    rosterSizes.set(programId, 0);
+    departures.set(programId, 0);
+    returningDepth.set(programId, new Map());
+  }
+  for (const player of Object.values(state.players)) {
+    if (!player.programId || player.eligibility.rosterStatus !== "SCHOLARSHIP") continue;
+    rosterSizes.set(player.programId, (rosterSizes.get(player.programId) ?? 0) + 1);
+    if (player.eligibility.seasonsRemaining <= 1) {
+      departures.set(player.programId, (departures.get(player.programId) ?? 0) + 1);
+      continue;
+    }
+    const depth = returningDepth.get(player.programId);
+    if (depth) depth.set(player.position, (depth.get(player.position) ?? 0) + 1);
+  }
+  for (const prospect of Object.values(state.prospects)) {
+    if (prospect.status === "COMMITTED" && prospect.signedProgramId) {
+      commitments.set(prospect.signedProgramId, (commitments.get(prospect.signedProgramId) ?? 0) + 1);
+    }
+  }
+
+  const listings = Object.entries(state.portal ?? {})
+    .flatMap(([playerId, listing]) => {
+      const player = state.players[playerId];
+      return player ? [{ playerId, player, listing }] : [];
+    })
+    .sort((left, right) => left.playerId.localeCompare(right.playerId));
+  const views = Object.fromEntries(programIds.map((programId) => {
+    const program = state.programs[programId]!;
+    const depth = returningDepth.get(programId)!;
+    const targets = Object.freeze(listings.map(({ playerId, player, listing }) => Object.freeze({
+      playerId,
+      targetValue: player.overall * 0.7
+        + (listing.interestByProgram[programId] ?? 0) * 0.2
+        + (listing.previousProgramId === programId ? 10 : 0)
+        + ((depth.get(player.position) ?? 0) <= 2 ? 8 : 0),
+      askingPrice: portalAskingPrice(player),
+      maximumBidPoints: listing.previousProgramId === programId ? 30 : 20
+    })));
+    return [programId, Object.freeze({
+      kind: "PORTAL_PLANNING_KNOWLEDGE_V1" as const,
+      programId,
+      season: state.season,
+      week: state.week,
+      phase: "OFFSEASON" as const,
+      offseasonStep: "PORTAL" as const,
+      projectedOpenings: Math.max(0,
+        program.scholarshipLimit
+          - (rosterSizes.get(programId) ?? 0)
+          + (departures.get(programId) ?? 0)
+          - (commitments.get(programId) ?? 0)),
+      recruitingPoints: state.recruiting[programId]?.points ?? 0,
+      freeWeeklyNilCapacity: freeNilCapacity(state, programId),
+      targets
+    })];
+  }));
+  return Object.freeze(views);
+}
+
+export function portalPlanningKnowledgeView(
+  state: Readonly<GameState>,
+  programId: string,
+  cachedViews: PortalPlanningKnowledgeViews = portalPlanningKnowledgeViews(state)
+): PortalPlanningKnowledgeView {
+  const view = cachedViews[programId];
+  if (!view) throw new Error("A portal knowledge view needs an existing program.");
+  validatePortalPlanningKnowledgeView(state, programId, view);
+  return view;
+}
+
+function validatePortalPlanningKnowledgeView(
+  state: Readonly<GameState>,
+  programId: string,
+  view: Readonly<PortalPlanningKnowledgeView>
+): void {
+  if (view.programId !== programId) throw new Error("Portal knowledge must belong to the command program.");
+  if (state.phase !== "OFFSEASON"
+    || state.offseasonStep !== "PORTAL"
+    || view.season !== state.season
+    || view.week !== state.week
+    || view.phase !== state.phase
+    || view.offseasonStep !== state.offseasonStep) {
+    throw new Error("Portal knowledge is stale for the current offseason boundary.");
+  }
+}
+
+/** The exact redacted portal selector input persisted with an attributed AI bid. */
+export function portalPlanningKnowledgeSnapshot(
+  state: Readonly<GameState>,
+  programId: string,
+  view: PortalPlanningKnowledgeView = portalPlanningKnowledgeView(state, programId)
+): DecisionKnowledgeSnapshot {
+  validatePortalPlanningKnowledgeView(state, programId, view);
+  return Object.freeze({
+    programId,
+    season: state.season,
+    week: state.week,
+    phase: state.phase,
+    facts: Object.freeze([Object.freeze({
+      key: "portalPlanning.view.v1",
+      value: JSON.stringify(view),
+      source: "STAFF_ESTIMATE" as const,
       entityId: programId,
       observedSeason: state.season,
       observedWeek: state.week
@@ -523,12 +671,21 @@ function planFacilityUpgrade(state: Readonly<GameState>, programId: string): Gam
  * this straight to `advanceOffseasonStep` the way it hands `planWeeklyCommands`
  * to `advanceWeek`.
  */
-export function planOffseasonCommands(state: Readonly<GameState>, excludedProgramId?: string): GameCommand[] {
+export function planOffseasonCommands(
+  state: Readonly<GameState>,
+  excludedProgramId?: string,
+  cachedPortalViews?: PortalPlanningKnowledgeViews
+): GameCommand[] {
   if (state.phase !== "OFFSEASON" || !state.offseasonStep) return [];
   const step = state.offseasonStep;
+  const portalViews = step === "PORTAL" ? cachedPortalViews ?? portalPlanningKnowledgeViews(state) : undefined;
   return Object.values(state.programs).flatMap((program) => {
     if (program.id === excludedProgramId) return [];
-    if (step === "PORTAL") return planPortalBids(state, program.id);
+    if (step === "PORTAL") {
+      const view = portalViews![program.id]!;
+      validatePortalPlanningKnowledgeView(state, program.id, view);
+      return selectPortalBids(view);
+    }
     if (step === "COACHING") return selectCoachingChange(coachingPlanningKnowledgeView(state, program.id));
     if (step === "TRAINING_CAMP") return [selectTrainingCampFocus(trainingCampPlanningKnowledgeView(state, program.id))];
     return [];
@@ -540,76 +697,35 @@ export function planOffseasonCommands(state: Readonly<GameState>, excludedProgra
  * about to lose is worth more than a stranger of the same quality, and the
  * points it bids have to fit inside the pool it actually has.
  */
-function planPortalBids(state: Readonly<GameState>, programId: string): GameCommand[] {
-  const openings = projectedOpenings(state, programId);
+export function selectPortalBids(view: Readonly<PortalPlanningKnowledgeView>): PortalPlanningSelectionCommand[] {
+  const openings = view.projectedOpenings;
   if (openings <= 0) return [];
-  const recruiting = state.recruiting[programId];
-  const program = state.programs[programId];
-  if (!recruiting || !program) return [];
+  const listings = [...view.targets]
+    .sort((left, right) => right.targetValue - left.targetValue || left.playerId.localeCompare(right.playerId));
 
-  // Depth counted once, not once per candidate: this used to call
-  // portalTargetValue from inside a sort comparator, and that function scans
-  // every player in the league. At 72 programs and ~280 listings that is the
-  // exact defect CLAUDE.md measures at 45% of a week's runtime, and it made
-  // closing the portal window take longer than a browser would wait.
-  const depthByPosition = new Map<string, number>();
-  for (const other of Object.values(state.players)) {
-    if (other.programId !== programId) continue;
-    if (other.eligibility.rosterStatus !== "SCHOLARSHIP") continue;
-    if (other.eligibility.seasonsRemaining <= 1) continue;
-    depthByPosition.set(other.position, (depthByPosition.get(other.position) ?? 0) + 1);
-  }
-  const listings = Object.entries(state.portal ?? {})
-    .map(([playerId, listing]) => ({ playerId, listing, player: state.players[playerId] }))
-    .filter((entry) => Boolean(entry.player))
-    .map((entry) => ({
-      ...entry,
-      value: portalTargetValue(programId, entry.player!, entry.listing, depthByPosition)
-    }))
-    .sort((left, right) => right.value - left.value || left.playerId.localeCompare(right.playerId));
-
-  const commands: GameCommand[] = [];
-  let points = recruiting.points;
-  let capacity = freeNilCapacity(state, programId);
+  const commands: PortalPlanningSelectionCommand[] = [];
+  let points = view.recruitingPoints;
+  let capacity = view.freeWeeklyNilCapacity;
   // Chase as many as the class has room for, best first, and stop when the
   // pool runs out — the same shape as the in-season recruiting planner.
-  for (const { playerId, player, listing, value } of listings.slice(0, Math.min(openings, 3))) {
+  for (const { playerId, targetValue, askingPrice, maximumBidPoints } of listings.slice(0, Math.min(openings, 3))) {
     if (points < PORTAL_MINIMUM_POINTS) break;
     // Bidding on everybody is not a strategy. Only chase somebody who is
     // actually better than what walks in as a freshman.
-    if (value < 60) continue;
-    const bidPoints = Math.min(points, listing.previousProgramId === programId ? 30 : 20);
-    const ask = portalAskingPrice(player!);
-    const weeklyNil = Math.min(capacity, ask);
+    if (targetValue < 60) continue;
+    const bidPoints = Math.min(points, maximumBidPoints);
+    const weeklyNil = Math.min(capacity, askingPrice);
     commands.push({
       type: "BID_PORTAL_PLAYER",
-      programId,
+      programId: view.programId,
       playerId,
       points: bidPoints,
-      weeklyNil: weeklyNil >= ask * 0.3 ? Math.round(weeklyNil / 50) * 50 : 0
+      weeklyNil: weeklyNil >= askingPrice * 0.3 ? Math.round(weeklyNil / 50) * 50 : 0
     });
     points -= bidPoints;
-    if (weeklyNil >= ask * 0.3) capacity -= weeklyNil;
+    if (weeklyNil >= askingPrice * 0.3) capacity -= weeklyNil;
   }
   return commands;
-}
-
-/**
- * How badly a rival wants a transfer. Reads his real `overall` rather than a
- * consensus number, and that is correct rather than a leak: a portal player
- * has played real games on television, so there is nothing hidden to scout.
- * Keeping your own man is worth more than signing a stranger of equal quality.
- */
-function portalTargetValue(
-  programId: string,
-  player: Player,
-  listing: PortalListingState,
-  /** Returning scholarship players per position, counted once by the caller. */
-  depthByPosition: ReadonlyMap<string, number>
-): number {
-  const retentionBonus = listing.previousProgramId === programId ? 10 : 0;
-  const needBonus = (depthByPosition.get(player.position) ?? 0) <= 2 ? 8 : 0;
-  return player.overall * 0.7 + (listing.interestByProgram[programId] ?? 0) * 0.2 + retentionBonus + needBonus;
 }
 
 /**

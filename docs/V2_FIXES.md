@@ -2048,6 +2048,73 @@ and whether players can distinguish required from optional work.
 - The complete weekly loop works at 390 px width and 200% zoom without
   horizontal scrolling or hover dependence.
 
-## Open V2 design questions
+## V2-012: Split defensive backs into CB, FS, and SS
 
-- Should the combined `DB` room become distinct cornerback and safety roles?
+**Status:** Proposed — position split approved; roster and scheme counts require balance evidence
+
+### Decision
+
+Replace the combined `DB` position with three distinct roles:
+
+- **CB — Cornerback:** outside and slot coverage personnel.
+- **FS — Free safety:** deep coverage and range personnel.
+- **SS — Strong safety:** run-support, underneath coverage, and hybrid personnel.
+
+This is a real simulation-model change, not a display-only relabel. New players,
+prospects, roster requirements, depth charts, rotations, scheme packages, team
+ratings, game resolution, recruiting, transfer decisions, injuries, statistics,
+awards, AI planning, and every relevant interface must use the same role model.
+No new game state may retain `DB` as a live position after migration.
+
+### Delivery order
+
+Implement the split after the financial-truth wave and the shared Coach's Desk,
+but before V2-003 ratings are calibrated. This preserves the business-first
+program order while preventing ratings, development, recruiting, portal, and
+training work from being built against a position model that will immediately
+change.
+
+The existing eleven-player DB roster target and four- or five-DB scheme packages
+do not establish the final CB/FS/SS allocation. Set roster minimums, generation
+weights, substitution rules, and scheme-specific secondary packages from
+deterministic 24- and 72-program balance evidence. Do not silently choose counts
+because they are convenient for migration.
+
+### Save migration
+
+Migrate every existing DB deterministically from posted football attributes,
+current depth-chart use, and the program's scheme needs. Preserve the player's
+stable id, name, eligibility, ratings, potential, health, statistics, awards,
+development history, NIL obligations, and scholarship status. Migration may
+assign a role and rebuild affected depth-chart slots, but it may not create,
+delete, duplicate, reroll, or silently improve a player.
+
+When several assignments are equally valid, use stable ids and declared roster
+balance rules as tie-breakers. Save/resume and repeated migration must be
+idempotent and byte-stable.
+
+### Acceptance criteria
+
+- New leagues, migrated saves, recruiting classes, and portal pools contain CB,
+  FS, and SS and contain no live DB position.
+- Migration preserves every affected player's identity, eligibility, history,
+  ratings, potential, health, obligations, and scholarship accounting without
+  duplication or loss.
+- Roster composition, depth charts, rotations, substitutions, schemes, injuries,
+  statistics, awards, ratings, development, recruiting, portal logic, training,
+  and AI decisions all use the shared role definitions.
+- Scheme packages field legal, explainable CB/FS/SS combinations and respond to
+  injuries and depth shortages without hidden generic-DB fallbacks.
+- Human and AI programs face the same roster minimums, prospect supply, positional
+  value, scholarship constraints, and market rules.
+- UI filters, player cards, roster rooms, depth charts, recruiting, portal,
+  development, and results screens use consistent accessible role labels.
+- Deterministic migration, replay, save/resume, and multi-season 24- and
+  72-program tests demonstrate stable roster distributions, playable depth,
+  bounded position scarcity, and acceptable performance.
+
+## Open V2 tuning questions
+
+- What CB/FS/SS roster allocation should replace the current eleven-player DB
+  target at each supported roster size?
+- Which CB/FS/SS combinations should each defensive scheme and sub-package use?

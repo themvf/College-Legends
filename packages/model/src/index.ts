@@ -899,6 +899,8 @@ export interface GameState {
   seasonHistory: SeasonHistory[];
   /** Bounded, save-safe attribution records. Domain events own resolved values. */
   decisionAudits?: DecisionAuditRecord[];
+  /** Content-addressed knowledge retained by completed decision audits. */
+  decisionKnowledge: Record<string, DecisionKnowledgeSnapshot>;
   eventHistory: GameEvent[];
 }
 
@@ -1153,7 +1155,8 @@ export interface DecisionAuditRecord {
   commandKey: string;
   programId: ProgramId;
   actor: DecisionActor;
-  knowledge: DecisionKnowledgeSnapshot;
+  /** Required reference into GameState.decisionKnowledge. */
+  knowledgeId: string;
   submittedAt: DecisionClock;
   status: Extract<DecisionStatus, "DONE" | "BLOCKED">;
   /** Immediate command-boundary result; standing market outcomes arrive later. */

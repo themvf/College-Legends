@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { coachingPlanningKnowledgeView, planOffseasonCommands, planWeeklyCommands, trainingCampPlanningKnowledgeView } from "../packages/ai/dist/index.js";
+import { coachingPlanningKnowledgeView, planOffseasonCommands, planWeeklyCommands, portalPlanningKnowledgeViews, trainingCampPlanningKnowledgeView } from "../packages/ai/dist/index.js";
 import {
   advanceOffseasonStep,
   advanceWeek,
   beginSeason,
-  createFictionalLeague
+  createFictionalLeague,
+  decisionKnowledgeFor
 } from "../packages/simulation/dist/index.js";
 import { advanceHeadlessCareerStep } from "../apps/simulator-cli/dist/orchestration.js";
 
@@ -23,6 +24,7 @@ function withoutAttributionEvent(event) {
 function withoutAttributionState(value) {
   const state = structuredClone(value);
   state.decisionAudits = [];
+  state.decisionKnowledge = {};
   state.eventHistory = state.eventHistory.map(withoutAttributionEvent);
   return state;
 }
@@ -63,7 +65,7 @@ test("the simulator CLI records every weekly AI command without changing simulat
   const planningAudits = attributed.state.decisionAudits?.filter((audit) =>
     audit.commandType === "SET_WEEK_FOCUS" || audit.commandType === "SET_SCOUTING_TARGET") ?? [];
   assert.ok(planningAudits.length > 0);
-  assert.ok(planningAudits.every((audit) => audit.knowledge.facts.some((fact) =>
+  assert.ok(planningAudits.every((audit) => decisionKnowledgeFor(attributed.state, audit).facts.some((fact) =>
     fact.key === "weeklyPlanning.view.v1")));
   assert.deepEqual(advanceHeadlessCareerStep(state), attributed, "the attributed CLI boundary must replay deterministically");
 });
@@ -77,6 +79,7 @@ test("the simulator CLI uses attributed resolution at every offseason boundary",
   const visited = [];
   while (state.phase === "OFFSEASON") {
     visited.push(state.offseasonStep);
+    const portalViews = state.offseasonStep === "PORTAL" ? portalPlanningKnowledgeViews(state) : undefined;
     const commands = planOffseasonCommands(state);
     const legacy = advanceOffseasonStep(state, commands);
     const attributed = advanceHeadlessCareerStep(state);
@@ -101,10 +104,23 @@ test("the simulator CLI uses attributed resolution at every offseason boundary",
       || (audit.standingOutcome !== null
         && audit.standingOutcome.causes.length > 0
         && audit.standingOutcome.causes.every((cause) => outcomeCauseIds.has(cause.id)))));
+    if (state.offseasonStep === "PORTAL") {
+      const bidAudits = audits.filter((candidate) => candidate.commandType === "BID_PORTAL_PLAYER");
+      assert.equal(bidAudits.length, commands.filter((command) => command.type === "BID_PORTAL_PLAYER").length);
+      assert.ok(bidAudits.length > 0, "the fixture must exercise attributed portal bids");
+      for (const audit of bidAudits) {
+        const fact = decisionKnowledgeFor(attributed.state, audit).facts.find((candidate) => candidate.key === "portalPlanning.view.v1");
+        assert.ok(fact);
+        assert.deepEqual(JSON.parse(fact.value), portalViews[audit.programId]);
+        assert.deepEqual(audit.causes.map((cause) => cause.eventType), ["PORTAL_BID_SET"]);
+        assert.ok(["PORTAL_PLAYER_SIGNED", "PORTAL_PLAYER_UNCLAIMED"]
+          .includes(audit.standingOutcome.causes[0].eventType));
+      }
+    }
     if (state.offseasonStep === "COACHING") {
       const audit = audits.find((candidate) => candidate.commandType === "REPLACE_STAFF");
       assert.ok(audit, "the fixture must exercise a real coaching replacement");
-      const fact = audit.knowledge.facts.find((candidate) => candidate.key === "coachingPlanning.view.v1");
+      const fact = decisionKnowledgeFor(attributed.state, audit).facts.find((candidate) => candidate.key === "coachingPlanning.view.v1");
       assert.ok(fact);
       assert.deepEqual(JSON.parse(fact.value), coachingPlanningKnowledgeView(state, audit.programId));
       assert.deepEqual(audit.causes.map((cause) => cause.eventType), ["STAFF_REPLACED"]);
@@ -113,7 +129,7 @@ test("the simulator CLI uses attributed resolution at every offseason boundary",
       const campAudits = audits.filter((candidate) => candidate.commandType === "SET_TRAINING_CAMP_FOCUS");
       assert.equal(campAudits.length, Object.keys(state.programs).length);
       for (const audit of campAudits) {
-        const fact = audit.knowledge.facts.find((candidate) => candidate.key === "trainingCampPlanning.view.v1");
+        const fact = decisionKnowledgeFor(attributed.state, audit).facts.find((candidate) => candidate.key === "trainingCampPlanning.view.v1");
         assert.ok(fact);
         assert.deepEqual(JSON.parse(fact.value), trainingCampPlanningKnowledgeView(state, audit.programId));
         assert.deepEqual(audit.causes.map((cause) => cause.eventType), ["TRAINING_CAMP_SET"]);

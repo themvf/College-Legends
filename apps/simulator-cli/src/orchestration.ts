@@ -3,6 +3,8 @@ import {
   coachingPlanningKnowledgeSnapshot,
   planOffseasonCommands,
   planWeeklyCommands,
+  portalPlanningKnowledgeSnapshot,
+  portalPlanningKnowledgeViews,
   trainingCampPlanningKnowledgeSnapshot,
   weeklyPlanningKnowledgeSnapshot
 } from "@college-legends/ai";
@@ -46,7 +48,10 @@ export function advanceHeadlessCareerStep(input: Readonly<GameState>): Simulatio
   }
 
   if (input.phase === "OFFSEASON") {
-    const commands = planOffseasonCommands(input);
+    const portalViews = input.offseasonStep === "PORTAL"
+      ? portalPlanningKnowledgeViews(input)
+      : undefined;
+    const commands = planOffseasonCommands(input, undefined, portalViews);
     const continuations = commands.filter((command): command is Extract<GameCommand, { type: "CONTINUE_OFFSEASON" }> =>
       command.type === "CONTINUE_OFFSEASON");
     const decisions = commands
@@ -56,11 +61,13 @@ export function advanceHeadlessCareerStep(input: Readonly<GameState>): Simulatio
         command,
         aiActor(input, command.programId, "offseason-plan-v1"),
         sequence,
-        command.type === "REPLACE_STAFF"
-          ? coachingPlanningKnowledgeSnapshot(input, command.programId)
-          : command.type === "SET_TRAINING_CAMP_FOCUS"
-            ? trainingCampPlanningKnowledgeSnapshot(input, command.programId)
-            : undefined
+        command.type === "BID_PORTAL_PLAYER"
+          ? portalPlanningKnowledgeSnapshot(input, command.programId, portalViews![command.programId]!)
+          : command.type === "REPLACE_STAFF"
+            ? coachingPlanningKnowledgeSnapshot(input, command.programId)
+            : command.type === "SET_TRAINING_CAMP_FOCUS"
+              ? trainingCampPlanningKnowledgeSnapshot(input, command.programId)
+              : undefined
       ));
     return advanceOffseasonStepWithDecisions(input, decisions, continuations);
   }

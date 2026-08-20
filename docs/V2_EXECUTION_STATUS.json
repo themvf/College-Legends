@@ -149,6 +149,24 @@
               "reference": "Independent ARCH-001 training-camp knowledge-view verification and product review",
               "result": "The training-camp boundary is approved with no behavior, scope, knowledge-honesty, or attribution defect. ARCH-001 remains in progress for the portal and generic weekly planner boundaries plus system-wide lifecycle adoption.",
               "date": "2026-08-20"
+            },
+            {
+              "type": "code",
+              "reference": "packages/ai/src/index.ts; packages/model/src/index.ts; packages/simulation/src/decisions.ts; packages/simulation/src/persistence.ts; apps/web/src/simulation.worker.ts; apps/simulator-cli/src/orchestration.ts",
+              "result": "Portal AI now selects its exact legacy one-shot bids from a frozen, program-scoped V1 staff-estimate view reused by worker and CLI audits. Completed audits store strict content-addressed knowledge references in a bounded shared pool; format-v2 saves retain exact immutable provenance, causality, and deterministic format-v1 migration without duplicating the full portal view per bid.",
+              "date": "2026-08-20"
+            },
+            {
+              "type": "test",
+              "reference": "pnpm check; pnpm build; pnpm test; node --test tests/decision-knowledge-pool.test.mjs; git diff --check",
+              "result": "Passed: typecheck, build, 213/213 Node tests, 15/15 web tests, and 7/7 focused knowledge-pool tests. Independent 24- and 72-program probes preserved exact legacy bids (72 and 216 commands), retained one portal snapshot per bidding program, kept compressed save overhead below the 25 percent gate, rejected stale or cross-program views, and proved snapshots remain deeply frozen after further simulation and v2 save/load.",
+              "date": "2026-08-20"
+            },
+            {
+              "type": "review",
+              "reference": "Independent ARCH-001 portal knowledge-boundary and persistence-pool verification",
+              "result": "The portal boundary, exact causal provenance, content-addressed retention, format-v1 migration, format-v2 corruption handling, privacy boundary, save-size gate, and immutability fix are approved. ARCH-001 remains in progress for generic weekly planner boundaries and system-wide lifecycle adoption; this slice does not claim PORTAL-001 multi-round or interest-band completion.",
+              "date": "2026-08-20"
             }
           ],
           "waiver": null
@@ -234,7 +252,7 @@
       "id": "W2",
       "order": 2,
       "priority": "P0",
-      "name": "Unified command center and matchup truth",
+      "name": "Unified command center, position model, and matchup truth",
       "status": "not_started",
       "dependsOn": ["W1"],
       "waiver": null,
@@ -256,12 +274,28 @@
           "waiver": null
         },
         {
+          "id": "POS-001",
+          "name": "Split defensive backs into CB, FS, and SS",
+          "v2": ["V2-012"],
+          "priority": "P1",
+          "status": "not_started",
+          "dependsOn": ["UX-001"],
+          "acceptance": [
+            "New and migrated leagues use CB, FS, and SS with no live DB position while preserving player identity, history, eligibility, ratings, obligations, and scholarship accounting.",
+            "Roster generation, depth charts, scheme rotations, ratings, simulation, development, recruiting, portal, training, and AI use one role-specific model under shared rules.",
+            "Deterministic 24- and 72-program migration, replay, balance, save/resume, UI, and performance tests prove playable depth and bounded position scarcity."
+          ],
+          "blockedBy": [],
+          "evidence": [],
+          "waiver": null
+        },
+        {
           "id": "RAT-001",
           "name": "Expose offense, defense, overall, and matchup projections",
           "v2": ["V2-003"],
           "priority": "P1",
           "status": "not_started",
-          "dependsOn": ["UX-001"],
+          "dependsOn": ["POS-001"],
           "acceptance": [
             "Team ratings derive from actual eligible lineups and scheme usage.",
             "Matchup projections expose favorite or underdog status with scouting-aware uncertainty.",
@@ -489,15 +523,18 @@
       ]
     }
   ],
-  "deferredItems": [
-    {
-      "id": "OPEN-001",
-      "name": "Decide whether DB splits into CB, FS, and SS",
-      "status": "deferred",
-      "reason": "Requires a separate roster, scheme, recruiting, simulation, migration, and UI scope decision before entering a gated wave."
-    }
-  ],
+  "deferredItems": [],
   "changeLog": [
+    {
+      "date": "2026-08-20",
+      "change": "Verified the ARCH-001 portal AI knowledge boundary with exact legacy bid parity, frozen program-scoped inputs, worker and CLI provenance, linked standing outcomes, and a shared content-addressed knowledge pool that passes migration, retention, immutability, performance, and 24/72-program save-size gates. Kept ARCH-001 in progress for generic weekly planners and system-wide lifecycle adoption.",
+      "actor": "$college-legends-v2-manager"
+    },
+    {
+      "date": "2026-08-20",
+      "change": "Recorded the approved DB-to-CB/FS/SS direction as POS-001 in W2 after UX-001 and before ratings calibration. Preserved the business-first wave order and left roster counts and scheme allocations open for deterministic balance evidence.",
+      "actor": "$college-legends-v2-manager"
+    },
     {
       "date": "2026-08-20",
       "change": "Verified the ARCH-001 training-camp AI boundary with exact legacy threshold parity, a frozen program-scoped view, hidden-data isolation, exact worker and CLI snapshots, truthful offseason policy attribution, and linked causal events. Kept ARCH-001 in progress for portal, generic weekly planners, and system-wide lifecycle adoption.",

@@ -8,7 +8,8 @@ import type {
   DecisionRecord,
   DecisionStatus,
   GameCommand,
-  GameEvent
+  GameEvent,
+  GameState
 } from "@college-legends/model";
 
 /** Roughly two full 72-program seasons at two planning decisions per week. */
@@ -88,6 +89,82 @@ function freezeDeep<T>(value: T): T {
   return value;
 }
 
+function canonicalKnowledgeJson(knowledge: Readonly<DecisionKnowledgeSnapshot>): string {
+  return JSON.stringify(canonicalValue(knowledge));
+}
+
+function knowledgeHash(value: string): string {
+  let left = 0x811c9dc5;
+  let right = 0x9e3779b9;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    left = Math.imul(left ^ code, 0x01000193);
+    right = Math.imul(right ^ code, 0x85ebca6b);
+  }
+  return `${(left >>> 0).toString(16).padStart(8, "0")}${(right >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+/** Stable content identity for one exact canonical knowledge snapshot. */
+export function decisionKnowledgeId(knowledge: Readonly<DecisionKnowledgeSnapshot>): string {
+  const canonical = canonicalKnowledgeJson(knowledge);
+  return `knowledge:v1:${canonical.length}:${knowledgeHash(canonical)}`;
+}
+
+/** Intern an immutable snapshot, rejecting any content-address collision. */
+export function internDecisionKnowledge(
+  pool: Record<string, DecisionKnowledgeSnapshot>,
+  knowledge: Readonly<DecisionKnowledgeSnapshot>
+): string {
+  const canonical = canonicalKnowledgeJson(knowledge);
+  const id = `knowledge:v1:${canonical.length}:${knowledgeHash(canonical)}`;
+  const existing = pool[id];
+  if (existing) {
+    if (canonicalKnowledgeJson(existing) !== canonical) {
+      throw new Error(`Decision knowledge id collision for ${id}.`);
+    }
+    return id;
+  }
+  pool[id] = freezeDeep(structuredClone(knowledge));
+  return id;
+}
+
+/** Resolve and validate an audit's exact program and simulation-boundary view. */
+export function decisionKnowledgeFor(
+  state: Pick<GameState, "decisionKnowledge">,
+  audit: Pick<DecisionAuditRecord, "knowledgeId" | "programId" | "submittedAt">
+): Readonly<DecisionKnowledgeSnapshot> {
+  const knowledge = state.decisionKnowledge?.[audit.knowledgeId];
+  if (!knowledge) throw new Error(`Missing decision knowledge reference: ${audit.knowledgeId}.`);
+  if (decisionKnowledgeId(knowledge) !== audit.knowledgeId) {
+    throw new Error(`Decision knowledge content does not match reference: ${audit.knowledgeId}.`);
+  }
+  if (knowledge.programId !== audit.programId) {
+    throw new Error("Decision knowledge and audit must belong to the same program.");
+  }
+  if (knowledge.season !== audit.submittedAt.season
+    || knowledge.week !== audit.submittedAt.week
+    || knowledge.phase !== audit.submittedAt.phase) {
+    throw new Error("Decision knowledge and audit must describe the same simulation boundary.");
+  }
+  return knowledge;
+}
+
+/** Keep exactly the knowledge referenced by retained audits, in audit order. */
+export function retainedDecisionKnowledge(
+  pool: Readonly<Record<string, DecisionKnowledgeSnapshot>>,
+  audits: readonly DecisionAuditRecord[]
+): Record<string, DecisionKnowledgeSnapshot> {
+  const retained: Record<string, DecisionKnowledgeSnapshot> = {};
+  for (const audit of audits) {
+    const knowledge = decisionKnowledgeFor({ decisionKnowledge: pool as Record<string, DecisionKnowledgeSnapshot> }, audit);
+    const retainedId = internDecisionKnowledge(retained, knowledge);
+    if (retainedId !== audit.knowledgeId) {
+      throw new Error(`Decision knowledge content does not match reference: ${audit.knowledgeId}.`);
+    }
+  }
+  return retained;
+}
+
 /**
  * Creates an immutable preview around the same command the engine will resolve.
  * The redacted knowledge snapshot is the projector's only parameter, and it is
@@ -143,6 +220,7 @@ export function submitDecisionProjection<TCommand extends GameCommand>(
 /** Build a causal audit that references, rather than re-implements, domain events. */
 export function createDecisionAudit(
   decision: Readonly<DecisionRecord>,
+  knowledgeId: string,
   domainEvents: readonly { type: string }[],
   rejectionReason: string | null,
   acceptedResolution: "IMMEDIATE" | "STANDING" = "IMMEDIATE"
@@ -155,7 +233,7 @@ export function createDecisionAudit(
     commandKey: decisionCommandKey(decision.command),
     programId: decision.command.programId,
     actor: structuredClone(decision.actor),
-    knowledge: structuredClone(decision.knowledge),
+    knowledgeId,
     submittedAt: structuredClone(decision.submittedAt),
     status: rejectionReason === null ? "DONE" : "BLOCKED",
     resolution,

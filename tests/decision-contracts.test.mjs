@@ -16,6 +16,7 @@ import {
   createWeeklyPlanningDecision,
   decodeSave,
   decisionCommandKey,
+  decisionKnowledgeFor,
   encodeSave,
   prepareWeekWithDecisions,
   submitDecisionProjection
@@ -76,6 +77,7 @@ const recordFor = (state, actor, status = "REQUIRED", focuses = ["SCOUT"]) =>
 const withoutDecisionAudit = (state) => ({
   ...state,
   decisionAudits: [],
+  decisionKnowledge: {},
   eventHistory: withoutPayoffAttribution(state.eventHistory.map((event) => {
     const { decisionCauseId: _decisionCauseId, ...domainEvent } = event;
     return domainEvent;
@@ -221,7 +223,7 @@ test("a league batch resolves manual and AI planning through the same attributed
   assert.ok(forward.audits.every((audit) => audit.status === "DONE"));
   const aiAudit = forward.audits.find((audit) => audit.actor.mode === "AI");
   assert.ok(aiAudit);
-  assert.ok(aiAudit.knowledge.facts.every((fact) => !/rating|potential|interest/i.test(fact.key)));
+  assert.ok(decisionKnowledgeFor(forward.state, aiAudit).facts.every((fact) => !/rating|potential|interest/i.test(fact.key)));
 });
 
 test("repeated choices keep one decision id and receive unique deterministic submission ids", () => {

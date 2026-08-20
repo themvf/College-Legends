@@ -2,7 +2,7 @@ import type { OffseasonStep, PortalListingState, Recruitable, WeekFocus, AwardCa
 import type { DecisionActor, DecisionAuditRecord, DecisionItem, DecisionKnowledgeSnapshot, DecisionRecord, StandingDecisionResult } from "@college-legends/model";
 import { DEFAULT_BALANCE, FICTIONAL_PROGRAMS, fictionalPersonName, PROGRAM_CHARACTERS } from "@college-legends/content";
 import { AddressableRng } from "./rng.js";
-import { createDecisionAudit, createDecisionProjection, decisionCommandKey, retainedDecisionAudits, retainedDecisionEventHistory, submitDecisionProjection } from "./decisions.js";
+import { createDecisionAudit, createDecisionProjection, decisionCommandKey, internDecisionKnowledge, retainedDecisionAudits, retainedDecisionEventHistory, retainedDecisionKnowledge, submitDecisionProjection } from "./decisions.js";
 import { attributeByRole, attributesFor, computeOverall, ratingByRole, type AttributeDefinition } from "./attributes.js";
 import { weeklyBriefing as buildBriefing, type BriefingItem, type BriefingOptions } from "./briefing.js";
 import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES, bestSchemeFor, programRoster, coachSchemeFit, schemePersonnel } from "./scheme.js";
@@ -255,6 +255,10 @@ export {
   createDecisionProjection,
   DECISION_AUDIT_LIMIT,
   decisionCommandKey,
+  decisionKnowledgeFor,
+  decisionKnowledgeId,
+  internDecisionKnowledge,
+  retainedDecisionKnowledge,
   submitDecisionProjection
 } from "./decisions.js";
 
@@ -951,7 +955,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
     // content carried one set of development rates and every league ever created
     // carried another, so tuning the balance file changed nothing at all.
     identity: { rootSeed, balanceConfiguration: clone(DEFAULT_BALANCE), simulationVersion: "0.1.0" },
-    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, sponsorships: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, weekFocus: {}, scoutingTarget: {}, dossiers: {}, boosters: {}, nil: {}, staff: {}, depthCharts: {}, playerGameStats: [], playerSeasonStats: [], schedule: [], seasonHistory: [], decisionAudits: [], eventHistory: []
+    season: 2027, week: 0, phase: "ROSTER_REVIEW", programs: {}, players: {}, prospects: {}, recruiting: {}, sponsorships: {}, developmentSpotlights: {}, gamePlans: {}, preparation: {}, weekFocus: {}, scoutingTarget: {}, dossiers: {}, boosters: {}, nil: {}, staff: {}, depthCharts: {}, playerGameStats: [], playerSeasonStats: [], schedule: [], seasonHistory: [], decisionAudits: [], decisionKnowledge: {}, eventHistory: []
   };
   const rosterPositions = Object.entries(ROSTER_COMPOSITION).flatMap(([position, count]) =>
     Array.from({ length: count }, () => position as Position)
@@ -2225,6 +2229,7 @@ function eventMatchesAcceptedCommand(event: Readonly<GameEvent>, command: Readon
 
 function createTaggedDecisionAudit(
   decision: Readonly<DecisionRecord<GameCommand>>,
+  knowledgeId: string,
   events: GameEvent[],
   rejectionReason: string | null,
   resolution: "IMMEDIATE" | "STANDING" = "IMMEDIATE"
@@ -2232,7 +2237,7 @@ function createTaggedDecisionAudit(
   events.forEach((event, ordinal) => {
     event.decisionCauseId = `${decision.submissionId}:event:${ordinal}`;
   });
-  return createDecisionAudit(decision, events, rejectionReason, resolution);
+  return createDecisionAudit(decision, knowledgeId, events, rejectionReason, resolution);
 }
 
 type StandingCommand = Extract<GameCommand, { type: "SET_NIL_OFFER" | "BID_PORTAL_PLAYER" }>;
@@ -2376,13 +2381,15 @@ function attachDecisionAudits(
   resolved: SimulationResult,
   ordered: readonly DecisionRecord<GameCommand>[]
 ): DecisionBatchSimulationResult {
+  const decisionKnowledge = { ...(resolved.state.decisionKnowledge ?? {}) };
   const audits = ordered.map((decision) => {
+    const knowledgeId = internDecisionKnowledge(decisionKnowledge, decision.knowledge);
     const commandKey = decisionCommandKey(decision.command);
     const rejection = resolved.events.find((event): event is Extract<GameEvent, { type: "COMMAND_REJECTED" }> =>
       event.type === "COMMAND_REJECTED"
       && event.programId === decision.command.programId
       && decisionCommandKey(event.command) === commandKey);
-    if (rejection) return createTaggedDecisionAudit(decision, [rejection], rejection.reason);
+    if (rejection) return createTaggedDecisionAudit(decision, knowledgeId, [rejection], rejection.reason);
 
     const resolution = decision.command.type === "SET_NIL_OFFER" || decision.command.type === "BID_PORTAL_PLAYER"
       ? "STANDING"
@@ -2391,7 +2398,7 @@ function attachDecisionAudits(
     if (domainEvents.length !== 1) {
       throw new Error(`Decision ${decision.id} must resolve to exactly one causal domain event; found ${domainEvents.length}.`);
     }
-    return createTaggedDecisionAudit(decision, domainEvents, null, resolution);
+    return createTaggedDecisionAudit(decision, knowledgeId, domainEvents, null, resolution);
   });
   for (const audit of audits) {
     if (audit.status !== "DONE") continue;
@@ -2419,6 +2426,7 @@ function attachDecisionAudits(
     submissionId: audit.submissionId
   }));
   resolved.state.decisionAudits = retainedDecisionAudits([...(resolved.state.decisionAudits ?? []), ...audits]);
+  resolved.state.decisionKnowledge = retainedDecisionKnowledge(decisionKnowledge, resolved.state.decisionAudits);
   closeStandingDecisionAudits(resolved.state, resolved.events);
   if (resolved.state.eventHistory.length > 10_000) {
     resolved.state.eventHistory = retainedDecisionEventHistory(

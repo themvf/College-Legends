@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
-import { coachingPlanningKnowledgeView, planOffseasonCommands, planWeeklyCommands, trainingCampPlanningKnowledgeView } from "@college-legends/ai";
-import { advanceOffseasonStep, advanceWeek, beginSeason, createFictionalLeague, encodeSave } from "@college-legends/simulation";
+import { coachingPlanningKnowledgeView, planOffseasonCommands, planWeeklyCommands, portalPlanningKnowledgeViews, trainingCampPlanningKnowledgeView } from "@college-legends/ai";
+import { advanceOffseasonStep, advanceWeek, beginSeason, createFictionalLeague, decisionKnowledgeFor, encodeSave } from "@college-legends/simulation";
 
 const storage = vi.hoisted(() => ({
   bytes: null as Uint8Array<ArrayBuffer> | null,
@@ -160,9 +160,9 @@ describe("simulation worker decision routing", () => {
     if (advanced.type !== "COMPLETE") throw new Error("Expected completed week.");
     const aiAudit = advanced.state.decisionAudits?.find((candidate) =>
       candidate.actor.mode === "AI"
-      && candidate.knowledge.facts.some((fact) => fact.key === "weeklyPlanning.view.v1"));
+      && decisionKnowledgeFor(advanced.state, candidate).facts.some((fact) => fact.key === "weeklyPlanning.view.v1"));
     expect(aiAudit).toBeDefined();
-    const recordedView = JSON.parse(String(aiAudit?.knowledge.facts[0]?.value));
+    const recordedView = JSON.parse(String(aiAudit && decisionKnowledgeFor(advanced.state, aiAudit).facts[0]?.value));
     expect(recordedView).toMatchObject({ kind: "WEEKLY_PLANNING_KNOWLEDGE_V1", programId: aiAudit?.programId });
     await vi.waitFor(() => expect(storage.writeSave.mock.calls.length).toBeGreaterThan(writesBeforeAdvance));
 
@@ -280,7 +280,7 @@ describe("simulation worker decision routing", () => {
     expect(audit?.actor.mode).toBe("AI");
     if (audit?.actor.mode !== "AI") throw new Error("Expected an AI coaching decision.");
     expect(audit.actor.policyId).toBe("offseason-plan-v1");
-    const fact = audit?.knowledge.facts.find((candidate) => candidate.key === "coachingPlanning.view.v1");
+    const fact = audit && decisionKnowledgeFor(completed.state, audit).facts.find((candidate) => candidate.key === "coachingPlanning.view.v1");
     expect(fact).toBeDefined();
     expect(JSON.parse(String(fact?.value))).toEqual(coachingPlanningKnowledgeView(state, audit!.programId));
     expect(audit?.causes.map((cause) => cause.eventType)).toEqual(["STAFF_REPLACED"]);
@@ -305,13 +305,44 @@ describe("simulation worker decision routing", () => {
       expect(campAudit.actor.mode).toBe("AI");
       if (campAudit.actor.mode !== "AI") throw new Error("Expected an AI training-camp decision.");
       expect(campAudit.actor.policyId).toBe("offseason-plan-v1");
-      const campFact = campAudit.knowledge.facts.find((candidate) => candidate.key === "trainingCampPlanning.view.v1");
+      const campFact = decisionKnowledgeFor(campCompleted.state, campAudit).facts.find((candidate) => candidate.key === "trainingCampPlanning.view.v1");
       expect(campFact).toBeDefined();
       expect(JSON.parse(String(campFact?.value))).toEqual(trainingCampPlanningKnowledgeView(campState, campAudit.programId));
       expect(campAudit.causes.map((cause) => cause.eventType)).toEqual(["TRAINING_CAMP_SET"]);
       expect(campCompleted.events.some((event) =>
         event.type === "TRAINING_CAMP_SET" && event.decisionCauseId === campAudit.causes[0]?.id
       )).toBe(true);
+    }
+  }, 30_000);
+
+  it("records the exact cached portal view and causal standing outcome for every rival bid", async () => {
+    let state = beginSeason(createFictionalLeague("worker-portal-knowledge", 4));
+    while (state.phase !== "OFFSEASON") state = advanceWeek(state, planWeeklyCommands(state)).state;
+    const playerProgramId = "program-1";
+    const views = portalPlanningKnowledgeViews(state);
+    storage.bytes = await encodeSave(state, playerProgramId) as Uint8Array<ArrayBuffer>;
+    dispatch({ type: "LOAD_SAVE", requestId: "load-portal" });
+    await vi.waitFor(() => expect(response("load-portal", "READY").type).toBe("READY"));
+
+    dispatch({ type: "ADVANCE_OFFSEASON", requestId: "advance-portal", playerProgramId, commands: [] });
+    const completed = response("advance-portal", "COMPLETE");
+    if (completed.type !== "COMPLETE") throw new Error("Expected completed portal step.");
+    const audits = completed.state.decisionAudits?.filter((candidate) =>
+      candidate.commandType === "BID_PORTAL_PLAYER") ?? [];
+    expect(audits.length).toBeGreaterThan(0);
+    for (const audit of audits) {
+      expect(audit.actor).toMatchObject({ mode: "AI", policyId: "offseason-plan-v1" });
+      const fact = decisionKnowledgeFor(completed.state, audit).facts.find((candidate) => candidate.key === "portalPlanning.view.v1");
+      expect(fact).toBeDefined();
+      expect(JSON.parse(String(fact?.value))).toEqual(views[audit.programId]);
+      expect(audit.causes.map((cause) => cause.eventType)).toEqual(["PORTAL_BID_SET"]);
+      expect(audit.standingOutcome?.causes.length).toBeGreaterThan(0);
+      expect(audit.standingOutcome?.causes.every((cause) =>
+        cause.eventType === "PORTAL_PLAYER_SIGNED" || cause.eventType === "PORTAL_PLAYER_UNCLAIMED")).toBe(true);
+      expect(completed.events.some((event) =>
+        event.type === "PORTAL_BID_SET" && event.decisionCauseId === audit.causes[0]?.id)).toBe(true);
+      expect(completed.events.some((event) =>
+        event.decisionOutcomeCauseIds?.includes(audit.standingOutcome!.causes[0]!.id))).toBe(true);
     }
   }, 30_000);
 });

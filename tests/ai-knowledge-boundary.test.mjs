@@ -5,7 +5,11 @@ import {
   coachingPlanningKnowledgeView,
   planOffseasonCommands,
   planWeeklyCommands,
+  portalPlanningKnowledgeSnapshot,
+  portalPlanningKnowledgeView,
+  portalPlanningKnowledgeViews,
   selectCoachingChange,
+  selectPortalBids,
   selectTrainingCampFocus,
   selectWeeklyFocusAndScouting,
   trainingCampPlanningKnowledgeSnapshot,
@@ -33,6 +37,12 @@ const trainingCampWindow = (seed) => {
   while (state.offseasonStep !== "TRAINING_CAMP") {
     state = advanceOffseasonStep(state, planOffseasonCommands(state)).state;
   }
+  return state;
+};
+
+const portalWindow = (seed, count = 4) => {
+  let state = activeLeague(seed, count);
+  while (state.phase !== "OFFSEASON") state = advanceWeek(state, planWeeklyCommands(state)).state;
   return state;
 };
 
@@ -278,4 +288,122 @@ test("hidden player data cannot affect camp selection, while the declared 85 per
     scholarshipRosterSize: 85,
     scholarshipLimit: 100
   }), { type: "SET_TRAINING_CAMP_FOCUS", programId: "program-1", focus: "INSTALL" });
+});
+
+test("portal AI preserves the established deterministic V1 bids", () => {
+  const state = portalWindow("portal-view-0");
+  const expected = [
+    { type: "BID_PORTAL_PLAYER", programId: "program-1", playerId: "program-1-player-14", points: 12, weeklyNil: 500 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-2", playerId: "program-2-player-30", points: 12, weeklyNil: 1950 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-3", playerId: "program-2-player-30", points: 13, weeklyNil: 1950 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-4", playerId: "program-2-player-30", points: 20, weeklyNil: 1950 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-4", playerId: "program-4-player-26", points: 30, weeklyNil: 200 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-4", playerId: "program-4-player-29", points: 30, weeklyNil: 200 }
+  ];
+  const views = portalPlanningKnowledgeViews(state);
+  assert.deepEqual(planOffseasonCommands(state, undefined, views), expected);
+  assert.deepEqual(Object.values(views).flatMap(selectPortalBids), expected);
+});
+
+test("the portal selector receives only an exact deeply frozen program view", () => {
+  const state = portalWindow("portal-view-0");
+  const views = portalPlanningKnowledgeViews(state);
+  const view = portalPlanningKnowledgeView(state, "program-1", views);
+  assert.deepEqual(Object.keys(view).sort(), [
+    "freeWeeklyNilCapacity", "kind", "offseasonStep", "phase", "programId", "projectedOpenings",
+    "recruitingPoints", "season", "targets", "week"
+  ]);
+  assert.equal(view.kind, "PORTAL_PLANNING_KNOWLEDGE_V1");
+  assert.equal(Object.isFrozen(views), true);
+  assert.equal(Object.isFrozen(view), true);
+  assert.equal(Object.isFrozen(view.targets), true);
+  assert.ok(view.targets.every(Object.isFrozen));
+  assert.deepEqual(Object.keys(view.targets[0]).sort(), [
+    "askingPrice", "maximumBidPoints", "playerId", "targetValue"
+  ]);
+  assert.ok(!JSON.stringify(view).match(/interestByProgram|bidsByProgram|potential|ratings|priorities|rootSeed/i));
+  assert.throws(() => { view.recruitingPoints = 0; }, TypeError);
+  assert.throws(() => { view.targets[0].targetValue = 0; }, TypeError);
+
+  const snapshot = portalPlanningKnowledgeSnapshot(state, "program-1", view);
+  assert.equal(snapshot.facts.length, 1);
+  assert.equal(snapshot.facts[0].key, "portalPlanning.view.v1");
+  assert.equal(snapshot.facts[0].source, "STAFF_ESTIMATE");
+  assert.deepEqual(JSON.parse(snapshot.facts[0].value), view);
+
+  const staleState = structuredClone(state);
+  staleState.week += 1;
+  assert.throws(() => planOffseasonCommands(staleState, undefined, views), /stale for the current offseason boundary/);
+  assert.throws(() => portalPlanningKnowledgeSnapshot(staleState, "program-1", view), /stale for the current offseason boundary/);
+  assert.throws(() => portalPlanningKnowledgeSnapshot(state, "program-2", view), /belong to the command program/);
+});
+
+test("private rival and hidden player data cannot affect portal selection", () => {
+  const state = portalWindow("portal-view-0");
+  const programId = "program-1";
+  const expected = portalPlanningKnowledgeView(state, programId);
+  const changed = structuredClone(state);
+  for (const listing of Object.values(changed.portal ?? {})) {
+    for (const rivalId of Object.keys(listing.interestByProgram)) {
+      if (rivalId !== programId) listing.interestByProgram[rivalId] = listing.interestByProgram[rivalId] > 50 ? 0 : 100;
+    }
+    listing.priorities.reverse();
+    listing.bidsByProgram = Object.fromEntries(Object.keys(changed.programs)
+      .filter((id) => id !== programId)
+      .map((id) => [id, { points: 99, weeklyNil: 999_999 }]));
+  }
+  for (const player of Object.values(changed.players)) {
+    player.potential = player.potential > 80 ? 40 : 99;
+    player.workEthic = player.workEthic > 50 ? 0 : 100;
+    player.stardom = player.stardom > 50 ? 0 : 100;
+    for (const key of Object.keys(player.ratings)) player.ratings[key] = player.ratings[key] > 50 ? 0 : 100;
+  }
+  for (const program of Object.values(changed.programs)) {
+    if (program.id !== programId) {
+      program.budget *= -10;
+      program.fanBase *= 10;
+      program.prestige = 0;
+    }
+  }
+  const redacted = portalPlanningKnowledgeView(changed, programId);
+  assert.deepEqual(redacted, expected);
+  assert.deepEqual(selectPortalBids(redacted), selectPortalBids(expected));
+
+  const ownInterest = structuredClone(state);
+  const firstListing = Object.values(ownInterest.portal ?? {})[0];
+  firstListing.interestByProgram[programId] += 10;
+  assert.notDeepEqual(portalPlanningKnowledgeView(ownInterest, programId), expected,
+    "the program's own projected target value remains a permitted V1 staff estimate");
+});
+
+test("portal selection preserves all V1 thresholds, ordering, and local budgets", () => {
+  const base = {
+    kind: "PORTAL_PLANNING_KNOWLEDGE_V1",
+    programId: "program-1",
+    season: 2027,
+    week: 0,
+    phase: "OFFSEASON",
+    offseasonStep: "PORTAL",
+    projectedOpenings: 3,
+    recruitingPoints: 55,
+    freeWeeklyNilCapacity: 1300,
+    targets: [
+      { playerId: "player-b", targetValue: 80, askingPrice: 1000, maximumBidPoints: 20 },
+      { playerId: "player-a", targetValue: 80, askingPrice: 1000, maximumBidPoints: 30 },
+      { playerId: "player-c", targetValue: 60, askingPrice: 1000, maximumBidPoints: 20 },
+      { playerId: "player-d", targetValue: 59.999, askingPrice: 100, maximumBidPoints: 20 }
+    ]
+  };
+  assert.deepEqual(selectPortalBids(base), [
+    { type: "BID_PORTAL_PLAYER", programId: "program-1", playerId: "player-a", points: 30, weeklyNil: 1000 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-1", playerId: "player-b", points: 20, weeklyNil: 300 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-1", playerId: "player-c", points: 5, weeklyNil: 0 }
+  ]);
+  assert.deepEqual(selectPortalBids({ ...base, projectedOpenings: 0 }), []);
+  assert.deepEqual(selectPortalBids({ ...base, recruitingPoints: 4 }), []);
+  assert.equal(selectPortalBids({ ...base, freeWeeklyNilCapacity: 299 }).at(0).weeklyNil, 0,
+    "less than 30 percent of ask emits no NIL");
+  assert.equal(selectPortalBids({ ...base, freeWeeklyNilCapacity: 326 }).at(0).weeklyNil, 350,
+    "the accepted raw capacity is rounded to the nearest fifty exactly as V1 did");
+  assert.equal(selectPortalBids({ ...base, projectedOpenings: 20 }).length, 3, "V1 never chases more than three targets");
 });

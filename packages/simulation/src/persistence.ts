@@ -1,10 +1,12 @@
 import type {
+  DecisionAuditRecord,
+  DecisionKnowledgeSnapshot,
   GameState,
   PlayerGameStatLine,
   PlayerSeasonStatLine,
   Season
 } from "@college-legends/model";
-import { retainedDecisionAudits, retainedDecisionEventHistory } from "./decisions.js";
+import { internDecisionKnowledge, retainedDecisionAudits, retainedDecisionEventHistory, retainedDecisionKnowledge } from "./decisions.js";
 
 /**
  * Saving a dynasty.
@@ -46,7 +48,7 @@ import { retainedDecisionAudits, retainedDecisionEventHistory } from "./decision
 /** How many events a save carries. Enough for a season's inbox, not a career's. */
 export const SAVED_EVENT_LIMIT = 400;
 
-export const SAVE_FORMAT_VERSION = 1;
+export const SAVE_FORMAT_VERSION = 2;
 
 const TOTALLED = [
   "snaps",
@@ -131,6 +133,7 @@ export function saveablePayload(state: Readonly<GameState>): GameState {
     playerGameStats: state.playerGameStats.filter((row) =>
       row.season === state.season || row.gameId.startsWith("playoff:")),
     decisionAudits,
+    decisionKnowledge: retainedDecisionKnowledge(state.decisionKnowledge ?? {}, decisionAudits),
     eventHistory: retainedDecisionEventHistory(state.eventHistory, decisionAudits, SAVED_EVENT_LIMIT)
   } as GameState;
 }
@@ -145,6 +148,11 @@ interface SaveEnvelope {
   playerProgramId: string | null;
   state: GameState;
 }
+
+type LegacyDecisionAuditRecord = Omit<DecisionAuditRecord, "knowledgeId"> & {
+  knowledge: DecisionKnowledgeSnapshot;
+  knowledgeId?: never;
+};
 
 export interface LoadedSave {
   state: GameState;
@@ -221,15 +229,31 @@ export async function decodeSave(bytes: Uint8Array): Promise<LoadedSave> {
   if (envelope.version > SAVE_FORMAT_VERSION) {
     throw new Error(`This save was written by a newer version of the game (format ${envelope.version}).`);
   }
-  const state = envelope.state;
+  const state = envelope.state as GameState & {
+    decisionKnowledge?: Record<string, DecisionKnowledgeSnapshot>;
+    decisionAudits?: Array<DecisionAuditRecord | LegacyDecisionAuditRecord>;
+  };
   // Older saves predate these fields; fill them rather than crashing on load.
   state.playerSeasonStats ??= [];
   state.weekFocus ??= {};
   state.scoutingTarget ??= {};
-  state.decisionAudits = (state.decisionAudits ?? []).map((audit) => ({
-    ...audit,
-    standingOutcome: audit.standingOutcome ?? null
-  }));
+  const decisionKnowledge = { ...(state.decisionKnowledge ?? {}) };
+  const decisionAudits = (state.decisionAudits ?? []).map((audit) => {
+    if ("knowledgeId" in audit && typeof audit.knowledgeId === "string" && audit.knowledgeId.trim()) {
+      return { ...audit, standingOutcome: audit.standingOutcome ?? null } as DecisionAuditRecord;
+    }
+    if (envelope.version <= 1 && "knowledge" in audit && audit.knowledge) {
+      const { knowledge, ...legacyAudit } = audit as LegacyDecisionAuditRecord;
+      return {
+        ...legacyAudit,
+        knowledgeId: internDecisionKnowledge(decisionKnowledge, knowledge),
+        standingOutcome: audit.standingOutcome ?? null
+      } as DecisionAuditRecord;
+    }
+    throw new Error("Malformed decision audit knowledge reference in save.");
+  });
+  state.decisionAudits = decisionAudits;
+  state.decisionKnowledge = retainedDecisionKnowledge(decisionKnowledge, decisionAudits);
   return {
     state,
     playerProgramId: envelope.playerProgramId ?? null,

@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import type { CareerPath, DecisionActor, GameCommand, GameState, ProgramId } from "@college-legends/model";
 import { CAREER_PATHS } from "@college-legends/content";
-import { coachingPlanningKnowledgeSnapshot, planOffseasonCommands, planWeeklyCommands, selectWeeklyFocusAndScouting, trainingCampPlanningKnowledgeSnapshot, weeklyPlanningKnowledgeSnapshot, weeklyPlanningKnowledgeView } from "@college-legends/ai";
+import { coachingPlanningKnowledgeSnapshot, planOffseasonCommands, planWeeklyCommands, portalPlanningKnowledgeSnapshot, portalPlanningKnowledgeViews, selectWeeklyFocusAndScouting, trainingCampPlanningKnowledgeSnapshot, weeklyPlanningKnowledgeSnapshot, weeklyPlanningKnowledgeView } from "@college-legends/ai";
 import { advanceOffseasonStepWithDecisions, advanceWeekWithDecisions, beginSeasonWithDecisions, commitWeeklyDecision, createDelegatedWeeklyPlanningDecision, createFictionalLeague, createGameDecision, createWeeklyPlanningDecision, decodeSave, encodeSave, prepareWeekWithDecisions, programPreviews, type WeeklyPlanningCommand } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 import { deleteSave, readSave, savedBytes, storageAvailable, writeSave } from "./storage.js";
@@ -202,7 +202,10 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       if (activeState.phase !== "OFFSEASON") throw new Error("There is no offseason step open.");
       // Rivals plan against the same step the player just decided, so the
       // league moves around him rather than waiting for him.
-      const rivals = planOffseasonCommands(activeState, request.playerProgramId);
+      const portalViews = activeState.offseasonStep === "PORTAL"
+        ? portalPlanningKnowledgeViews(activeState)
+        : undefined;
+      const rivals = planOffseasonCommands(activeState, request.playerProgramId, portalViews);
       const continuations = [...rivals, ...request.commands].filter((command): command is Extract<GameCommand, { type: "CONTINUE_OFFSEASON" }> =>
         command.type === "CONTINUE_OFFSEASON");
       const decisions = [
@@ -212,11 +215,13 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
             command,
             aiActor(activeState!, command.programId, "offseason-plan-v1"),
             sequence,
-            command.type === "REPLACE_STAFF"
-              ? coachingPlanningKnowledgeSnapshot(activeState!, command.programId)
-              : command.type === "SET_TRAINING_CAMP_FOCUS"
-                ? trainingCampPlanningKnowledgeSnapshot(activeState!, command.programId)
-                : undefined
+            command.type === "BID_PORTAL_PLAYER"
+              ? portalPlanningKnowledgeSnapshot(activeState!, command.programId, portalViews![command.programId]!)
+              : command.type === "REPLACE_STAFF"
+                ? coachingPlanningKnowledgeSnapshot(activeState!, command.programId)
+                : command.type === "SET_TRAINING_CAMP_FOCUS"
+                  ? trainingCampPlanningKnowledgeSnapshot(activeState!, command.programId)
+                  : undefined
           )),
         ...request.commands.filter((command) => command.type !== "CONTINUE_OFFSEASON").map((command, sequence) =>
           createGameDecision(activeState!, command, manualActor(request.playerProgramId), rivals.length + sequence))
