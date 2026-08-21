@@ -167,6 +167,24 @@
               "reference": "Independent ARCH-001 portal knowledge-boundary and persistence-pool verification",
               "result": "The portal boundary, exact causal provenance, content-addressed retention, format-v1 migration, format-v2 corruption handling, privacy boundary, save-size gate, and immutability fix are approved. ARCH-001 remains in progress for generic weekly planner boundaries and system-wide lifecycle adoption; this slice does not claim PORTAL-001 multi-round or interest-band completion.",
               "date": "2026-08-20"
+            },
+            {
+              "type": "code",
+              "reference": "packages/ai/src/index.ts; apps/web/src/simulation.worker.ts; apps/simulator-cli/src/orchestration.ts",
+              "result": "Weekly booster, sponsorship, and facility AI now select exclusively from one deeply frozen, program-scoped business knowledge view per simulation boundary. Production worker and headless CLI cache and reuse that exact pre-resolution view for truthful weekly-plan-v1 audits, while same-program business commands share one content-addressed knowledge record.",
+              "date": "2026-08-20"
+            },
+            {
+              "type": "test",
+              "reference": "pnpm check; pnpm build; pnpm test; node --test tests/ai-knowledge-boundary.test.mjs tests/simulator-cli-lifecycle.test.mjs; pnpm --filter @college-legends/web test; git diff --check",
+              "result": "Passed: typecheck, build, 218/218 Node tests, 15/15 web tests, 24/24 focused AI/CLI tests, and 4/4 worker tests. Coverage proves exact week-one/week-three legacy parity, frozen redacted inputs, hidden-data invariance, declared thresholds and tie breaks, stale-view rejection, 24/72-program legal command portfolios, pooled exact snapshots, deterministic replay, and matching booster, sponsorship, and facility cause IDs.",
+              "date": "2026-08-20"
+            },
+            {
+              "type": "review",
+              "reference": "Independent ARCH-001 weekly-business knowledge-boundary engineering and product review",
+              "result": "The weekly business boundary is approved with no behavior, privacy, provenance, save-integrity, performance, or scope defect. ARCH-001 remains in progress for development, media, recruiting, and system-wide lifecycle adoption; this slice does not claim human delegation or V2-005 completion.",
+              "date": "2026-08-20"
             }
           ],
           "waiver": null
@@ -525,6 +543,11 @@
   ],
   "deferredItems": [],
   "changeLog": [
+    {
+      "date": "2026-08-20",
+      "change": "Verified the ARCH-001 weekly business AI boundary for booster, sponsorship, and facility decisions with exact legacy parity, frozen program-scoped inputs, truthful worker and CLI attribution, pooled immutable knowledge, causal event links, and 24/72-program performance gates. Kept ARCH-001 in progress for development, media, recruiting, and system-wide lifecycle adoption.",
+      "actor": "$college-legends-v2-manager"
+    },
     {
       "date": "2026-08-20",
       "change": "Verified the ARCH-001 portal AI knowledge boundary with exact legacy bid parity, frozen program-scoped inputs, worker and CLI provenance, linked standing outcomes, and a shared content-addressed knowledge pool that passes migration, retention, immutability, performance, and 24/72-program save-size gates. Kept ARCH-001 in progress for generic weekly planners and system-wide lifecycle adoption.",

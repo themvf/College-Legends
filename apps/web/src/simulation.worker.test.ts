@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
-import { coachingPlanningKnowledgeView, planOffseasonCommands, planWeeklyCommands, portalPlanningKnowledgeViews, trainingCampPlanningKnowledgeView } from "@college-legends/ai";
+import { coachingPlanningKnowledgeView, planOffseasonCommands, planWeeklyCommands, portalPlanningKnowledgeViews, trainingCampPlanningKnowledgeView, weeklyBusinessPlanningKnowledgeViews } from "@college-legends/ai";
 import { advanceOffseasonStep, advanceWeek, beginSeason, createFictionalLeague, decisionKnowledgeFor, encodeSave } from "@college-legends/simulation";
 
 const storage = vi.hoisted(() => ({
@@ -155,6 +155,7 @@ describe("simulation worker decision routing", () => {
     await vi.waitFor(() => expect(storage.writeSave.mock.calls.length).toBeGreaterThan(writesBeforeRejectedDecision));
 
     const writesBeforeAdvance = storage.writeSave.mock.calls.length;
+    const expectedBusinessViews = weeklyBusinessPlanningKnowledgeViews(rejected.state);
     dispatch({ type: "ADVANCE_WEEK", requestId: "advance", playerProgramId: programId, commands: [] });
     const advanced = response("advance", "COMPLETE");
     if (advanced.type !== "COMPLETE") throw new Error("Expected completed week.");
@@ -164,6 +165,31 @@ describe("simulation worker decision routing", () => {
     expect(aiAudit).toBeDefined();
     const recordedView = JSON.parse(String(aiAudit && decisionKnowledgeFor(advanced.state, aiAudit).facts[0]?.value));
     expect(recordedView).toMatchObject({ kind: "WEEKLY_PLANNING_KNOWLEDGE_V1", programId: aiAudit?.programId });
+    const businessCauseByCommand = {
+      CHOOSE_BOOSTER: "BOOSTER_RESOLVED",
+      ACCEPT_SPONSORSHIP: "SPONSORSHIP_ACCEPTED",
+      UPGRADE_FACILITY: "FACILITY_UPGRADED"
+    } as const;
+    const businessAudits = advanced.state.decisionAudits?.filter((candidate) =>
+      candidate.actor.mode === "AI" && candidate.commandType in businessCauseByCommand) ?? [];
+    expect(businessAudits.length).toBeGreaterThan(0);
+    for (const businessAudit of businessAudits) {
+      const fact = decisionKnowledgeFor(advanced.state, businessAudit).facts.find((candidate) =>
+        candidate.key === "weeklyBusinessPlanning.view.v1");
+      expect(fact).toBeDefined();
+      expect(JSON.parse(String(fact!.value))).toEqual(expectedBusinessViews[businessAudit.programId]);
+      expect(businessAudit.actor).toMatchObject({ mode: "AI", policyId: "weekly-plan-v1" });
+      expect(businessAudit.causes.map((cause) => cause.eventType)).toEqual([
+        businessCauseByCommand[businessAudit.commandType as keyof typeof businessCauseByCommand]
+      ]);
+      expect(businessAudit.causes.every((cause) => advanced.events.some((event) =>
+        event.type === cause.eventType && event.decisionCauseId === cause.id))).toBe(true);
+    }
+    const pooledProgramId = Object.keys(expectedBusinessViews).find((candidateProgramId) =>
+      businessAudits.filter((businessAudit) => businessAudit.programId === candidateProgramId).length > 1);
+    expect(pooledProgramId).toBeDefined();
+    expect(new Set(businessAudits.filter((businessAudit) => businessAudit.programId === pooledProgramId)
+      .map((businessAudit) => businessAudit.knowledgeId)).size).toBe(1);
     await vi.waitFor(() => expect(storage.writeSave.mock.calls.length).toBeGreaterThan(writesBeforeAdvance));
 
     const writesBeforeSpoof = storage.writeSave.mock.calls.length;

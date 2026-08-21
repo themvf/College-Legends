@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { coachingPlanningKnowledgeView, planOffseasonCommands, planWeeklyCommands, portalPlanningKnowledgeViews, trainingCampPlanningKnowledgeView } from "../packages/ai/dist/index.js";
+import { coachingPlanningKnowledgeView, planOffseasonCommands, planWeeklyCommands, portalPlanningKnowledgeViews, trainingCampPlanningKnowledgeView, weeklyBusinessPlanningKnowledgeViews } from "../packages/ai/dist/index.js";
 import {
   advanceOffseasonStep,
   advanceWeek,
@@ -51,6 +51,7 @@ test("the headless roster-review boundary preserves legacy CLI setup semantics",
 
 test("the simulator CLI records every weekly AI command without changing simulation semantics", () => {
   const state = beginSeason(createFictionalLeague("cli-weekly-lifecycle", 4));
+  const businessViews = weeklyBusinessPlanningKnowledgeViews(state);
   const commands = planWeeklyCommands(state);
   const legacy = advanceWeek(state, commands);
   const attributed = advanceHeadlessCareerStep(state);
@@ -67,6 +68,27 @@ test("the simulator CLI records every weekly AI command without changing simulat
   assert.ok(planningAudits.length > 0);
   assert.ok(planningAudits.every((audit) => decisionKnowledgeFor(attributed.state, audit).facts.some((fact) =>
     fact.key === "weeklyPlanning.view.v1")));
+  const causeByCommand = {
+    CHOOSE_BOOSTER: "BOOSTER_RESOLVED",
+    ACCEPT_SPONSORSHIP: "SPONSORSHIP_ACCEPTED",
+    UPGRADE_FACILITY: "FACILITY_UPGRADED"
+  };
+  const businessAudits = attributed.state.decisionAudits?.filter((audit) => audit.commandType in causeByCommand) ?? [];
+  assert.ok(businessAudits.length > 0, "the fixture must exercise weekly business choices");
+  for (const audit of businessAudits) {
+    const fact = decisionKnowledgeFor(attributed.state, audit).facts.find((candidate) =>
+      candidate.key === "weeklyBusinessPlanning.view.v1");
+    assert.ok(fact);
+    assert.deepEqual(JSON.parse(String(fact.value)), businessViews[audit.programId]);
+    assert.deepEqual(audit.causes.map((cause) => cause.eventType), [causeByCommand[audit.commandType]]);
+    assert.ok(audit.causes.every((cause) => attributed.events.some((event) =>
+      event.type === cause.eventType && event.decisionCauseId === cause.id)));
+  }
+  const multiDecisionProgram = Object.keys(businessViews).find((programId) =>
+    businessAudits.filter((audit) => audit.programId === programId).length > 1);
+  assert.ok(multiDecisionProgram, "the fixture must pool a view shared by multiple business commands");
+  assert.equal(new Set(businessAudits.filter((audit) => audit.programId === multiDecisionProgram)
+    .map((audit) => audit.knowledgeId)).size, 1);
   assert.deepEqual(advanceHeadlessCareerStep(state), attributed, "the attributed CLI boundary must replay deterministically");
 });
 

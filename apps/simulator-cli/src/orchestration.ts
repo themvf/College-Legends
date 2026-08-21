@@ -6,6 +6,8 @@ import {
   portalPlanningKnowledgeSnapshot,
   portalPlanningKnowledgeViews,
   trainingCampPlanningKnowledgeSnapshot,
+  weeklyBusinessPlanningKnowledgeSnapshot,
+  weeklyBusinessPlanningKnowledgeViews,
   weeklyPlanningKnowledgeSnapshot
 } from "@college-legends/ai";
 import {
@@ -72,7 +74,8 @@ export function advanceHeadlessCareerStep(input: Readonly<GameState>): Simulatio
     return advanceOffseasonStepWithDecisions(input, decisions, continuations);
   }
 
-  const commands = planWeeklyCommands(input);
+  const businessViews = weeklyBusinessPlanningKnowledgeViews(input);
+  const commands = planWeeklyCommands(input, undefined, businessViews);
   const planningCommands = commands.filter(isWeeklyPlanningCommand);
   const planningDecisions = planningCommands.map((command, sequence) => createWeeklyPlanningDecision(
     input,
@@ -87,7 +90,12 @@ export function advanceHeadlessCareerStep(input: Readonly<GameState>): Simulatio
       input,
       command,
       aiActor(input, command.programId, "weekly-plan-v1"),
-      planningDecisions.length + sequence
+      planningDecisions.length + sequence,
+      command.type === "CHOOSE_BOOSTER"
+        || command.type === "ACCEPT_SPONSORSHIP"
+        || command.type === "UPGRADE_FACILITY"
+        ? weeklyBusinessPlanningKnowledgeSnapshot(input, command.programId, businessViews[command.programId]!)
+        : undefined
     ));
   return advanceWeekWithDecisions(input, [...planningDecisions, ...otherDecisions]);
 }

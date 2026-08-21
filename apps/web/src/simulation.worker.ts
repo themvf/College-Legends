@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import type { CareerPath, DecisionActor, GameCommand, GameState, ProgramId } from "@college-legends/model";
 import { CAREER_PATHS } from "@college-legends/content";
-import { coachingPlanningKnowledgeSnapshot, planOffseasonCommands, planWeeklyCommands, portalPlanningKnowledgeSnapshot, portalPlanningKnowledgeViews, selectWeeklyFocusAndScouting, trainingCampPlanningKnowledgeSnapshot, weeklyPlanningKnowledgeSnapshot, weeklyPlanningKnowledgeView } from "@college-legends/ai";
+import { coachingPlanningKnowledgeSnapshot, planOffseasonCommands, planWeeklyCommands, portalPlanningKnowledgeSnapshot, portalPlanningKnowledgeViews, selectWeeklyFocusAndScouting, trainingCampPlanningKnowledgeSnapshot, weeklyBusinessPlanningKnowledgeSnapshot, weeklyBusinessPlanningKnowledgeViews, weeklyPlanningKnowledgeSnapshot, weeklyPlanningKnowledgeView } from "@college-legends/ai";
 import { advanceOffseasonStepWithDecisions, advanceWeekWithDecisions, beginSeasonWithDecisions, commitWeeklyDecision, createDelegatedWeeklyPlanningDecision, createFictionalLeague, createGameDecision, createWeeklyPlanningDecision, decodeSave, encodeSave, prepareWeekWithDecisions, programPreviews, type WeeklyPlanningCommand } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 import { deleteSave, readSave, savedBytes, storageAvailable, writeSave } from "./storage.js";
@@ -237,7 +237,8 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       throw new Error("The season is over. Work through the offseason before the next one starts.");
     }
     assertPlayerAuthority(request.playerProgramId, request.commands);
-    const aiCommands = planWeeklyCommands(activeState, request.playerProgramId);
+    const businessViews = weeklyBusinessPlanningKnowledgeViews(activeState);
+    const aiCommands = planWeeklyCommands(activeState, request.playerProgramId, businessViews);
     const aiPlanningCommands = aiCommands.filter((command): command is WeeklyPlanningCommand =>
       command.type === "SET_WEEK_FOCUS" || command.type === "SET_SCOUTING_TARGET");
     const aiDecisions = aiPlanningCommands.map((command, sequence) => {
@@ -255,7 +256,12 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         activeState!,
         command,
         aiActor(activeState!, command.programId, "weekly-plan-v1"),
-        aiDecisions.length + sequence
+        aiDecisions.length + sequence,
+        command.type === "CHOOSE_BOOSTER"
+          || command.type === "ACCEPT_SPONSORSHIP"
+          || command.type === "UPGRADE_FACILITY"
+          ? weeklyBusinessPlanningKnowledgeSnapshot(activeState!, command.programId, businessViews[command.programId]!)
+          : undefined
       ));
     const playerDecisions = request.commands.map((command, sequence) => createGameDecision(
       activeState!,

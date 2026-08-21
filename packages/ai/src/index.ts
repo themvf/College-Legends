@@ -1,4 +1,4 @@
-import type { DecisionKnowledgeSnapshot, DevelopmentFocus, FacilityType, GameState, GameCommand, Player, Position, Prospect, TeamUnitRatings, WeekFocus } from "@college-legends/model";
+import type { BoosterKind, DecisionKnowledgeSnapshot, DevelopmentFocus, FacilityType, GameState, GameCommand, Player, Position, ProgramCharacter, Prospect, SponsorshipStrategy, TeamUnitRatings, WeekFocus } from "@college-legends/model";
 import {
   FACILITY_UPGRADE_COST,
   focusCapacity,
@@ -110,6 +110,41 @@ export interface PortalPlanningKnowledgeView {
 }
 
 export type PortalPlanningKnowledgeViews = Readonly<Record<string, PortalPlanningKnowledgeView>>;
+
+export type WeeklyBusinessSelectionCommand = Extract<
+  GameCommand,
+  { type: "CHOOSE_BOOSTER" | "ACCEPT_SPONSORSHIP" | "UPGRADE_FACILITY" }
+>;
+
+/** Exact program and boundary facts used by the three existing V1 business policies. */
+export interface WeeklyBusinessPlanningKnowledgeView {
+  readonly kind: "WEEKLY_BUSINESS_PLANNING_KNOWLEDGE_V1";
+  readonly programId: string;
+  readonly season: number;
+  readonly week: number;
+  readonly phase: "REGULAR_SEASON";
+  readonly budget: number;
+  readonly weeklyExpenses: number;
+  readonly character: ProgramCharacter;
+  readonly playingThisWeek: boolean;
+  readonly atHome: boolean;
+  readonly boosterOptions: readonly {
+    readonly id: string;
+    readonly kind: BoosterKind;
+    readonly chance: number;
+  }[];
+  readonly sponsorshipActive: boolean;
+  readonly sponsorshipOffers: readonly {
+    readonly id: string;
+    readonly strategy: SponsorshipStrategy;
+  }[];
+  readonly facilities: readonly {
+    readonly facility: FacilityType;
+    readonly level: number;
+  }[];
+}
+
+export type WeeklyBusinessPlanningKnowledgeViews = Readonly<Record<string, WeeklyBusinessPlanningKnowledgeView>>;
 
 /** Build the redacted view at the state boundary; never pass state to selection. */
 export function weeklyPlanningKnowledgeView(
@@ -243,6 +278,100 @@ export function trainingCampPlanningKnowledgeSnapshot(
     phase: state.phase,
     facts: Object.freeze([Object.freeze({
       key: "trainingCampPlanning.view.v1",
+      value: JSON.stringify(view),
+      source: "PROGRAM_INTERNAL" as const,
+      entityId: programId,
+      observedSeason: state.season,
+      observedWeek: state.week
+    })])
+  });
+}
+
+/** Build all weekly business views with one schedule pass and no league-state selector access. */
+export function weeklyBusinessPlanningKnowledgeViews(
+  state: Readonly<GameState>
+): WeeklyBusinessPlanningKnowledgeViews {
+  if (state.phase !== "REGULAR_SEASON" || state.week > 14) {
+    throw new Error("Weekly business planning requires an active regular-season boundary.");
+  }
+  const playing = new Set<string>();
+  const home = new Set<string>();
+  for (const game of state.schedule) {
+    if (game.week !== state.week || game.played) continue;
+    playing.add(game.homeProgramId);
+    playing.add(game.awayProgramId);
+    home.add(game.homeProgramId);
+  }
+  return Object.freeze(Object.fromEntries(Object.values(state.programs).map((program) => {
+    const booster = pendingBoosterOffer(state, program.id);
+    const sponsorship = state.sponsorships?.[program.id];
+    const view = Object.freeze({
+      kind: "WEEKLY_BUSINESS_PLANNING_KNOWLEDGE_V1" as const,
+      programId: program.id,
+      season: state.season,
+      week: state.week,
+      phase: "REGULAR_SEASON" as const,
+      budget: program.budget,
+      weeklyExpenses: program.weeklyExpenses,
+      character: program.character,
+      playingThisWeek: playing.has(program.id),
+      atHome: home.has(program.id),
+      boosterOptions: Object.freeze((booster?.options ?? []).map((option) => Object.freeze({
+        id: option.id,
+        kind: option.kind,
+        chance: option.chance
+      }))),
+      sponsorshipActive: Boolean(sponsorship?.activeContractId),
+      sponsorshipOffers: Object.freeze((sponsorship?.offers ?? []).map((offer) => Object.freeze({
+        id: offer.id,
+        strategy: offer.strategy
+      }))),
+      facilities: Object.freeze((Object.entries(program.facilities) as [FacilityType, number][])
+        .map(([facility, level]) => Object.freeze({ facility, level })))
+    });
+    return [program.id, view];
+  })));
+}
+
+function validateWeeklyBusinessPlanningKnowledgeView(
+  state: Readonly<GameState>,
+  programId: string,
+  view: Readonly<WeeklyBusinessPlanningKnowledgeView>
+): void {
+  if (view.programId !== programId) throw new Error("Weekly business knowledge must belong to the command program.");
+  if (state.phase !== "REGULAR_SEASON"
+    || state.week > 14
+    || view.season !== state.season
+    || view.week !== state.week
+    || view.phase !== state.phase) {
+    throw new Error("Weekly business knowledge is stale for the current simulation boundary.");
+  }
+}
+
+export function weeklyBusinessPlanningKnowledgeView(
+  state: Readonly<GameState>,
+  programId: string,
+  cachedViews: WeeklyBusinessPlanningKnowledgeViews = weeklyBusinessPlanningKnowledgeViews(state)
+): WeeklyBusinessPlanningKnowledgeView {
+  const view = cachedViews[programId];
+  if (!view) throw new Error("A weekly business knowledge view needs an existing program.");
+  validateWeeklyBusinessPlanningKnowledgeView(state, programId, view);
+  return view;
+}
+
+export function weeklyBusinessPlanningKnowledgeSnapshot(
+  state: Readonly<GameState>,
+  programId: string,
+  view: WeeklyBusinessPlanningKnowledgeView = weeklyBusinessPlanningKnowledgeView(state, programId)
+): DecisionKnowledgeSnapshot {
+  validateWeeklyBusinessPlanningKnowledgeView(state, programId, view);
+  return Object.freeze({
+    programId,
+    season: state.season,
+    week: state.week,
+    phase: state.phase,
+    facts: Object.freeze([Object.freeze({
+      key: "weeklyBusinessPlanning.view.v1",
       value: JSON.stringify(view),
       source: "PROGRAM_INTERNAL" as const,
       entityId: programId,
@@ -422,31 +551,23 @@ export function selectWeeklyFocusAndScouting(
  * so a program with nothing in the bank chases the cheque and a good one with a
  * game to win takes the defensive week.
  */
-function planBooster(state: Readonly<GameState>, programId: string): GameCommand[] {
-  const offer = pendingBoosterOffer(state, programId);
-  if (!offer) return [];
-  const program = state.programs[programId];
-  if (!program) return [];
-  const playingThisWeek = state.schedule.some((game) =>
-    game.week === state.week && !game.played
-    && (game.homeProgramId === programId || game.awayProgramId === programId));
-  const atHome = state.schedule.some((game) =>
-    game.week === state.week && !game.played && game.homeProgramId === programId);
-
-  const worth = (option: (typeof offer.options)[number]): number => {
+export function selectBoosterChoice(
+  view: Readonly<WeeklyBusinessPlanningKnowledgeView>
+): Extract<WeeklyBusinessSelectionCommand, { type: "CHOOSE_BOOSTER" }>[] {
+  const worth = (option: WeeklyBusinessPlanningKnowledgeView["boosterOptions"][number]): number => {
     const odds = option.chance / 100;
     if (option.kind === "DONOR") {
       // A cheque matters most to a program that is short of money.
-      return odds * (60 + Math.max(0, 40 - program.budget / 500_000));
+      return odds * (60 + Math.max(0, 40 - view.budget / 500_000));
     }
     if (option.kind === "POSITION_LEGEND") return odds * 70;
-    if (option.kind === "LOCAL_BUSINESS") return atHome ? odds * 55 : 0;
-    return playingThisWeek ? odds * 62 : 0;
+    if (option.kind === "LOCAL_BUSINESS") return view.atHome ? odds * 55 : 0;
+    return view.playingThisWeek ? odds * 62 : 0;
   };
 
-  const best = [...offer.options]
+  const best = [...view.boosterOptions]
     .sort((left, right) => worth(right) - worth(left) || left.id.localeCompare(right.id))[0];
-  return best ? [{ type: "CHOOSE_BOOSTER", programId, optionId: best.id }] : [];
+  return best ? [{ type: "CHOOSE_BOOSTER", programId: view.programId, optionId: best.id }] : [];
 }
 
 /**
@@ -454,22 +575,42 @@ function planBooster(state: Readonly<GameState>, programId: string): GameCommand
  * itself to fill the stadium, bluebloods and talent magnets sell winning, while
  * rebuilders and diehards protect the guaranteed floor.
  */
-function planSponsorship(state: Readonly<GameState>, programId: string): GameCommand[] {
-  const sponsorship = state.sponsorships?.[programId];
-  if (!sponsorship || sponsorship.activeContractId) return [];
-  const character = state.programs[programId]?.character;
-  const strategy = character === "FRONTRUNNER"
+export function selectSponsorship(
+  view: Readonly<WeeklyBusinessPlanningKnowledgeView>
+): Extract<WeeklyBusinessSelectionCommand, { type: "ACCEPT_SPONSORSHIP" }>[] {
+  if (view.sponsorshipActive) return [];
+  const strategy = view.character === "FRONTRUNNER"
     ? "HOME_CROWD"
-    : character === "BLUEBLOOD" || character === "TALENT_MAGNET"
+    : view.character === "BLUEBLOOD" || view.character === "TALENT_MAGNET"
       ? "WINNING"
       : "GUARANTEED";
-  const offer = sponsorship.offers.find((candidate) => candidate.strategy === strategy);
-  return offer ? [{ type: "ACCEPT_SPONSORSHIP", programId, offerId: offer.id }] : [];
+  const offer = view.sponsorshipOffers.find((candidate) => candidate.strategy === strategy);
+  return offer ? [{ type: "ACCEPT_SPONSORSHIP", programId: view.programId, offerId: offer.id }] : [];
+}
+
+/** Select the same cheapest weak facility as the legacy weekly planner. */
+export function selectFacilityUpgrade(
+  view: Readonly<WeeklyBusinessPlanningKnowledgeView>
+): Extract<WeeklyBusinessSelectionCommand, { type: "UPGRADE_FACILITY" }>[] {
+  if (view.week !== 1) return [];
+  const facility = [...view.facilities]
+    .filter(({ level }) => level < 5)
+    .sort((left, right) => left.level - right.level || left.facility.localeCompare(right.facility))[0];
+  if (!facility) return [];
+  const cost = FACILITY_UPGRADE_COST[facility.level];
+  return cost !== undefined && view.budget >= cost + view.weeklyExpenses * 2
+    ? [{ type: "UPGRADE_FACILITY", programId: view.programId, facility: facility.facility }]
+    : [];
 }
 
 /** AI programs use the same limited development, media, and recruiting decisions as the human player. */
-export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId?: string): GameCommand[] {
+export function planWeeklyCommands(
+  state: Readonly<GameState>,
+  excludedProgramId?: string,
+  cachedBusinessViews?: WeeklyBusinessPlanningKnowledgeViews
+): GameCommand[] {
   if (state.phase !== "REGULAR_SEASON" || state.week > 14) return [];
+  const businessViews = cachedBusinessViews ?? weeklyBusinessPlanningKnowledgeViews(state);
   // These indexes turn the weekly planner from dozens of full-league scans per
   // program into one pass. At 72 teams this is the difference between seconds
   // and minutes over a dynasty season.
@@ -497,14 +638,15 @@ export function planWeeklyCommands(state: Readonly<GameState>, excludedProgramId
   return Object.values(state.programs).flatMap((program) => {
     if (program.id === excludedProgramId) return [];
     const commands: GameCommand[] = [];
+    const businessView = weeklyBusinessPlanningKnowledgeView(state, program.id, businessViews);
 
     commands.push(...selectWeeklyFocusAndScouting(weeklyPlanningKnowledgeView(state, program.id)));
-    commands.push(...planBooster(state, program.id));
-    commands.push(...planSponsorship(state, program.id));
+    commands.push(...selectBoosterChoice(businessView));
+    commands.push(...selectSponsorship(businessView));
 
     // The scheme is the game plan. The retired weekly command is intentionally
     // never emitted; doing so only produced a rejection for every rival.
-    commands.push(...planFacilityUpgrade(state, program.id));
+    commands.push(...selectFacilityUpgrade(businessView));
 
     const roster = rostersByProgram.get(program.id) ?? [];
     const returningRooms = returningByProgram.get(program.id)!;
@@ -642,21 +784,6 @@ function prospectValue(state: Readonly<GameState>, prospect: Prospect, programId
   ).length;
   const needBonus = Math.max(0, 1 - returning / ROSTER_COMPOSITION[prospect.position]) * 40;
   return prospect.hype * 0.65 + prospect.interestByProgram[programId]! * 0.25 + localBonus + needBonus;
-}
-
-/** One affordable, strategically weakest facility upgrade per season. */
-function planFacilityUpgrade(state: Readonly<GameState>, programId: string): GameCommand[] {
-  if (state.week !== 1) return [];
-  const program = state.programs[programId];
-  if (!program) return [];
-  const facility = (Object.entries(program.facilities) as [FacilityType, number][])
-    .filter(([, level]) => level < 5)
-    .sort((left, right) => left[1] - right[1] || left[0].localeCompare(right[0]))[0];
-  if (!facility) return [];
-  const cost = FACILITY_UPGRADE_COST[facility[1]];
-  return cost !== undefined && program.budget >= cost + program.weeklyExpenses * 2
-    ? [{ type: "UPGRADE_FACILITY", programId, facility: facility[0] }]
-    : [];
 }
 
 /**

@@ -11,9 +11,15 @@ import {
   selectCoachingChange,
   selectPortalBids,
   selectTrainingCampFocus,
+  selectBoosterChoice,
+  selectFacilityUpgrade,
+  selectSponsorship,
   selectWeeklyFocusAndScouting,
   trainingCampPlanningKnowledgeSnapshot,
   trainingCampPlanningKnowledgeView,
+  weeklyBusinessPlanningKnowledgeSnapshot,
+  weeklyBusinessPlanningKnowledgeView,
+  weeklyBusinessPlanningKnowledgeViews,
   weeklyPlanningKnowledgeView
 } from "../packages/ai/dist/index.js";
 import { advanceOffseasonStep, advanceWeek, beginSeason, createFictionalLeague } from "../packages/simulation/dist/index.js";
@@ -288,6 +294,134 @@ test("hidden player data cannot affect camp selection, while the declared 85 per
     scholarshipRosterSize: 85,
     scholarshipLimit: 100
   }), { type: "SET_TRAINING_CAMP_FOCUS", programId: "program-1", focus: "INSTALL" });
+});
+
+const businessCommands = (commands) => commands.filter((command) =>
+  command.type === "CHOOSE_BOOSTER"
+  || command.type === "ACCEPT_SPONSORSHIP"
+  || command.type === "UPGRADE_FACILITY");
+
+test("weekly business AI preserves the established deterministic V1 choices", () => {
+  let state = activeLeague("weekly-business-view-0");
+  assert.deepEqual(businessCommands(planWeeklyCommands(state)), [
+    { type: "ACCEPT_SPONSORSHIP", programId: "program-1", offerId: "program-1:2027:guaranteed" },
+    { type: "ACCEPT_SPONSORSHIP", programId: "program-2", offerId: "program-2:2027:guaranteed" },
+    { type: "UPGRADE_FACILITY", programId: "program-2", facility: "ACADEMICS" },
+    { type: "ACCEPT_SPONSORSHIP", programId: "program-3", offerId: "program-3:2027:winning" },
+    { type: "UPGRADE_FACILITY", programId: "program-3", facility: "SCOUTING" },
+    { type: "ACCEPT_SPONSORSHIP", programId: "program-4", offerId: "program-4:2027:home-crowd" }
+  ]);
+  state = advanceWeek(state, planWeeklyCommands(state)).state;
+  state = advanceWeek(state, planWeeklyCommands(state)).state;
+  assert.deepEqual(businessCommands(planWeeklyCommands(state)), [
+    { type: "CHOOSE_BOOSTER", programId: "program-1", optionId: "2027:3:program-1:donor" },
+    { type: "CHOOSE_BOOSTER", programId: "program-2", optionId: "2027:3:program-2:donor" },
+    { type: "CHOOSE_BOOSTER", programId: "program-3", optionId: "2027:3:program-3:business" },
+    { type: "CHOOSE_BOOSTER", programId: "program-4", optionId: "2027:3:program-4:legend-defense" }
+  ]);
+});
+
+test("weekly business selection uses only one exact deeply frozen program view", () => {
+  const state = activeLeague("weekly-business-shape");
+  const views = weeklyBusinessPlanningKnowledgeViews(state);
+  const view = weeklyBusinessPlanningKnowledgeView(state, "program-1", views);
+  assert.deepEqual(Object.keys(view).sort(), [
+    "atHome", "boosterOptions", "budget", "character", "facilities", "kind", "phase", "playingThisWeek",
+    "programId", "season", "sponsorshipActive", "sponsorshipOffers", "week", "weeklyExpenses"
+  ]);
+  assert.equal(Object.isFrozen(views), true);
+  assert.equal(Object.isFrozen(view), true);
+  assert.equal(Object.isFrozen(view.boosterOptions), true);
+  assert.equal(Object.isFrozen(view.sponsorshipOffers), true);
+  assert.equal(Object.isFrozen(view.facilities), true);
+  assert.ok([...view.boosterOptions, ...view.sponsorshipOffers, ...view.facilities].every(Object.isFrozen));
+  assert.ok(!JSON.stringify(view).match(/name|reward|amount|note|schedule|player|prospect|interest|rootSeed/i));
+  assert.throws(() => { view.budget = 0; }, TypeError);
+
+  const snapshot = weeklyBusinessPlanningKnowledgeSnapshot(state, "program-1", view);
+  assert.equal(snapshot.facts[0].key, "weeklyBusinessPlanning.view.v1");
+  assert.equal(snapshot.facts[0].source, "PROGRAM_INTERNAL");
+  assert.deepEqual(JSON.parse(snapshot.facts[0].value), view);
+
+  const stale = structuredClone(state);
+  stale.week += 1;
+  assert.throws(() => planWeeklyCommands(stale, undefined, views), /stale for the current simulation boundary/);
+  assert.throws(() => weeklyBusinessPlanningKnowledgeSnapshot(state, "program-2", view), /belong to the command program/);
+});
+
+test("hidden and unrelated league data cannot affect weekly business selection", () => {
+  const state = activeLeague("weekly-business-hidden");
+  const expected = weeklyBusinessPlanningKnowledgeView(state, "program-1");
+  const changed = structuredClone(state);
+  for (const player of Object.values(changed.players)) {
+    player.overall = player.overall > 60 ? 20 : 99;
+    player.potential = player.potential > 60 ? 20 : 99;
+  }
+  for (const prospect of Object.values(changed.prospects)) prospect.potential = 1;
+  for (const program of Object.values(changed.programs)) {
+    if (program.id !== "program-1") {
+      program.budget *= -10;
+      program.weeklyExpenses *= 10;
+    }
+  }
+  for (const game of changed.schedule) if (game.week !== changed.week) game.played = !game.played;
+  for (const option of changed.boosters?.["program-1"]?.offer?.options ?? []) {
+    option.name = "redacted mutation";
+    option.reward = "redacted reward";
+    option.amount = 999999;
+  }
+  const redacted = weeklyBusinessPlanningKnowledgeView(changed, "program-1");
+  assert.deepEqual(redacted, expected);
+  assert.deepEqual([
+    ...selectBoosterChoice(redacted), ...selectSponsorship(redacted), ...selectFacilityUpgrade(redacted)
+  ], [...selectBoosterChoice(expected), ...selectSponsorship(expected), ...selectFacilityUpgrade(expected)]);
+});
+
+test("weekly business selectors preserve V1 thresholds, tie breaks, and declared sensitivities", () => {
+  const base = {
+    kind: "WEEKLY_BUSINESS_PLANNING_KNOWLEDGE_V1", programId: "program-1", season: 2027, week: 1,
+    phase: "REGULAR_SEASON", budget: 2_000_000, weeklyExpenses: 100_000, character: "DIEHARD",
+    playingThisWeek: false, atHome: false,
+    boosterOptions: [
+      { id: "b", kind: "LOCAL_BUSINESS", chance: 100 },
+      { id: "a", kind: "TURNOVER_LEGEND", chance: 100 },
+      { id: "donor", kind: "DONOR", chance: 60 }
+    ],
+    sponsorshipActive: false,
+    sponsorshipOffers: [
+      { id: "guaranteed", strategy: "GUARANTEED" }, { id: "winning", strategy: "WINNING" },
+      { id: "crowd", strategy: "HOME_CROWD" }
+    ],
+    facilities: [{ facility: "TRAINING", level: 2 }, { facility: "ACADEMICS", level: 2 }]
+  };
+  assert.equal(selectBoosterChoice(base)[0].optionId, "donor");
+  const lowerDonorOdds = base.boosterOptions.map((option) => option.id === "donor" ? { ...option, chance: 50 } : option);
+  assert.equal(selectBoosterChoice({ ...base, atHome: true, boosterOptions: lowerDonorOdds })[0].optionId, "b");
+  assert.equal(selectBoosterChoice({ ...base, playingThisWeek: true, boosterOptions: lowerDonorOdds })[0].optionId, "a");
+  assert.equal(selectBoosterChoice({ ...base, budget: 0 })[0].optionId, "donor");
+  assert.equal(selectBoosterChoice({ ...base, boosterOptions: [
+    { id: "b", kind: "POSITION_LEGEND", chance: 50 },
+    { id: "a", kind: "POSITION_LEGEND", chance: 50 }
+  ] })[0].optionId, "a", "equal expected values break by stable option id");
+  assert.deepEqual(selectBoosterChoice({ ...base, boosterOptions: [] }), []);
+  assert.equal(selectSponsorship(base)[0].offerId, "guaranteed");
+  assert.equal(selectSponsorship({ ...base, character: "BLUEBLOOD" })[0].offerId, "winning");
+  assert.equal(selectSponsorship({ ...base, character: "FRONTRUNNER" })[0].offerId, "crowd");
+  assert.deepEqual(selectSponsorship({ ...base, sponsorshipActive: true }), []);
+  assert.deepEqual(selectSponsorship({ ...base, sponsorshipOffers: [] }), []);
+  assert.equal(selectFacilityUpgrade(base)[0].facility, "ACADEMICS");
+  assert.deepEqual(selectFacilityUpgrade({ ...base, budget: 949_999 }), []);
+  assert.equal(selectFacilityUpgrade({ ...base, budget: 950_000 })[0].facility, "ACADEMICS");
+  assert.deepEqual(selectFacilityUpgrade({ ...base, week: 2 }), []);
+  assert.deepEqual(selectFacilityUpgrade({ ...base, facilities: [{ facility: "ACADEMICS", level: 5 }] }), []);
+});
+
+test("weekly business plans are canonical commands and are never rejected", () => {
+  for (const count of [24, 72]) {
+    const state = activeLeague(`weekly-business-canonical-${count}`, count);
+    const result = advanceWeek(state, planWeeklyCommands(state));
+    assert.ok(!result.events.some((event) => event.type === "COMMAND_REJECTED" && businessCommands([event.command]).length));
+  }
 });
 
 test("portal AI preserves the established deterministic V1 bids", () => {
