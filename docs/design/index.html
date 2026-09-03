@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>College Legends — Design Studies</title>
+<style>
+  :root {
+    --bg: #f4f2ed;
+    --panel: #ffffff;
+    --ink: #16181b;
+    --muted: #5c5f63;
+    --line: #d8d4cb;
+    --accent: #8a6a16;
+    --stamp: #6b6f74;
+
+    --disp: "Arial Narrow", "Helvetica Neue Condensed", "Liberation Sans Narrow", system-ui, sans-serif;
+    --prose: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #101215;
+      --panel: #181b1f;
+      --ink: #ecedef;
+      --muted: #9aa0a7;
+      --line: #2a2f36;
+      --accent: #d9b14c;
+      --stamp: #868c93;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #101215;
+    --panel: #181b1f;
+    --ink: #ecedef;
+    --muted: #9aa0a7;
+    --line: #2a2f36;
+    --accent: #d9b14c;
+    --stamp: #868c93;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--prose);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.6;
+  }
+
+  .wrap {
+    max-width: 940px;
+    margin: 0 auto;
+    padding: 56px 24px 96px;
+  }
+
+  header { border-bottom: 1px solid var(--line); padding-bottom: 28px; }
+
+  h1 {
+    font-family: var(--disp);
+    font-size: 2.1rem;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    margin: 0 0 10px;
+    text-wrap: balance;
+  }
+
+  .lede {
+    margin: 0;
+    max-width: 66ch;
+    color: var(--muted);
+    font-size: 0.98rem;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 18px;
+    margin-top: 32px;
+  }
+
+  .study {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 22px;
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.15s ease, transform 0.15s ease;
+  }
+  .study:hover, .study:focus-visible {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+  }
+  .study:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  .eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--stamp);
+  }
+  .eyebrow .n { color: var(--accent); font-weight: 700; }
+  .eyebrow .state {
+    margin-left: auto;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 1px 7px;
+    font-size: 0.62rem;
+  }
+  .study.current .eyebrow .state {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .study h2 {
+    font-family: var(--disp);
+    font-size: 1.3rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin: 0;
+  }
+
+  .file {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--muted);
+    word-break: break-all;
+  }
+
+  .study p { margin: 0; font-size: 0.9rem; color: var(--muted); }
+  .study p.claim { color: var(--ink); }
+
+  footer {
+    margin-top: 44px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    font-size: 0.88rem;
+    color: var(--muted);
+    max-width: 66ch;
+  }
+  footer code {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+
+  @media (max-width: 720px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Design Studies</h1>
+    <p class="lede">
+      Standalone HTML mockups for College Legends, none of them wired to the app. Each explores a
+      visual direction for a real screen using real content from <code>packages/content</code>, so
+      the treatments can be compared against each other rather than against a description. They run
+      in order — each one answers something the previous one raised.
+    </p>
+  </header>
+
+  <div class="grid">
+
+    <a class="study" href="program-marks.html">
+      <div class="eyebrow"><span class="n">01</span><span>Identity</span><span class="state">Reference</span></div>
+      <h2>Shield System</h2>
+      <div class="file">program-marks.html</div>
+      <p class="claim">Five program marks drawn from real generated programs, each shown at four sizes on both grounds.</p>
+      <p>
+        Keystone Commonwealth, Lake Erie, Lone Star Metropolitan, Crescent City and Front Range —
+        picked so each program character has a mark. Establishes the rule that a dark shield needs a
+        keyline to survive on a dark UI.
+      </p>
+    </a>
+
+    <a class="study" href="scoreboard-math.html">
+      <div class="eyebrow"><span class="n">02</span><span>Moneyball × Arcade</span><span class="state">Reference</span></div>
+      <h2>Scoreboard Math</h2>
+      <div class="file">scoreboard-math.html</div>
+      <p class="claim">A single amber-CRT hue carrying both the numbers and the drama.</p>
+      <p>
+        Treats a game result as a high score and the roster as a data table, on the argument that the
+        sim's appeal is arithmetic that happens to be exciting. Names its own three risks at the
+        bottom.
+      </p>
+    </a>
+
+    <a class="study" href="three-treatments.html">
+      <div class="eyebrow"><span class="n">03</span><span>Three-way</span><span class="state">Reference</span></div>
+      <h2>Three Screens</h2>
+      <div class="file">three-treatments.html</div>
+      <p class="claim">Bloomberg × Moneyball, Bloomberg × Arcade, and Palantir × Arcade on identical content.</p>
+      <p>
+        One recruiting board rendered three ways, deliberately with the same four prospects and the
+        same numbers, so anything that differs between them is a design decision rather than a
+        content difference. Closes recommending the Palantir treatment.
+      </p>
+    </a>
+
+    <a class="study current" href="war-room-mockup.html">
+      <div class="eyebrow"><span class="n">04</span><span>Broadcast</span><span class="state">Current</span></div>
+      <h2>War Room</h2>
+      <div class="file">war-room-mockup.html</div>
+      <p class="claim">Broadcast-scorebug UI: circular gauges, italic condensed numerals, a yard-line divider.</p>
+      <p>
+        Started from a racing UI kit, then retextured for football and repalletted to field green and
+        leather brown. The argument it lands on is that the percentage circle and the italic numeral
+        were already football's own language — recruiting sites and scorebugs got there first.
+      </p>
+    </a>
+
+  </div>
+
+  <footer>
+    Open any file directly in a browser; there is no build step and no external dependency. Studies
+    01–03 follow the viewer's light or dark theme. Study 04 deliberately commits to a single dark
+    ground — it is a night-game broadcast look, and inverting it would defeat the point.
+  </footer>
+
+</div>
+</body>
+</html>

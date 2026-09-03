@@ -1,0 +1,405 @@
+<title>Scoreboard Math</title>
+<style>
+  /* ------------------------------------------------------------------
+     The whole direction hangs on one hue. Amber CRT was what 1980s data
+     terminals used AND what arcade cabinets used. It is the only colour
+     that is honestly both halves of this brief, so it carries every
+     number and nothing else does.
+     ------------------------------------------------------------------ */
+  :root{
+    /* Moneyball ground: locker-room slate, desaturated, green-biased. */
+    --bg:#EDEFEC;
+    --panel:#FFFFFF;
+    --sunk:#E2E6E1;
+    --rule:#C3CBC4;
+    --ink:#111614;
+    --muted:#5A6560;
+    /* Arcade signal. Amber reads on both grounds; it is darkened for light. */
+    --amber:#9A6300;
+    --amber-face:#FFB000;
+    --cyan:#0E6E7C;
+    --good:#1C7A4F;
+    --bad:#B23636;
+    --scan:rgba(0,0,0,.05);
+    --glow:none;
+
+    --display:"Arial Narrow","Helvetica Neue Condensed","Liberation Sans Narrow",system-ui,sans-serif;
+    --data:ui-monospace,"SF Mono","IBM Plex Mono",Menlo,Consolas,monospace;
+    --prose:-apple-system,"Segoe UI","Helvetica Neue",Arial,sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0B1113;
+      --panel:#121A1C;
+      --sunk:#0A1012;
+      --rule:#263436;
+      --ink:#E4EDEA;
+      --muted:#7E908C;
+      --amber:#FFB000;
+      --amber-face:#FFB000;
+      --cyan:#3ED8E8;
+      --good:#3DD68C;
+      --bad:#FF6B6B;
+      --scan:rgba(0,0,0,.22);
+      --glow:0 0 18px rgba(255,176,0,.22);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0B1113;
+    --panel:#121A1C;
+    --sunk:#0A1012;
+    --rule:#263436;
+    --ink:#E4EDEA;
+    --muted:#7E908C;
+    --amber:#FFB000;
+    --amber-face:#FFB000;
+    --cyan:#3ED8E8;
+    --good:#3DD68C;
+    --bad:#FF6B6B;
+    --scan:rgba(0,0,0,.22);
+    --glow:0 0 18px rgba(255,176,0,.22);
+  }
+
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--prose);line-height:1.55;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1000px;margin:0 auto;padding:44px 22px 90px;}
+
+  .tag{font-family:var(--data);font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);}
+
+  header.top{padding-bottom:26px;border-bottom:3px solid var(--ink);}
+  header.top h1{
+    font-family:var(--display);font-weight:700;text-transform:uppercase;
+    font-size:clamp(2.2rem,5.6vw,3.9rem);line-height:.92;letter-spacing:-.005em;margin:8px 0 0;text-wrap:balance;
+  }
+  header.top h1 em{font-style:normal;color:var(--amber);}
+  header.top p{margin:14px 0 0;max-width:64ch;color:var(--muted);}
+
+  h2.section{
+    font-family:var(--display);text-transform:uppercase;font-size:1.35rem;letter-spacing:.02em;
+    margin:52px 0 4px;font-weight:700;
+  }
+  h2.section+p.lede{margin:0 0 18px;color:var(--muted);max-width:66ch;}
+
+  /* Every number in the product lives in one of these. */
+  .readout{
+    font-family:var(--data);font-variant-numeric:tabular-nums;color:var(--amber);
+    font-weight:700;letter-spacing:-.02em;
+  }
+
+  /* -------- the hero: a result rendered like a high score -------- */
+  .cabinet{
+    background:var(--sunk);border:3px solid var(--rule);border-radius:4px;overflow:hidden;position:relative;
+  }
+  .cabinet::after{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(0deg,var(--scan) 0 1px,transparent 1px 3px);
+  }
+  .cabinet-inner{padding:24px 22px;position:relative;}
+  .final{display:flex;align-items:flex-end;gap:26px;flex-wrap:wrap;}
+  .final .side{display:flex;flex-direction:column;gap:2px;}
+  .final .who{font-family:var(--display);text-transform:uppercase;font-size:1.05rem;letter-spacing:.04em;}
+  .final .pts{font-family:var(--data);font-variant-numeric:tabular-nums;font-size:clamp(3rem,10vw,5.4rem);line-height:.85;font-weight:700;color:var(--amber);text-shadow:var(--glow);}
+  .final .pts.lost{color:var(--muted);text-shadow:none;}
+  .final .at{font-family:var(--display);text-transform:uppercase;color:var(--muted);font-size:.9rem;padding-bottom:.7rem;}
+  .flag{
+    display:inline-flex;align-items:center;gap:6px;margin-top:16px;
+    font-family:var(--data);font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;
+    background:var(--amber-face);color:#20160A;padding:5px 9px;border-radius:2px;font-weight:700;
+  }
+  .provenance{
+    margin:16px 0 0;padding-top:14px;border-top:1px dashed var(--rule);
+    font-family:var(--data);font-size:.72rem;color:var(--muted);
+  }
+
+  /* -------- Moneyball table: the arcade only touches the digits -------- */
+  .sheet{width:100%;border-collapse:collapse;font-family:var(--data);font-size:.82rem;}
+  .sheet-wrap{overflow-x:auto;border:2px solid var(--rule);border-radius:3px;background:var(--panel);}
+  .sheet th{
+    text-align:left;padding:9px 12px;font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--muted);background:var(--sunk);border-bottom:2px solid var(--rule);font-weight:600;white-space:nowrap;
+  }
+  .sheet td{padding:9px 12px;border-bottom:1px solid var(--rule);white-space:nowrap;}
+  .sheet tbody tr:last-child td{border-bottom:none;}
+  .sheet .num{text-align:right;font-variant-numeric:tabular-nums;color:var(--amber);font-weight:700;}
+  .sheet .name{font-family:var(--prose);font-weight:600;}
+  .sheet .lead{background:var(--sunk);}
+  .sheet .up{color:var(--good);}
+  .sheet .down{color:var(--bad);}
+  .sheet svg{width:17px;height:auto;vertical-align:-3px;margin-right:7px;}
+
+  /* -------- a rating as a segmented bar: the one arcade borrowing outright -------- */
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;}
+  .card{background:var(--panel);border:2px solid var(--rule);border-radius:3px;padding:16px 18px;}
+  .card h3{font-family:var(--display);text-transform:uppercase;font-size:1.15rem;margin:2px 0 0;letter-spacing:.02em;}
+  .card .sub{font-family:var(--data);font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);}
+  .meter{margin-top:14px;}
+  .meter-head{display:flex;justify-content:space-between;align-items:baseline;font-family:var(--data);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);}
+  .meter-head b{font-size:1.5rem;letter-spacing:-.02em;color:var(--amber);text-shadow:var(--glow);}
+  .segs{display:flex;gap:3px;margin-top:7px;}
+  .segs i{flex:1;height:14px;background:var(--sunk);box-shadow:inset 0 0 0 1px var(--rule);border-radius:1px;}
+  .segs i.on{background:var(--amber-face);box-shadow:none;}
+  .segs i.warn{background:var(--bad);box-shadow:none;}
+  .attrs{margin-top:14px;display:grid;grid-template-columns:1fr auto;gap:4px 12px;font-family:var(--data);font-size:.78rem;}
+  .attrs span{color:var(--muted);}
+  .attrs b{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink);}
+  .verdict{margin-top:14px;font-size:.86rem;color:var(--muted);}
+  .verdict b{color:var(--ink);}
+
+  /* -------- logos, re-cut for this direction -------- */
+  .marks{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;}
+  .mark-cell{
+    flex:1 1 150px;background:var(--sunk);border:2px solid var(--rule);border-radius:3px;
+    padding:16px 10px 10px;display:flex;flex-direction:column;align-items:center;gap:9px;
+  }
+  .mark-cell svg{width:78px;height:auto;}
+  .mark-cell span{font-family:var(--data);font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:center;}
+
+  .tokens{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:1px;margin-top:6px;}
+  .tokens div{background:var(--panel);padding:15px 17px;box-shadow:0 0 0 1px var(--rule);}
+  .tokens h4{font-family:var(--data);font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:var(--amber);margin:0 0 6px;font-weight:600;}
+  .tokens p{margin:0;font-size:.87rem;color:var(--muted);}
+  .chips{display:flex;gap:5px;margin-top:10px;flex-wrap:wrap;}
+  .chips i{width:56px;height:34px;border-radius:2px;box-shadow:inset 0 0 0 1px var(--rule);display:flex;align-items:flex-end;padding:3px 4px;font-family:var(--data);font-size:.55rem;font-style:normal;}
+
+  .risk{border-left:4px solid var(--bad);background:var(--panel);border-radius:0 3px 3px 0;padding:14px 17px;margin-top:12px;}
+  .risk h4{font-family:var(--data);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--bad);margin:0 0 5px;}
+  .risk p{margin:0;font-size:.89rem;}
+  .risk p b{color:var(--ink);}
+
+  footer{margin-top:60px;padding-top:18px;border-top:2px solid var(--rule);}
+  footer p{font-family:var(--data);font-size:.7rem;color:var(--muted);margin:0 0 6px;}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <!-- The same five marks, re-cut: flat fills, a heavy keyline on every one,
+       colour punched up. Arcade wants weight and edge, not shading. -->
+  <symbol id="a-kcu" viewBox="0 0 120 140">
+    <path d="M60 5 L112 22 V70 C112 101 89 123 60 135 C31 123 8 101 8 70 V22 Z" fill="#0E2A4E" stroke="#FFB000" stroke-width="6"/>
+    <path d="M26 90 A34 34 0 0 1 94 90" fill="none" stroke="#FFB000" stroke-width="10"/>
+    <path d="M45 36 H75 L69 68 H51 Z" fill="#FFB000"/>
+    <rect x="22" y="95" width="76" height="22" fill="#FFB000"/>
+    <text x="60" y="112" text-anchor="middle" fill="#0E2A4E" font-family="Arial Narrow, sans-serif" font-size="18" font-weight="700" letter-spacing="1.5">KCU</text>
+  </symbol>
+  <symbol id="a-ler" viewBox="0 0 120 140">
+    <path d="M12 9 H108 V92 Q108 127 60 135 Q12 127 12 92 Z" fill="#15242C" stroke="#3ED8E8" stroke-width="6"/>
+    <path d="M20 46 C33 38 47 54 60 46 C73 38 87 54 100 46 L100 57 C87 65 73 49 60 57 C47 65 33 49 20 57 Z" fill="#3ED8E8"/>
+    <path d="M20 68 C33 60 47 76 60 68 C73 60 87 76 100 68 L100 79 C87 87 73 71 60 79 C47 87 33 71 20 79 Z" fill="#3ED8E8" opacity=".55"/>
+    <path d="M67 20 L43 68 H58 L49 104 L79 54 H63 Z" fill="#FFFFFF"/>
+    <rect x="12" y="101" width="96" height="22" fill="#3ED8E8"/>
+    <text x="60" y="118" text-anchor="middle" fill="#0A1B22" font-family="Arial Narrow, sans-serif" font-size="18" font-weight="700" letter-spacing="1.5">LER</text>
+  </symbol>
+  <symbol id="a-lsm" viewBox="0 0 120 140">
+    <path d="M60 5 L109 30 V96 L60 135 L11 96 V30 Z" fill="#101215" stroke="#FF3B3B" stroke-width="6"/>
+    <rect x="26" y="74" width="18" height="34" fill="#FFFFFF"/>
+    <rect x="49" y="60" width="20" height="48" fill="#FFFFFF"/>
+    <rect x="74" y="80" width="18" height="28" fill="#FFFFFF"/>
+    <path d="M60 18 L68 41 H91 L72 55 L79 78 L60 63 L41 78 L48 55 L29 41 H52 Z" fill="#FF3B3B"/>
+    <rect x="19" y="102" width="82" height="21" fill="#FF3B3B"/>
+    <text x="60" y="118" text-anchor="middle" fill="#FFFFFF" font-family="Arial Narrow, sans-serif" font-size="17" font-weight="700" letter-spacing="1.2">LSM</text>
+  </symbol>
+  <symbol id="a-ccu" viewBox="0 0 120 140">
+    <path d="M60 5 C93 5 112 26 112 58 C112 99 89 125 60 135 C31 125 8 99 8 58 C8 26 27 5 60 5 Z" fill="#6D22B0" stroke="#FFD227" stroke-width="6"/>
+    <circle cx="57" cy="55" r="28" fill="#FFD227"/>
+    <circle cx="71" cy="47" r="24" fill="#6D22B0"/>
+    <circle cx="42" cy="89" r="5" fill="#25E08A"/>
+    <circle cx="60" cy="89" r="5" fill="#25E08A"/>
+    <circle cx="78" cy="89" r="5" fill="#25E08A"/>
+    <rect x="17" y="99" width="86" height="22" fill="#FFD227"/>
+    <text x="60" y="116" text-anchor="middle" fill="#3F1170" font-family="Arial Narrow, sans-serif" font-size="18" font-weight="700" letter-spacing="1.4">CCU</text>
+  </symbol>
+  <symbol id="a-fru" viewBox="0 0 120 140">
+    <path d="M14 9 H106 V84 L60 135 L14 84 Z" fill="#0F5C42" stroke="#7BE8B0" stroke-width="6"/>
+    <path d="M18 78 L40 42 L54 63 L74 28 L102 78 Z" fill="#F2EEE1"/>
+    <path d="M74 28 L85 46 H63 Z" fill="#FFFFFF"/>
+    <rect x="17" y="85" width="86" height="21" fill="#F2EEE1"/>
+    <text x="60" y="101" text-anchor="middle" fill="#0F5C42" font-family="Arial Narrow, sans-serif" font-size="17" font-weight="700" letter-spacing="1.3">FRU</text>
+  </symbol>
+</defs></svg>
+
+<div class="wrap">
+
+  <header class="top">
+    <p class="tag">College Legends · direction study · moneyball × arcade</p>
+    <h1>The numbers <em>are</em> the art</h1>
+    <p>
+      Moneyball and arcade pull opposite ways on restraint, and agree completely on one thing: a number is the most
+      exciting object on the screen. One puts it on a printout, the other on a high-score board. That overlap is the
+      whole direction — and it happens to suit a game whose actual content is six thousand players and a ledger.
+    </p>
+  </header>
+
+  <h2 class="section">The hue does the work</h2>
+  <p class="lede">
+    Amber CRT was what 1980s arcade cabinets used <em>and</em> what 1980s data terminals used. It is the one colour that
+    is honestly both halves of this brief, which is why it carries every figure in the product and nothing else does.
+  </p>
+  <div class="tokens">
+    <div>
+      <h4>Ground · Moneyball</h4>
+      <p>Desaturated slate with a green bias — a locker room under fluorescent light. Sober, unglamorous, never competing with data.</p>
+      <div class="chips">
+        <i style="background:#0B1113;color:#7E908C">#0B1113</i>
+        <i style="background:#121A1C;color:#7E908C">#121A1C</i>
+        <i style="background:#26343E;color:#B8C4C2">#26343E</i>
+      </div>
+    </div>
+    <div>
+      <h4>Signal · Arcade</h4>
+      <p>Amber on every number, cyan for a second series, and a hard green/red only for direction. Nothing decorative is ever allowed these.</p>
+      <div class="chips">
+        <i style="background:#FFB000;color:#20160A">#FFB000</i>
+        <i style="background:#3ED8E8;color:#08262B">#3ED8E8</i>
+        <i style="background:#3DD68C;color:#082418">#3DD68C</i>
+        <i style="background:#FF6B6B;color:#2A0B0B">#FF6B6B</i>
+      </div>
+    </div>
+    <div>
+      <h4>Type · both at once</h4>
+      <p>Monospace is the joke that makes this cohere: it is a spreadsheet <em>and</em> a terminal. Every figure sits in it, tabular. Headlines take a heavy condensed marquee face; prose stays a quiet sans and small.</p>
+    </div>
+    <div>
+      <h4>Surface · arcade weight</h4>
+      <p>Two- and three-pixel rules instead of hairlines, sunken wells for data, a scanline at 22% on the scoreboard only, amber bloom only on a hero figure. A whisper of CRT, never a filter.</p>
+    </div>
+  </div>
+
+  <h2 class="section">A result, rendered like a high score</h2>
+  <p class="lede">
+    The same <code>GAME_COMPLETED</code> event the engine already emits. Arcade supplies the scale and the flag;
+    Moneyball supplies the line underneath that says where every figure came from.
+  </p>
+  <div class="cabinet">
+    <div class="cabinet-inner">
+      <div class="final">
+        <div class="side">
+          <span class="who">Lake Erie Storm</span>
+          <span class="pts">31</span>
+        </div>
+        <span class="at">vs</span>
+        <div class="side">
+          <span class="who">Lone Star Metropolitan</span>
+          <span class="pts lost">17</span>
+        </div>
+      </div>
+      <span class="flag">◆ season high · 31 points</span>
+      <p class="provenance">
+        4 TD · 1 FG · 70 plays · 404 yds · 24 first downs — reconciled to the drive loop, not back-derived from the score
+      </p>
+    </div>
+  </div>
+
+  <h2 class="section">A table stays a table</h2>
+  <p class="lede">
+    This is where the direction earns its keep or dies. The arcade treatment touches the <em>digits</em> and nothing
+    else — no glow on a row, no colour on a label. Six thousand players of this have to stay readable.
+  </p>
+  <div class="sheet-wrap">
+    <table class="sheet">
+      <thead>
+        <tr><th>Program</th><th style="text-align:right">Rec</th><th style="text-align:right">PPG</th><th style="text-align:right">Yds</th><th style="text-align:right">Comp %</th><th style="text-align:right">Fans</th><th style="text-align:right">Δ</th></tr>
+      </thead>
+      <tbody>
+        <tr class="lead"><td class="name"><svg viewBox="0 0 120 140"><use href="#a-ccu"/></svg>Crescent City</td><td class="num">11–1</td><td class="num">34.2</td><td class="num">441</td><td class="num">68.1</td><td class="num">92.4K</td><td class="num up">+6</td></tr>
+        <tr><td class="name"><svg viewBox="0 0 120 140"><use href="#a-kcu"/></svg>Keystone Commonwealth</td><td class="num">10–2</td><td class="num">31.8</td><td class="num">418</td><td class="num">66.4</td><td class="num">88.1K</td><td class="num up">+2</td></tr>
+        <tr><td class="name"><svg viewBox="0 0 120 140"><use href="#a-lsm"/></svg>Lone Star Metropolitan</td><td class="num">9–3</td><td class="num">29.5</td><td class="num">402</td><td class="num">64.8</td><td class="num">79.6K</td><td class="num down">−4</td></tr>
+        <tr><td class="name"><svg viewBox="0 0 120 140"><use href="#a-ler"/></svg>Lake Erie</td><td class="num">8–4</td><td class="num">27.5</td><td class="num">387</td><td class="num">63.2</td><td class="num">61.0K</td><td class="num up">+1</td></tr>
+        <tr><td class="name"><svg viewBox="0 0 120 140"><use href="#a-fru"/></svg>Front Range</td><td class="num">7–5</td><td class="num">24.9</td><td class="num">361</td><td class="num">61.7</td><td class="num">44.3K</td><td class="num down">−3</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 class="section">A rating you can read across the room</h2>
+  <p class="lede">
+    The one place arcade grammar is borrowed outright: a segmented bar instead of a smooth one, because segments are
+    countable and a smooth bar is a vibe. The attribute block underneath is pure Moneyball — the same five numbers the
+    engine actually stores, with nothing rounded away.
+  </p>
+  <div class="grid2">
+    <div class="card">
+      <p class="sub">QB · Junior · 3 seasons left</p>
+      <h3>Marcus Webb</h3>
+      <div class="meter">
+        <div class="meter-head"><span>Air Raid fit</span><b>78</b></div>
+        <div class="segs">
+          <i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i>
+          <i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i>
+        </div>
+      </div>
+      <div class="attrs">
+        <span>Accuracy</span><b>84</b>
+        <span>Decision making</span><b>71</b>
+        <span>Arm talent</span><b>88</b>
+        <span>Mobility</span><b>63</b>
+        <span>Durability</span><b>76</b>
+      </div>
+      <p class="verdict"><b>Built for it.</b> The arm and the accuracy are there; the decisions are not yet. Air Raid weights accuracy 0.30 and decisions 0.28, so he is a good starter and an expensive interception.</p>
+    </div>
+    <div class="card">
+      <p class="sub">OL · Senior · 1 season left</p>
+      <h3>Diego Hernandez</h3>
+      <div class="meter">
+        <div class="meter-head"><span>Power Run fit</span><b>41</b></div>
+        <div class="segs">
+          <i class="warn"></i><i class="warn"></i><i class="warn"></i><i class="warn"></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i>
+        </div>
+      </div>
+      <div class="attrs">
+        <span>Pass blocking</span><b>77</b>
+        <span>Run blocking</span><b>48</b>
+        <span>Strength</span><b>52</b>
+        <span>Agility</span><b>69</b>
+        <span>Durability</span><b>58</b>
+      </div>
+      <p class="verdict"><b>Wrong personnel.</b> A pass protector on a run team. Red is the only place a warm colour is allowed to mean something other than "this is a number".</p>
+    </div>
+  </div>
+
+  <h2 class="section">The marks get re-cut, not redrawn</h2>
+  <p class="lede">
+    Same silhouettes and glyphs as the shield study — but flat fills, a heavy keyline on every one rather than only the
+    dark ones, and colour punched toward the CRT. They now hold their edge inside a sunken well, which is where this
+    direction puts everything.
+  </p>
+  <div class="marks">
+    <div class="mark-cell"><svg viewBox="0 0 120 140" role="img" aria-label="Keystone Commonwealth"><use href="#a-kcu"/></svg><span>Keystone<br>Commonwealth</span></div>
+    <div class="mark-cell"><svg viewBox="0 0 120 140" role="img" aria-label="Lake Erie"><use href="#a-ler"/></svg><span>Lake Erie</span></div>
+    <div class="mark-cell"><svg viewBox="0 0 120 140" role="img" aria-label="Lone Star Metropolitan"><use href="#a-lsm"/></svg><span>Lone Star<br>Metropolitan</span></div>
+    <div class="mark-cell"><svg viewBox="0 0 120 140" role="img" aria-label="Crescent City"><use href="#a-ccu"/></svg><span>Crescent City</span></div>
+    <div class="mark-cell"><svg viewBox="0 0 120 140" role="img" aria-label="Front Range"><use href="#a-fru"/></svg><span>Front Range</span></div>
+  </div>
+
+  <h2 class="section">Where it fights, and what it costs</h2>
+  <p class="lede">Three real risks, stated up front rather than discovered at implementation.</p>
+
+  <div class="risk">
+    <h4>Risk 1 · arcade is maximalist and this game is dense</h4>
+    <p>
+      A box score is roughly forty figures per team. Give all of them glow and the screen is unreadable neon. The
+      discipline has to be absolute: <b>exactly one hero figure per screen gets bloom</b>, everything else is flat
+      amber. If that rule slips even slightly, the direction collapses into a slot machine.
+    </p>
+  </div>
+  <div class="risk">
+    <h4>Risk 2 · CRT texture ages badly and hurts small screens</h4>
+    <p>
+      Scanlines at full strength are a 2014 indie tic and they wreck legibility at iOS text sizes. Used here at 22% on
+      one component only. <b>The honest version of this direction may ship with no scanline at all</b> — the amber and
+      the segmented bars carry it without any texture.
+    </p>
+  </div>
+  <div class="risk">
+    <h4>Risk 3 · it is a skin, and skins can hide a thin game</h4>
+    <p>
+      This looks like a lot of design for very little art budget, which is its main virtue — it is typography, palette
+      and layout, no illustration. But <b>a high-score treatment on a number nobody chose is still a number nobody
+      chose.</b> It amplifies the decision systems; it cannot substitute for them.
+    </p>
+  </div>
+
+  <footer>
+    <p>Programs, stat bands and attribute weights taken from the engine · figures shown are real shapes, not lorem</p>
+    <p>Compare: the shield study, same five programs, broadcast rather than cabinet</p>
+  </footer>
+
+</div>
