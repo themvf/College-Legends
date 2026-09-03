@@ -1,0 +1,441 @@
+<title>Shield System</title>
+<style>
+  :root{
+    --bg:#F2F1EE;
+    --panel:#FFFFFF;
+    --panel-2:#E9E7E2;
+    --ink:#17181A;
+    --muted:#5C5F63;
+    --line:#D6D3CC;
+    --accent:#8A6A16;
+    --swatch-ring:rgba(0,0,0,.14);
+    --dark-stage:#15171A;
+    --light-stage:#FFFFFF;
+
+    --display:"Arial Narrow","Helvetica Neue Condensed","Liberation Sans Narrow","Roboto Condensed",system-ui,sans-serif;
+    --body:-apple-system,"Segoe UI","Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","IBM Plex Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#101215;
+      --panel:#181B1F;
+      --panel-2:#20242A;
+      --ink:#ECEDEF;
+      --muted:#9AA0A7;
+      --line:#2A2F36;
+      --accent:#D9B14C;
+      --swatch-ring:rgba(255,255,255,.18);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#101215;
+    --panel:#181B1F;
+    --panel-2:#20242A;
+    --ink:#ECEDEF;
+    --muted:#9AA0A7;
+    --line:#2A2F36;
+    --accent:#D9B14C;
+    --swatch-ring:rgba(255,255,255,.18);
+  }
+
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.55;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1080px;margin:0 auto;padding:48px 24px 96px;}
+
+  .eyebrow{
+    font-family:var(--mono);font-size:.7rem;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);
+  }
+
+  header.top{border-bottom:2px solid var(--ink);padding-bottom:22px;}
+  header.top h1{
+    font-family:var(--display);font-weight:700;font-size:clamp(2.4rem,6vw,4.2rem);
+    letter-spacing:-.01em;line-height:.94;margin:10px 0 0;text-transform:uppercase;text-wrap:balance;
+  }
+  header.top p{margin:14px 0 0;max-width:62ch;color:var(--muted);}
+
+  .system{
+    margin-top:36px;display:grid;gap:1px;
+    grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  }
+  .system div{background:var(--panel);padding:16px 18px;box-shadow:0 0 0 1px var(--line);}
+  .system h3{
+    font-family:var(--mono);font-size:.7rem;letter-spacing:.11em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 6px;font-weight:600;
+  }
+  .system p{margin:0;font-size:.9rem;color:var(--muted);}
+
+  .divider{
+    margin:56px 0 24px;display:flex;align-items:baseline;gap:14px;
+  }
+  .divider h2{
+    font-family:var(--display);text-transform:uppercase;font-size:1.5rem;letter-spacing:.02em;margin:0;font-weight:700;
+  }
+  .divider span{flex:1;height:1px;background:var(--line);}
+
+  .marks{display:flex;flex-direction:column;gap:20px;}
+
+  .card{
+    background:var(--panel);border:1px solid var(--line);border-radius:3px;overflow:hidden;
+    display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.35fr);
+  }
+  .stage{
+    display:grid;grid-template-columns:1fr 1fr;
+  }
+  .stage>div{display:grid;place-items:center;padding:22px 10px;}
+  .on-dark{background:var(--dark-stage);}
+  .on-light{background:var(--light-stage);}
+  .stage svg{width:100%;max-width:152px;height:auto;display:block;}
+
+  .detail{padding:20px 22px;border-left:1px solid var(--line);}
+  .detail h3{
+    font-family:var(--display);text-transform:uppercase;font-size:1.35rem;letter-spacing:.01em;
+    margin:4px 0 2px;font-weight:700;
+  }
+  .detail .sub{font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;color:var(--muted);text-transform:uppercase;}
+  .detail p.why{margin:12px 0 0;font-size:.92rem;}
+  .detail p.why b{color:var(--ink);}
+
+  .swatches{display:flex;gap:6px;margin-top:14px;flex-wrap:wrap;}
+  .swatches i{
+    display:flex;align-items:flex-end;width:74px;height:44px;border-radius:2px;
+    box-shadow:inset 0 0 0 1px var(--swatch-ring);
+    font-family:var(--mono);font-size:.6rem;letter-spacing:.04em;padding:4px 5px;font-style:normal;
+  }
+
+  .scales{
+    margin-top:16px;padding-top:14px;border-top:1px dashed var(--line);
+    display:flex;align-items:flex-end;gap:18px;
+  }
+  .scales figure{margin:0;display:flex;flex-direction:column;align-items:center;gap:6px;}
+  .scales figcaption{font-family:var(--mono);font-size:.6rem;color:var(--muted);}
+
+  .row-demo{
+    margin-top:16px;background:var(--panel-2);border-radius:3px;padding:9px 12px;
+    display:flex;align-items:center;gap:10px;font-size:.86rem;
+  }
+  .row-demo svg{width:20px;height:auto;flex:0 0 auto;}
+  .row-demo .who{font-weight:600;}
+  .row-demo .score{margin-left:auto;font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--muted);}
+
+  footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);}
+  footer p{font-family:var(--mono);font-size:.72rem;color:var(--muted);margin:0 0 8px;}
+
+  @media (max-width:860px){
+    .card{grid-template-columns:1fr;}
+    .detail{border-left:none;border-top:1px solid var(--line);}
+  }
+</style>
+
+<!-- Marks are defined once and instanced at every size. Brand colours are fixed:
+     a program's identity does not change with the viewer's theme. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+
+  <symbol id="m-kcu" viewBox="0 0 120 140">
+    <path d="M60 5 L112 22 V70 C112 101 89 123 60 135 C31 123 8 101 8 70 V22 Z" fill="#10233F"/>
+    <path d="M60 14 L104 28 V70 C104 96 84 115 60 126 C36 115 16 96 16 70 V28 Z"
+      fill="none" stroke="#C9A227" stroke-width="2.5"/>
+    <!-- Draw the arch and let the keystone sit in its apex. A wedge on its own
+         reads as a cup; two legs hanging off it read as a handle. Inside a real
+         arch, with mortar joints cut on its sloping sides, it can only be stone. -->
+    <path d="M26 90 A34 34 0 0 1 94 90" fill="none" stroke="#C9A227" stroke-width="9"/>
+    <path d="M45 36 H75 L69 68 H51 Z" fill="#C9A227"/>
+    <path d="M45 36 L51 68" stroke="#10233F" stroke-width="2.2"/>
+    <path d="M75 36 L69 68" stroke="#10233F" stroke-width="2.2"/>
+    <rect x="24" y="95" width="72" height="21" fill="#C9A227"/>
+    <text x="60" y="111" text-anchor="middle" fill="#10233F"
+      font-family="Arial Narrow, Liberation Sans Narrow, sans-serif" font-size="17" font-weight="700" letter-spacing="1.5">KCU</text>
+  </symbol>
+
+  <symbol id="m-ler" viewBox="0 0 120 140">
+    <path d="M12 9 H108 V92 Q108 127 60 135 Q12 127 12 92 Z" fill="#2B353D"
+      stroke="#4FA3D1" stroke-width="3"/>
+    <!-- Three lake bars, and the storm cutting straight down through them. -->
+    <path d="M20 44 C33 36 47 52 60 44 C73 36 87 52 100 44 L100 53 C87 61 73 45 60 53 C47 61 33 45 20 53 Z" fill="#4FA3D1"/>
+    <path d="M20 62 C33 54 47 70 60 62 C73 54 87 70 100 62 L100 71 C87 79 73 63 60 71 C47 79 33 63 20 71 Z" fill="#4FA3D1" opacity=".7"/>
+    <path d="M20 80 C33 72 47 88 60 80 C73 72 87 88 100 80 L100 89 C87 97 73 81 60 89 C47 97 33 81 20 89 Z" fill="#4FA3D1" opacity=".42"/>
+    <path d="M66 22 L44 66 H58 L50 100 L78 54 H63 Z" fill="#F4F7F9"/>
+    <rect x="12" y="103" width="96" height="20" fill="#4FA3D1"/>
+    <text x="60" y="118" text-anchor="middle" fill="#16202A"
+      font-family="Arial Narrow, Liberation Sans Narrow, sans-serif" font-size="17" font-weight="700" letter-spacing="1.5">LER</text>
+  </symbol>
+
+  <symbol id="m-lsm" viewBox="0 0 120 140">
+    <path d="M60 5 L109 30 V96 L60 135 L11 96 V30 Z" fill="#121417"
+      stroke="#E03131" stroke-width="3"/>
+    <!-- Metropolitan: a rising skyline. Lone Star: the star that tops it. -->
+    <rect x="26" y="74" width="17" height="34" fill="#F5F6F7"/>
+    <rect x="49" y="62" width="19" height="46" fill="#F5F6F7"/>
+    <rect x="74" y="80" width="17" height="28" fill="#F5F6F7"/>
+    <path d="M60 20 L67 41 H89 L71 54 L78 76 L60 62 L42 76 L49 54 L31 41 H53 Z" fill="#E03131"/>
+    <rect x="20" y="103" width="80" height="20" fill="#E03131"/>
+    <text x="60" y="118" text-anchor="middle" fill="#FFFFFF"
+      font-family="Arial Narrow, Liberation Sans Narrow, sans-serif" font-size="16" font-weight="700" letter-spacing="1.2">LSM</text>
+  </symbol>
+
+  <symbol id="m-ccu" viewBox="0 0 120 140">
+    <path d="M60 5 C93 5 112 26 112 58 C112 99 89 125 60 135 C31 125 8 99 8 58 C8 26 27 5 60 5 Z" fill="#5B2A86"/>
+    <!-- The crescent the city is named for, cut by an overlaid disc rather than
+         a mask so it holds at any size and in any renderer. -->
+    <circle cx="57" cy="55" r="28" fill="#D4A017"/>
+    <circle cx="71" cy="47" r="24" fill="#5B2A86"/>
+    <!-- A krewe throws beads. Three of them, in the third parade colour. -->
+    <circle cx="42" cy="89" r="4.5" fill="#1F7A4C"/>
+    <circle cx="60" cy="89" r="4.5" fill="#1F7A4C"/>
+    <circle cx="78" cy="89" r="4.5" fill="#1F7A4C"/>
+    <rect x="18" y="99" width="84" height="21" fill="#D4A017"/>
+    <text x="60" y="115" text-anchor="middle" fill="#4A2170"
+      font-family="Arial Narrow, Liberation Sans Narrow, sans-serif" font-size="17" font-weight="700" letter-spacing="1.4">CCU</text>
+  </symbol>
+
+  <symbol id="m-fru" viewBox="0 0 120 140">
+    <path d="M14 9 H106 V84 L60 135 L14 84 Z" fill="#1F4D3D"/>
+    <!-- Three peaks, the summit in the middle, with the snowline cut in. -->
+    <path d="M18 78 L40 44 L54 64 L74 30 L102 78 Z" fill="#E8E2D5"/>
+    <path d="M74 30 L84 47 H64 Z" fill="#FFFFFF"/>
+    <path d="M40 44 L47 55 H33 Z" fill="#FFFFFF"/>
+    <rect x="18" y="86" width="84" height="19" fill="#E8E2D5"/>
+    <text x="60" y="100" text-anchor="middle" fill="#1F4D3D"
+      font-family="Arial Narrow, Liberation Sans Narrow, sans-serif" font-size="16" font-weight="700" letter-spacing="1.3">FRU</text>
+  </symbol>
+
+  </defs>
+</svg>
+
+<div class="wrap">
+
+  <header class="top">
+    <p class="eyebrow">College Legends · identity study · five of seventy-two</p>
+    <h1>One shield, seventy-two programs</h1>
+    <p>
+      Five marks drawn from real programs in the league — one per character archetype, one per division. The point
+      is not five drawings. It is a system cheap enough to carry all seventy-two and specific enough that each one
+      still reads as a place.
+    </p>
+  </header>
+
+  <div class="system">
+    <div>
+      <h3>Shape says division</h3>
+      <p>Six silhouettes, one per division. A heraldic point for the Atlantic, an industrial plate for the Great Lakes, a broad badge for the Heartland, a rounded shield for the Gulf, a chevron for the Mountain.</p>
+    </div>
+    <div>
+      <h3>Glyph says place</h3>
+      <p>One idea, drawn flat: a keystone, a storm, a skyline, a crescent, a summit. Never a mascot illustration — a mascot is a drawing per program, a glyph is a shape you can generate.</p>
+    </div>
+    <div>
+      <h3>Colour says character</h3>
+      <p>A blueblood gets old gold and a drawn border. A frontrunner gets near-black and one hot accent. A developer gets restraint. Same system, five different postures.</p>
+    </div>
+    <div>
+      <h3>Band says who</h3>
+      <p>Every mark closes on the same lettered band, which is what makes a wall of seventy-two feel like one league rather than seventy-two hobby projects.</p>
+    </div>
+    <div>
+      <h3>Dark shields get a keyline</h3>
+      <p>Found by drawing these on both grounds rather than one: a steel or near-black shield disappears into a dark UI. Any shield darker than the ground carries a 3-unit rule in its own accent. Lake Erie and Lone Star have one; the other three do not need it.</p>
+    </div>
+  </div>
+
+  <div class="divider"><h2>The five</h2><span></span></div>
+
+  <div class="marks">
+
+    <article class="card">
+      <div class="stage">
+        <div class="on-dark"><svg viewBox="0 0 120 140" role="img" aria-label="Keystone Commonwealth Founders mark"><use href="#m-kcu"/></svg></div>
+        <div class="on-light"><svg viewBox="0 0 120 140" role="img" aria-label="Keystone Commonwealth Founders mark on white"><use href="#m-kcu"/></svg></div>
+      </div>
+      <div class="detail">
+        <p class="sub">Atlantic · Power · Blueblood</p>
+        <h3>Keystone Commonwealth Founders</h3>
+        <p class="sub">Harrisburg, Pennsylvania</p>
+        <p class="why">
+          The state's own nickname happens to be an <b>architectural shape</b>, so the glyph is the arch itself with the
+          keystone seated in its apex — a wedge drawn on its own reads as a cup, and it took two attempts to find that
+          out. The mortar joints cut down its sloping sides are what settle it as stone. The gold inner rule is the
+          blueblood tell: the only mark of the five that frames itself, because old money does.
+        </p>
+        <div class="swatches">
+          <i style="background:#10233F;color:#fff">#10233F</i>
+          <i style="background:#C9A227;color:#2A2205">#C9A227</i>
+        </div>
+        <div class="scales">
+          <figure><svg viewBox="0 0 120 140" style="width:72px"><use href="#m-kcu"/></svg><figcaption>72</figcaption></figure>
+          <figure><svg viewBox="0 0 120 140" style="width:40px"><use href="#m-kcu"/></svg><figcaption>40</figcaption></figure>
+          <figure><svg viewBox="0 0 120 140" style="width:26px"><use href="#m-kcu"/></svg><figcaption>26</figcaption></figure>
+          <figure><svg viewBox="0 0 120 140" style="width:18px"><use href="#m-kcu"/></svg><figcaption>18</figcaption></figure>
+        </div>
+        <div class="row-demo">
+          <svg viewBox="0 0 120 140"><use href="#m-kcu"/></svg>
+          <span class="who">Keystone Commonwealth</span>
+          <span class="score">W 31–17</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="stage">
+        <div class="on-dark"><svg viewBox="0 0 120 140" role="img" aria-label="Lake Erie Storm mark"><use href="#m-ler"/></svg></div>
+        <div class="on-light"><svg viewBox="0 0 120 140" role="img" aria-label="Lake Erie Storm mark on white"><use href="#m-ler"/></svg></div>
+      </div>
+      <div class="detail">
+        <p class="sub">Great Lakes · Power · Diehard</p>
+        <h3>Lake Erie Storm</h3>
+        <p class="sub">Cleveland, Ohio</p>
+        <p class="why">
+          Three bars for the lake, fading back, and the bolt driven straight down through all of them — the nickname
+          and the geography in one figure. The flat-topped plate and the <b>steel grey</b> are the diehard posture:
+          this is a base that turns up in November rain, so the mark should look like it was stamped rather than
+          designed.
+        </p>
+        <div class="swatches">
+          <i style="background:#2B353D;color:#fff">#2B353D</i>
+          <i style="background:#4FA3D1;color:#0B1B25">#4FA3D1</i>
+          <i style="background:#F4F7F9;color:#33383D">#F4F7F9</i>
+        </div>
+        <div class="scales">
+          <figure><svg viewBox="0 0 120 140" style="width:72px"><use href="#m-ler"/></svg><figcaption>72</figcaption></figure>
+          <figure><svg viewBox="0 0 120 140" style="width:40px"><use href="#m-ler"/></svg><figcaption>40</figcaption></figure>
+          <figure><svg viewBox="0 0 120 140" style="width:26px"><use href="#m-ler"/></svg><figcaption>26</figcaption></figure>
+          <figure><svg viewBox="0 0 120 140" style="width:18px"><use href="#m-ler"/></svg><figcaption>18</figcaption></figure>
+        </div>
+        <div class="row-demo">
+          <svg viewBox="0 0 120 140"><use href="#m-ler"/></svg>
+          <span class="who">Lake Erie</span>
+          <span class="score">L 20–24</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="stage">
+        <div class="on-dark"><svg viewBox="0 0 120 140" role="img" aria-label="Lone Star Metropolitan Wranglers mark"><use href="#m-lsm"/></svg></div>
+        <div class="on-light"><svg viewBox="0 0 120 140" role="img" aria-label="Lone Star Metropolitan Wranglers mark on white"><use href="#m-lsm"/></svg></div>
+      </div>
+      <div class="detail">
+        <p class="sub">Heartland · Power · Frontrunner</p>
+        <h3>Lone Star Metropolitan Wranglers</h3>
+        <p class="sub">Dallas, Texas</p>
+        <p class="why">
+          Both halves of the name, stacked: a rising skyline for <em>Metropolitan</em>, the star sitting on top of it
+          for <em>Lone Star</em>. The frontrunner treatment is the highest contrast of the five — near-black, white,
+          and one hot red, nothing in between. <b>A bandwagon program should look like a brand</b>, because that is
+          what its fans are buying.
+        </p>
+        <div class="swatches">
+          <i style="background:#121417;color:#fff">#121417</i>
+          <i style="background:#E03131;color:#fff">#E03131</i>
+          <i style="background:#F5F6F7;color:#33383D">#F5F6F7</i>
+        </div>
+        <div class="scales">
+          <figure><svg viewBox="0 0 120 140" style="width:72px"><use href="#m-lsm"/></svg><figcaption>72</figcaption></figure>
+          <figure><svg viewBox="0 0 120 140" style="width:40px"><use href="#m-lsm"/></svg><figcaption>40</figcaption></figure>
+          <figure><svg viewBox="0 0 120 140" style="width:26px"><use href="#m-lsm"/></svg><figcaption>26</figcaption></figure>
+          <figure><svg viewBox="0 0 120 140" style="width:18px"><use href="#m-lsm"/></svg><figcaption>18</figcaption></figure>
+        </div>
+        <div class="row-demo">
+          <svg viewBox="0 0 120 140"><use href="#m-lsm"/></svg>
+          <span class="who">Lone Star Metropolitan</span>
+          <span class="score">W 45–38</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="stage">
+        <div class="on-dark"><svg viewBox="0 0 120 140" role="img" aria-label="Crescent City Krewe mark"><use href="#m-ccu"/></svg></div>
+        <div class="on-light"><svg viewBox="0 0 120 140" role="img" aria-label="Crescent City Krewe mark on white"><use href="#m-ccu"/></svg></div>
+      </div>
+      <div class="detail">
+        <p class="sub">Gulf · Power · Talent magnet</p>
+        <h3>Crescent City Krewe</h3>
+        <p class="sub">New Orleans, Louisiana</p>
+        <p class="why">
+          The one mark where the city hands you everything: a literal crescent, and the parade palette. The crescent
+          is cut by a second disc in the shield colour rather than by a mask, which is deliberately dull engineering —
+          <b>it renders identically everywhere</b> and survives being drawn at eighteen pixels. Richest colour of the
+          five, for the program that recruits on glamour.
+        </p>
+        <div class="swatches">
+          <i style="background:#5B2A86;color:#fff">#5B2A86</i>
+          <i style="background:#D4A017;color:#3A2A03">#D4A017</i>
+          <i style="background:#1F7A4C;color:#fff">#1F7A4C</i>
+        </div>
+        <div class="scales">
+          <figure><svg viewBox="0 0 120 140" style="width:72px"><use href="#m-ccu"/></svg><figcaption>72</figcaption></figure>
+          <figure><svg viewBox="0 0 120 140" style="width:40px"><use href="#m-ccu"/></svg><figcaption>40</figcaption></figure>
+          <figure><svg viewBox="0 0 120 140" style="width:26px"><use href="#m-ccu"/></svg><figcaption>26</figcaption></figure>
+          <figure><svg viewBox="0 0 120 140" style="width:18px"><use href="#m-ccu"/></svg><figcaption>18</figcaption></figure>
+        </div>
+        <div class="row-demo">
+          <svg viewBox="0 0 120 140"><use href="#m-ccu"/></svg>
+          <span class="who">Crescent City</span>
+          <span class="score">W 27–13</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="stage">
+        <div class="on-dark"><svg viewBox="0 0 120 140" role="img" aria-label="Front Range Summit mark"><use href="#m-fru"/></svg></div>
+        <div class="on-light"><svg viewBox="0 0 120 140" role="img" aria-label="Front Range Summit mark on white"><use href="#m-fru"/></svg></div>
+      </div>
+      <div class="detail">
+        <p class="sub">Mountain · Power · Developer</p>
+        <h3>Front Range Summit</h3>
+        <p class="sub">Denver, Colorado</p>
+        <p class="why">
+          Three peaks with the summit in the middle and the snowline cut in as negative space. The chevron shield
+          points down to a single apex, so the silhouette itself is a mountain before you read anything inside it.
+          The developer posture is the quietest of the five — two muted colours, no accent — because
+          <b>a program that wins by teaching should not shout.</b>
+        </p>
+        <div class="swatches">
+          <i style="background:#1F4D3D;color:#fff">#1F4D3D</i>
+          <i style="background:#E8E2D5;color:#3A3730">#E8E2D5</i>
+        </div>
+        <div class="scales">
+          <figure><svg viewBox="0 0 120 140" style="width:72px"><use href="#m-fru"/></svg><figcaption>72</figcaption></figure>
+          <figure><svg viewBox="0 0 120 140" style="width:40px"><use href="#m-fru"/></svg><figcaption>40</figcaption></figure>
+          <figure><svg viewBox="0 0 120 140" style="width:26px"><use href="#m-fru"/></svg><figcaption>26</figcaption></figure>
+          <figure><svg viewBox="0 0 120 140" style="width:18px"><use href="#m-fru"/></svg><figcaption>18</figcaption></figure>
+        </div>
+        <div class="row-demo">
+          <svg viewBox="0 0 120 140"><use href="#m-fru"/></svg>
+          <span class="who">Front Range</span>
+          <span class="score">L 17–21</span>
+        </div>
+      </div>
+    </article>
+
+  </div>
+
+  <div class="divider"><h2>What this costs, and what it does not</h2><span></span></div>
+
+  <div class="system">
+    <div>
+      <h3>Six shapes, not seventy-two</h3>
+      <p>The silhouette is authored once per division and reused. That is the whole reason the system scales to a full league without seventy-two illustration commissions.</p>
+    </div>
+    <div>
+      <h3>Glyphs are the real work</h3>
+      <p>Roughly twenty flat glyphs — mountain, star, wave, bird, anchor, crown, bolt — cover seventy-two programs with repeats spread across divisions so no two neighbours share one.</p>
+    </div>
+    <div>
+      <h3>Palettes come from data</h3>
+      <p>Two colours plus a neutral, picked per program and stored beside <code>character</code> and <code>stateCode</code>. No new art pipeline: it is two hex values in the content package.</p>
+    </div>
+    <div>
+      <h3>It is honest at 18 pixels</h3>
+      <p>The lettered band goes illegible small, and that is fine — silhouette and colour carry the schedule row. Anything that needs a mascot's face to be recognisable has already failed.</p>
+    </div>
+  </div>
+
+  <footer>
+    <p>Marks drawn as inline SVG · programs, characters and divisions taken from <code>packages/content</code></p>
+    <p>Keystone Commonwealth · Lake Erie · Lone Star Metropolitan · Crescent City · Front Range</p>
+  </footer>
+
+</div>

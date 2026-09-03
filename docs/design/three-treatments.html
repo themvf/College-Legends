@@ -1,0 +1,414 @@
+<title>Three Screens</title>
+<style>
+  /* ============ page chrome: a comparison harness, deliberately quiet ============
+     The three previews below are fixed-palette product mockups — a program's UI
+     does not follow the viewer's theme — so only the page around them moves. */
+  :root{
+    --bg:#F4F4F2;--panel:#FFFFFF;--ink:#15171A;--muted:#5A6068;--rule:#D5D6D2;--accent:#7A4E12;
+    --prose:-apple-system,"Segoe UI","Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","IBM Plex Mono",Menlo,Consolas,monospace;
+    --disp:"Arial Narrow","Helvetica Neue Condensed","Liberation Sans Narrow",system-ui,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --bg:#0E1013;--panel:#171A1E;--ink:#E7E9EC;--muted:#949BA4;--rule:#282D33;--accent:#E0B461;
+  }}
+  :root[data-theme="dark"]{
+    --bg:#0E1013;--panel:#171A1E;--ink:#E7E9EC;--muted:#949BA4;--rule:#282D33;--accent:#E0B461;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--prose);line-height:1.55;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1120px;margin:0 auto;padding:44px 20px 90px;}
+  .tag{font-family:var(--mono);font-size:.67rem;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);}
+  header.top{padding-bottom:24px;border-bottom:2px solid var(--ink);}
+  header.top h1{font-family:var(--disp);text-transform:uppercase;font-weight:700;font-size:clamp(2.1rem,5.4vw,3.6rem);line-height:.94;margin:8px 0 0;text-wrap:balance;}
+  header.top p{margin:14px 0 0;max-width:66ch;color:var(--muted);}
+
+  .trial{margin-top:52px;}
+  .trial-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;}
+  .trial-head .n{font-family:var(--mono);font-size:.8rem;color:var(--accent);font-weight:700;}
+  .trial-head h2{font-family:var(--disp);text-transform:uppercase;font-size:1.5rem;letter-spacing:.02em;margin:0;font-weight:700;}
+  .trial-head .nick{font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);}
+  .trial>p.lede{margin:8px 0 16px;color:var(--muted);max-width:70ch;}
+  .frame{border-radius:5px;overflow:hidden;box-shadow:0 1px 0 var(--rule),0 14px 34px rgba(0,0,0,.22);}
+  .verdict{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:1px;margin-top:14px;}
+  .verdict div{background:var(--panel);padding:13px 15px;box-shadow:0 0 0 1px var(--rule);}
+  .verdict h4{font-family:var(--mono);font-size:.63rem;letter-spacing:.11em;text-transform:uppercase;margin:0 0 5px;}
+  .verdict p{margin:0;font-size:.85rem;color:var(--muted);}
+  .verdict .yes h4{color:#3B8C5A;} .verdict .no h4{color:#B4483F;} .verdict .hm h4{color:var(--accent);}
+  .verdict p b{color:var(--ink);}
+
+  /* ===================================================================
+     A · BLOOMBERG × MONEYBALL — "Scout Terminal"
+     Both halves are professional tooling that refuses to be pretty. So:
+     Bloomberg's density and channel-coloured semantics, with Moneyball
+     pulling every hue down to institutional. The screen is FULL.
+     =================================================================== */
+  .A{background:#0A0A09;color:#D8D4CB;font-family:var(--mono);font-size:11.5px;line-height:1.45;padding:0;}
+  .A .cmd{background:#D8D4CB;color:#0A0A09;padding:4px 9px;display:flex;gap:14px;font-weight:700;letter-spacing:.04em;}
+  .A .cmd .go{margin-left:auto;}
+  .A .body{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:1px;background:#262421;}
+  .A .pane{background:#0A0A09;padding:8px 10px;}
+  .A .ph{color:#C08A2E;letter-spacing:.1em;text-transform:uppercase;font-size:9.5px;border-bottom:1px solid #262421;padding-bottom:4px;margin-bottom:6px;}
+  .A table{width:100%;border-collapse:collapse;font-size:11px;}
+  .A th{text-align:right;color:#6E7167;font-weight:400;font-size:9.5px;letter-spacing:.06em;padding:2px 5px;text-transform:uppercase;}
+  .A th:first-child,.A td:first-child{text-align:left;}
+  .A td{padding:2px 5px;text-align:right;font-variant-numeric:tabular-nums;}
+  .A .nm{color:#D8D4CB;}
+  .A .v{color:#C08A2E;}
+  .A .up{color:#7E9B6E;} .A .dn{color:#A85A4A;} .A .cool{color:#6E8BA8;}
+  .A tr.sel td{background:#171612;}
+  .A .kv{display:grid;grid-template-columns:1fr auto;gap:1px 8px;}
+  .A .kv span{color:#6E7167;} .A .kv b{text-align:right;font-weight:400;font-variant-numeric:tabular-nums;}
+  .A .note{color:#6E7167;margin-top:7px;border-top:1px solid #262421;padding-top:5px;font-size:10px;}
+  .A .band{display:flex;height:9px;margin-top:4px;background:#171612;}
+  .A .band i{background:#C08A2E;} .A .band i.pale{background:#4B4636;}
+  .A .fkeys{background:#171612;border-top:1px solid #262421;padding:3px 9px;color:#6E7167;font-size:9.5px;display:flex;gap:13px;flex-wrap:wrap;}
+  .A .fkeys b{color:#D8D4CB;font-weight:400;}
+
+  /* ===================================================================
+     B · BLOOMBERG × ARCADE — "Floor"
+     Real Bloomberg is already half arcade: hot orange on pure black. This
+     stops apologising for that. Full chroma, every channel a different
+     hue, bloom on live values, a function-key rail like a cabinet's.
+     =================================================================== */
+  .B{background:#000;color:#E9E9E9;font-family:var(--mono);font-size:12px;line-height:1.5;}
+  .B .cmd{background:#FF7A00;color:#000;padding:5px 10px;display:flex;gap:14px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;}
+  .B .cmd .blink{margin-left:auto;background:#000;color:#FF7A00;padding:0 5px;}
+  .B .body{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:2px;background:#1A1A1A;}
+  .B .pane{background:#000;padding:10px 12px;}
+  .B .ph{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#00E5FF;border-bottom:2px solid #1A1A1A;padding-bottom:5px;margin-bottom:8px;}
+  .B table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  .B th{text-align:right;color:#6E6E6E;font-weight:400;font-size:9.5px;letter-spacing:.08em;padding:3px 5px;text-transform:uppercase;}
+  .B th:first-child,.B td:first-child{text-align:left;}
+  .B td{padding:4px 5px;text-align:right;font-variant-numeric:tabular-nums;font-weight:700;}
+  .B .nm{color:#E9E9E9;font-weight:400;}
+  .B .v{color:#FF7A00;text-shadow:0 0 9px rgba(255,122,0,.55);}
+  .B .up{color:#B6FF00;} .B .dn{color:#FF2D9B;} .B .cool{color:#00E5FF;}
+  .B tr.sel td{background:#141414;}
+  .B .big{font-size:2.6rem;line-height:1;color:#FF7A00;text-shadow:0 0 16px rgba(255,122,0,.5);font-weight:700;}
+  .B .kv{display:grid;grid-template-columns:1fr auto;gap:2px 10px;margin-top:8px;}
+  .B .kv span{color:#6E6E6E;} .B .kv b{text-align:right;font-variant-numeric:tabular-nums;color:#E9E9E9;}
+  .B .segs{display:flex;gap:2px;margin-top:6px;}
+  .B .segs i{flex:1;height:12px;background:#1A1A1A;}
+  .B .segs i.on{background:#FF7A00;box-shadow:0 0 7px rgba(255,122,0,.6);}
+  .B .fkeys{background:#0A0A0A;border-top:2px solid #1A1A1A;padding:5px 10px;font-size:10px;display:flex;gap:12px;flex-wrap:wrap;color:#6E6E6E;}
+  .B .fkeys b{color:#00E5FF;font-weight:400;}
+
+  /* ===================================================================
+     C · PALANTIR × ARCADE — "Case File"
+     Palantir is austere and investigative: entities, links, provenance,
+     lots of air, one cool accent. Arcade supplies exactly one thing —
+     when the investigation LANDS, the finding lights up. Nothing else does.
+     =================================================================== */
+  .C{background:#080C12;color:#C7D3DF;font-family:var(--prose);font-size:13px;line-height:1.6;}
+  .C .bar{padding:11px 16px;border-bottom:1px solid #1B2733;display:flex;align-items:center;gap:12px;}
+  .C .bar .id{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#5C7387;}
+  .C .bar .ttl{font-weight:600;color:#E3EBF2;}
+  .C .bar .st{margin-left:auto;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#5C7387;}
+  .C .body{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);}
+  .C .pane{padding:16px 18px;}
+  .C .pane+.pane{border-left:1px solid #1B2733;}
+  .C .ph{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#5C7387;margin-bottom:12px;}
+  .C .ent{display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid #141E28;}
+  .C .ent:last-child{border-bottom:none;}
+  .C .ent .dot{width:7px;height:7px;border-radius:50%;background:#3A5568;flex:0 0 auto;}
+  .C .ent.hit .dot{background:#FFC53D;box-shadow:0 0 10px rgba(255,197,61,.75);}
+  .C .ent .who{flex:1;min-width:0;}
+  .C .ent .who b{display:block;font-weight:600;color:#E3EBF2;font-size:13px;}
+  .C .ent .who span{font-family:var(--mono);font-size:10px;color:#5C7387;}
+  .C .ent .rng{font-family:var(--mono);font-size:12px;color:#9FB3C6;font-variant-numeric:tabular-nums;}
+  .C .ent.hit .rng{color:#FFC53D;font-weight:700;}
+  .C .finding{
+    margin-top:14px;border:1px solid #6B5417;background:linear-gradient(180deg,rgba(255,197,61,.09),rgba(255,197,61,.02));
+    border-radius:3px;padding:12px 14px;
+  }
+  .C .finding .lab{font-family:var(--mono);font-size:9.5px;letter-spacing:.15em;text-transform:uppercase;color:#FFC53D;}
+  .C .finding p{margin:6px 0 0;color:#DCE6EF;font-size:12.5px;}
+  .C .finding p b{color:#FFC53D;}
+  .C .chain{margin-top:14px;}
+  .C .chain .step{display:grid;grid-template-columns:14px 1fr;gap:10px;}
+  .C .chain .rail{display:flex;flex-direction:column;align-items:center;}
+  .C .chain .rail i{width:6px;height:6px;border-radius:50%;background:#3A5568;margin-top:6px;}
+  .C .chain .rail s{flex:1;width:1px;background:#1B2733;text-decoration:none;}
+  .C .chain .txt{padding-bottom:11px;}
+  .C .chain .txt b{display:block;font-size:12px;color:#E3EBF2;font-weight:600;}
+  .C .chain .txt span{font-family:var(--mono);font-size:10.5px;color:#5C7387;}
+  .C .attrs{display:grid;grid-template-columns:1fr auto;gap:5px 12px;font-family:var(--mono);font-size:12px;margin-top:4px;}
+  .C .attrs span{color:#5C7387;} .C .attrs b{text-align:right;color:#C7D3DF;font-weight:400;font-variant-numeric:tabular-nums;}
+  .C .gap{margin-top:12px;font-family:var(--mono);font-size:10.5px;color:#5C7387;}
+  .C .gapbar{position:relative;height:22px;margin-top:6px;background:#0D141C;border:1px solid #1B2733;border-radius:2px;}
+  .C .gapbar .cons{position:absolute;top:0;bottom:0;background:#26384A;}
+  .C .gapbar .truth{position:absolute;top:-3px;bottom:-3px;width:2px;background:#FFC53D;box-shadow:0 0 9px rgba(255,197,61,.85);}
+  .C .gapbar em{position:absolute;top:50%;transform:translateY(-50%);font-family:var(--mono);font-size:9.5px;font-style:normal;color:#7E93A8;}
+
+  @media (max-width:820px){
+    .A .body,.B .body,.C .body{grid-template-columns:1fr;}
+    .C .pane+.pane{border-left:none;border-top:1px solid #1B2733;}
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="top">
+    <p class="tag">College Legends · three direction trials · one board, three treatments</p>
+    <h1>Same screen, three grounds</h1>
+    <p>
+      The identical content in all three: four prospects on a recruiting board with an overall range, a price and odds,
+      plus one of them opened up. Anything that differs between these is a design decision, not a content difference —
+      which is the only way to actually judge them.
+    </p>
+  </header>
+
+  <!-- ============================ A ============================ -->
+  <section class="trial">
+    <div class="trial-head">
+      <span class="n">01</span>
+      <h2>Bloomberg × Moneyball</h2>
+      <span class="nick">"scout terminal"</span>
+    </div>
+    <p class="lede">
+      The least contradictory of the three: both halves are professional tooling that refuses to be pretty. Bloomberg
+      supplies the density and the idea that each colour is a <em>channel</em> with a meaning; Moneyball pulls every hue
+      down to institutional. Density is the argument — the screen is full because the job is serious.
+    </p>
+    <div class="frame A">
+      <div class="cmd"><span>CL&nbsp;RECRUIT&nbsp;BOARD</span><span>GATEWAY ST</span><span>W1 2028</span><span class="go">&lt;GO&gt;</span></div>
+      <div class="body">
+        <div class="pane">
+          <p class="ph">Board · 4 tracked · 44 openings · 100 pts</p>
+          <table>
+            <thead><tr><th>Prospect</th><th>Pos</th><th>OVR</th><th>Ask</th><th>Sign%</th><th>Fit</th><th>Δ7</th></tr></thead>
+            <tbody>
+              <tr class="sel"><td class="nm">WEBB, MARCUS</td><td>QB</td><td class="v">71–79</td><td class="v">2.4M</td><td class="v">34</td><td class="cool">78</td><td class="up">+6</td></tr>
+              <tr><td class="nm">ROLLINS, DONTAE</td><td>WR</td><td class="v">68–74</td><td class="v">1.1M</td><td class="v">52</td><td class="cool">64</td><td class="up">+2</td></tr>
+              <tr><td class="nm">FROST, ELIAS</td><td>OL</td><td class="v">64–77</td><td class="v">0.6M</td><td class="v">61</td><td class="cool">71</td><td class="dn">−3</td></tr>
+              <tr><td class="nm">NGATA, KAI</td><td>DL</td><td class="v">73–81</td><td class="v">4.9M</td><td class="v">11</td><td class="cool">59</td><td class="dn">−9</td></tr>
+            </tbody>
+          </table>
+          <p class="note">
+            OVR is a scouted band, not a rating. Ask scales with the gap between his standard and your prestige.
+            Sign% assumes every other program bids as it did last week.
+          </p>
+          <p class="ph" style="margin-top:12px">Consensus vs scouted ceiling</p>
+          <div class="kv">
+            <span>Public hype</span><b>72</b>
+            <span>Your scouted ceiling</span><b class="v">79</b>
+            <span>Class average ask</span><b>2.25M</b>
+            <span>Donor room</span><b>23K/wk</b>
+          </div>
+        </div>
+        <div class="pane">
+          <p class="ph">Webb, Marcus · QB · MO · 2 evals</p>
+          <div class="kv">
+            <span>Accuracy</span><b class="v">84</b>
+            <span>Decision making</span><b>71</b>
+            <span>Arm talent</span><b class="v">88</b>
+            <span>Mobility</span><b>63</b>
+            <span>Durability</span><b>76</b>
+          </div>
+          <p class="ph" style="margin-top:12px">Air Raid fit 78 · built for it</p>
+          <div class="band"><i style="flex:78"></i><i class="pale" style="flex:22"></i></div>
+          <p class="note">
+            Wants: early playing time · national exposure · close to home. You serve two of three.
+            Rescinding an offer costs 6 interest, permanently.
+          </p>
+        </div>
+      </div>
+      <div class="fkeys">
+        <span><b>F1</b> BOARD</span><span><b>F2</b> EVAL</span><span><b>F3</b> OFFER</span><span><b>F4</b> VISIT</span>
+        <span><b>F5</b> NIL</span><span><b>F6</b> DEPTH</span><span><b>F7</b> STAFF</span><span><b>F8</b> ADV WK</span>
+      </div>
+    </div>
+    <div class="verdict">
+      <div class="yes"><h4>Its best argument</h4><p><b>Density reads as respect.</b> It treats the player as a professional with a job, and the game genuinely does have this much information. Nothing is hidden behind a friendly card.</p></div>
+      <div class="no"><h4>What kills it</h4><p><b>It is hostile to a new player and worse on a phone.</b> Eleven-pixel monospace in six panels is not an iOS product. This is the desktop-only direction.</p></div>
+      <div class="hm"><h4>Where it lands</h4><p>The most <em>credible</em> of the three and the least likely to be loved. Good bones for a "pro view" toggle; wrong as the default.</p></div>
+    </div>
+  </section>
+
+  <!-- ============================ B ============================ -->
+  <section class="trial">
+    <div class="trial-head">
+      <span class="n">02</span>
+      <h2>Bloomberg × Arcade</h2>
+      <span class="nick">"the floor"</span>
+    </div>
+    <p class="lede">
+      Real Bloomberg is already half arcade — hot orange on pure black, four hues shouting at once. This one stops
+      apologising for that. Full chroma, bloom on anything live, a function-key rail that reads like a cabinet's
+      control panel. Same density as above; none of the restraint.
+    </p>
+    <div class="frame B">
+      <div class="cmd"><span>Recruit Board</span><span>Gateway St</span><span>WK 1 · 2028</span><span class="blink">█</span></div>
+      <div class="body">
+        <div class="pane">
+          <p class="ph">Board · 4 tracked · 44 openings</p>
+          <table>
+            <thead><tr><th>Prospect</th><th>Pos</th><th>OVR</th><th>Ask</th><th>Sign%</th><th>Fit</th><th>Δ7</th></tr></thead>
+            <tbody>
+              <tr class="sel"><td class="nm">WEBB, MARCUS</td><td>QB</td><td class="v">71–79</td><td class="v">2.4M</td><td class="v">34</td><td class="cool">78</td><td class="up">+6</td></tr>
+              <tr><td class="nm">ROLLINS, DONTAE</td><td>WR</td><td class="v">68–74</td><td class="v">1.1M</td><td class="v">52</td><td class="cool">64</td><td class="up">+2</td></tr>
+              <tr><td class="nm">FROST, ELIAS</td><td>OL</td><td class="v">64–77</td><td class="v">0.6M</td><td class="v">61</td><td class="cool">71</td><td class="dn">−3</td></tr>
+              <tr><td class="nm">NGATA, KAI</td><td>DL</td><td class="v">73–81</td><td class="v">4.9M</td><td class="v">11</td><td class="cool">59</td><td class="dn">−9</td></tr>
+            </tbody>
+          </table>
+          <p class="ph" style="margin-top:14px">Points remaining</p>
+          <span class="big">100</span>
+          <div class="kv">
+            <span>Donor room</span><b>$23K / wk</b>
+            <span>Class average ask</span><b>$2.25M</b>
+          </div>
+        </div>
+        <div class="pane">
+          <p class="ph">Webb, Marcus · QB</p>
+          <span class="big">78</span>
+          <p class="ph" style="margin-top:4px;border:none;padding:0">Air Raid fit · built for it</p>
+          <div class="segs">
+            <i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i>
+            <i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i>
+          </div>
+          <div class="kv">
+            <span>Accuracy</span><b>84</b>
+            <span>Decision making</span><b>71</b>
+            <span>Arm talent</span><b>88</b>
+            <span>Mobility</span><b>63</b>
+            <span>Durability</span><b>76</b>
+          </div>
+        </div>
+      </div>
+      <div class="fkeys">
+        <span><b>F1</b> BOARD</span><span><b>F2</b> EVAL</span><span><b>F3</b> OFFER</span><span><b>F4</b> VISIT</span>
+        <span><b>F5</b> NIL</span><span><b>F6</b> DEPTH</span><span><b>F7</b> STAFF</span><span><b>F8</b> ADVANCE</span>
+      </div>
+    </div>
+    <div class="verdict">
+      <div class="yes"><h4>Its best argument</h4><p><b>The most distinctive of the three by a wide margin,</b> and the only one anybody would screenshot. It makes a recruiting table feel like something is at stake right now.</p></div>
+      <div class="no"><h4>What kills it</h4><p><b>Fatigue.</b> Four saturated hues plus bloom for the twelfth week running is exhausting, and every colour is already spoken for — there is no headroom left to signal anything new.</p></div>
+      <div class="hm"><h4>Where it lands</h4><p>Strongest as a <em>moment</em>, weakest as a home. Consider it for the postgame and the draft-night screens rather than for the board you sit on all season.</p></div>
+    </div>
+  </section>
+
+  <!-- ============================ C ============================ -->
+  <section class="trial">
+    <div class="trial-head">
+      <span class="n">03</span>
+      <h2>Palantir × Arcade</h2>
+      <span class="nick">"case file"</span>
+    </div>
+    <p class="lede">
+      The sharpest tension and, I think, the best fit for what this game actually is. Palantir's grammar is
+      investigative — entities, links, provenance, a lot of air, one cool accent. Arcade supplies exactly one thing:
+      when the investigation <em>lands</em>, the finding lights up. Nothing else on the screen is ever allowed to.
+    </p>
+    <div class="frame C">
+      <div class="bar">
+        <span class="id">CASE · 2028-W1</span>
+        <span class="ttl">Recruiting board — Gateway State</span>
+        <span class="st">4 tracked · 1 flagged</span>
+      </div>
+      <div class="body">
+        <div class="pane">
+          <p class="ph">Entities</p>
+          <div class="ent">
+            <span class="dot"></span>
+            <span class="who"><b>Marcus Webb</b><span>QB · Missouri · 2 evaluations</span></span>
+            <span class="rng">71–79</span>
+          </div>
+          <div class="ent hit">
+            <span class="dot"></span>
+            <span class="who"><b>Elias Frost</b><span>OL · Ohio · 3 evaluations</span></span>
+            <span class="rng">64–77</span>
+          </div>
+          <div class="ent">
+            <span class="dot"></span>
+            <span class="who"><b>Dontae Rollins</b><span>WR · Georgia · 1 evaluation</span></span>
+            <span class="rng">68–74</span>
+          </div>
+          <div class="ent">
+            <span class="dot"></span>
+            <span class="who"><b>Kai Ngata</b><span>DL · California · 1 evaluation</span></span>
+            <span class="rng">73–81</span>
+          </div>
+
+          <div class="finding">
+            <span class="lab">◆ Finding · undervalued</span>
+            <p>
+              Frost's consensus puts him at <b>66</b>. Your third evaluation puts his ceiling at <b>77</b> — an
+              11-point gap, and he is asking <b>$0.6M</b>. Nobody else in the league has looked at him twice.
+            </p>
+          </div>
+
+          <div class="chain">
+            <p class="ph" style="margin-top:16px">How this was established</p>
+            <div class="step">
+              <span class="rail"><i></i><s></s></span>
+              <span class="txt"><b>Local region search · wk 3</b><span>8 prospects surfaced · 15 pts</span></span>
+            </div>
+            <div class="step">
+              <span class="rail"><i></i><s></s></span>
+              <span class="txt"><b>Athletic + position evaluation · wk 5</b><span>band narrowed 58–81 → 64–77 · 18 pts</span></span>
+            </div>
+            <div class="step">
+              <span class="rail"><i></i><s></s></span>
+              <span class="txt"><b>Projection evaluation · wk 9</b><span>ceiling revised upward · 12 pts</span></span>
+            </div>
+            <div class="step">
+              <span class="rail"><i></i></span>
+              <span class="txt"><b>Competition check · wk 9</b><span>0 rival offers on record</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="pane">
+          <p class="ph">Frost, Elias · OL · scouted profile</p>
+          <div class="attrs">
+            <span>Pass blocking</span><b>74</b>
+            <span>Run blocking</span><b>69</b>
+            <span>Strength</span><b>61</b>
+            <span>Agility</span><b>66</b>
+            <span>Durability</span><b>72</b>
+          </div>
+
+          <p class="gap">Consensus band vs your scouted ceiling</p>
+          <div class="gapbar">
+            <span class="cons" style="left:8%;width:34%"></span>
+            <span class="truth" style="left:66%"></span>
+            <em style="left:10%">hype 66</em>
+            <em style="left:69%">77</em>
+          </div>
+          <p class="gap">
+            The bar is the only place a hot colour appears on this screen. It marks the one thing you know that the
+            recruiting world does not.
+          </p>
+
+          <p class="ph" style="margin-top:18px">What he is looking for</p>
+          <div class="attrs">
+            <span>Player development</span><b>you rank 1st of 4</b>
+            <span>Close to home</span><b>in division</b>
+            <span>Facilities</span><b>tier 2 of 5</b>
+          </div>
+          <p class="gap">
+            Two of three served. A visit is worth +4.1 here against +2.6 on Ngata, because a visit scales with fit.
+          </p>
+        </div>
+      </div>
+    </div>
+    <div class="verdict">
+      <div class="yes"><h4>Its best argument</h4><p><b>It matches a system the game already has.</b> Hype-versus-truth, evaluation tiers, dossiers, the diamond in the rough — those <em>are</em> investigative findings. This is the only direction whose visual grammar is the game's own logic.</p></div>
+      <div class="no"><h4>What kills it</h4><p><b>It needs findings to exist.</b> On a week where you discover nothing, the accent never fires and the screen is austere to the point of cold. It also flatters the scouting systems over the football.</p></div>
+      <div class="hm"><h4>Where it lands</h4><p>My recommendation. It scales to mobile, costs no illustration, and the one hot colour keeps its meaning because it is rationed — which is exactly what the other two spend on their first screen.</p></div>
+    </div>
+  </section>
+
+  <section class="trial">
+    <div class="trial-head"><span class="n">—</span><h2>If you only take one thing</h2></div>
+    <p class="lede">
+      All three are cheap: type, palette, layout, no illustration. What separates them is <b>how much of the colour
+      budget they spend before anything has happened.</b> Bloomberg × Moneyball spends it on structure, Bloomberg ×
+      Arcade spends it all immediately, and Palantir × Arcade keeps almost all of it in reserve so that one number
+      lighting up still means something in season twelve. That is the whole difference, and it is why the third one
+      is the one I would build.
+    </p>
+  </section>
+
+</div>
