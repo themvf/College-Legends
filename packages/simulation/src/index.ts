@@ -38,7 +38,7 @@ import { pricingPosture, RIVAL_PRICING_CEILING, RIVAL_PRICING_FLOOR, activeSpons
 import { MAXIMUM_REPS_PER_SIDE, TRAINING_CAMP_CONDITIONING_RISK, TRAINING_CAMP_INSTALL_BONUS, TRAINING_CAMP_INSTALL_RISK, TRAINING_CAMP_WEEKS, planExecution, repsFatigue, staffBuyout, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
 import { foldSeasonStats } from "./persistence.js";
 import { jobReview, startingSecurity } from "./tenure.js";
-import { mediaRights, operatingCost } from "./economy.js";
+import { mediaRights, operatingCost, OPENING_RESERVE } from "./economy.js";
 import { advertisingCredit, applyBooster, boosterDueThisWeek, buildBoosterOffer, takeawayMultiplier } from "./boosters.js";
 import { committedNilTotal, emptyNilState, freeNilCapacity, nilAskingPrice, nilScore, reservedNilTotal, weeklyDonorCapacity, NIL_WITHDRAWAL_INTEREST_PENALTY } from "./nil.js";
 import {
@@ -108,6 +108,7 @@ export {
   MEDIA_PER_CHAMPIONSHIP,
   MEDIA_PER_PRESS_POINT,
   MEDIA_PER_PRESTIGE_POINT,
+  OPENING_RESERVE,
   SQUAD_COST_PER_SCHOLARSHIP,
   STADIUM_COST_PER_SEAT
 } from "./economy.js";
@@ -1021,7 +1022,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       stateCode: definition.stateCode,
       divisionId: definition.divisionId,
       tier,
-      budget: tier === "POWER" ? 20_000_000 : tier === "MID" ? 6_000_000 : 1_500_000,
+      budget: OPENING_RESERVE[tier],
       scholarshipLimit: 85,
       wins: 0,
       losses: 0,

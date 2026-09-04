@@ -13,6 +13,7 @@ import {
   selectTrainingCampFocus,
   selectBoosterChoice,
   selectFacilityUpgrade,
+  selectTicketPrice,
   selectSponsorship,
   selectWeeklyFocusAndScouting,
   trainingCampPlanningKnowledgeSnapshot,
@@ -22,7 +23,9 @@ import {
   weeklyBusinessPlanningKnowledgeViews,
   weeklyPlanningKnowledgeView
 } from "../packages/ai/dist/index.js";
-import { advanceOffseasonStep, advanceWeek, beginSeason, createFictionalLeague } from "../packages/simulation/dist/index.js";
+import {
+  advanceOffseasonStep, advanceWeek, beginSeason, createFictionalLeague, pricingPosture
+} from "../packages/simulation/dist/index.js";
 
 const activeLeague = (seed, count = 4) => beginSeason(createFictionalLeague(seed, count));
 const planningFor = (state, programId) => planWeeklyCommands(state)
@@ -301,28 +304,30 @@ test("hidden player data cannot affect camp selection, while the declared 85 per
 const businessCommands = (commands) => commands.filter((command) =>
   command.type === "CHOOSE_BOOSTER"
   || command.type === "ACCEPT_SPONSORSHIP"
-  || command.type === "UPGRADE_FACILITY");
+  || command.type === "UPGRADE_FACILITY"
+  || command.type === "SET_TICKET_PRICE");
 
 test("weekly business AI preserves the established deterministic V1 choices", () => {
-  // Re-baselined when weeklyExpenses stopped being a frozen constant and became
-  // the derived operating cost. The AI reads it to judge what a program can
-  // afford, so the affordability line moved and program-4 can now carry an
-  // academics upgrade. The choices are otherwise unchanged.
+  // Re-baselined for cohort ticket pricing and the upkeep-aware facility rule.
+  // Nobody upgrades in week one of a fresh league now: an upgrade is a
+  // permanent cost and no program has a completed week to prove it can carry
+  // one. Pricing takes its place as the week-one business decision.
   let state = activeLeague("weekly-business-view-0");
   assert.deepEqual(businessCommands(planWeeklyCommands(state)), [
     { type: "ACCEPT_SPONSORSHIP", programId: "program-1", offerId: "program-1:2027:guaranteed" },
+    { type: "SET_TICKET_PRICE", programId: "program-1", price: 60 },
     { type: "ACCEPT_SPONSORSHIP", programId: "program-2", offerId: "program-2:2027:guaranteed" },
-    { type: "UPGRADE_FACILITY", programId: "program-2", facility: "ACADEMICS" },
+    { type: "SET_TICKET_PRICE", programId: "program-2", price: 70 },
     { type: "ACCEPT_SPONSORSHIP", programId: "program-3", offerId: "program-3:2027:winning" },
-    { type: "UPGRADE_FACILITY", programId: "program-3", facility: "SCOUTING" },
+    { type: "SET_TICKET_PRICE", programId: "program-3", price: 74 },
     { type: "ACCEPT_SPONSORSHIP", programId: "program-4", offerId: "program-4:2027:home-crowd" },
-    { type: "UPGRADE_FACILITY", programId: "program-4", facility: "ACADEMICS" }
+    { type: "SET_TICKET_PRICE", programId: "program-4", price: 45 }
   ]);
   state = advanceWeek(state, planWeeklyCommands(state)).state;
   state = advanceWeek(state, planWeeklyCommands(state)).state;
   assert.deepEqual(businessCommands(planWeeklyCommands(state)), [
     { type: "CHOOSE_BOOSTER", programId: "program-1", optionId: "2027:3:program-1:donor" },
-    { type: "CHOOSE_BOOSTER", programId: "program-2", optionId: "2027:3:program-2:donor" },
+    { type: "CHOOSE_BOOSTER", programId: "program-2", optionId: "2027:3:program-2:business" },
     { type: "CHOOSE_BOOSTER", programId: "program-3", optionId: "2027:3:program-3:business" },
     { type: "CHOOSE_BOOSTER", programId: "program-4", optionId: "2027:3:program-4:legend-defense" }
   ]);
@@ -337,8 +342,8 @@ test("weekly business selection uses only one exact deeply frozen program view",
   // is what this view is permitted to carry.
   assert.deepEqual(Object.keys(view).sort(), [
     "atHome", "boosterOptions", "budget", "character", "facilities", "fairTicketPrice", "fanElasticity",
-    "kind", "phase", "playingThisWeek", "programId", "season", "sponsorshipActive", "sponsorshipOffers",
-    "ticketPrice", "week", "weeklyExpenses"
+    "kind", "lastWeeklyNet", "phase", "playingThisWeek", "programId", "season", "sponsorshipActive",
+    "sponsorshipOffers", "ticketPrice", "week", "weeklyExpenses"
   ]);
   assert.equal(Object.isFrozen(views), true);
   assert.equal(Object.isFrozen(view), true);
@@ -393,6 +398,7 @@ test("weekly business selectors preserve V1 thresholds, tie breaks, and declared
     kind: "WEEKLY_BUSINESS_PLANNING_KNOWLEDGE_V1", programId: "program-1", season: 2027, week: 1,
     phase: "REGULAR_SEASON", budget: 2_000_000, weeklyExpenses: 100_000, character: "DIEHARD",
     playingThisWeek: false, atHome: false,
+    ticketPrice: 40, fairTicketPrice: 50, fanElasticity: 0.35, lastWeeklyNet: 200_000,
     boosterOptions: [
       { id: "b", kind: "LOCAL_BUSINESS", chance: 100 },
       { id: "a", kind: "TURNOVER_LEGEND", chance: 100 },
@@ -425,6 +431,28 @@ test("weekly business selectors preserve V1 thresholds, tie breaks, and declared
   assert.equal(selectFacilityUpgrade({ ...base, budget: 950_000 })[0].facility, "ACADEMICS");
   assert.deepEqual(selectFacilityUpgrade({ ...base, week: 2 }), []);
   assert.deepEqual(selectFacilityUpgrade({ ...base, facilities: [{ facility: "ACADEMICS", level: 5 }] }), []);
+
+  // An upgrade is a permanent cost, so affording the purchase is not enough.
+  // Before facilities carried upkeep this gate did not exist, and a rival
+  // converted every dollar of reserve into weekly cost it could not carry.
+  assert.deepEqual(
+    selectFacilityUpgrade({ ...base, lastWeeklyNet: 0 }),
+    [],
+    "a program that is not clearing money must not take on new upkeep"
+  );
+  assert.equal(
+    selectFacilityUpgrade({ ...base, lastWeeklyNet: 0, budget: 100_000_000 })[0].facility,
+    "ACADEMICS",
+    "but a genuinely rich program can carry it from reserves regardless of last week"
+  );
+
+  // Pricing is a standing posture per cohort, set in week one only.
+  assert.equal(selectTicketPrice(base)[0].price, Math.round(50 * pricingPosture(0.35)));
+  assert.deepEqual(selectTicketPrice({ ...base, week: 2 }), [], "and never revisited after");
+  assert.ok(
+    selectTicketPrice(base)[0].price > selectTicketPrice({ ...base, fanElasticity: 1.6 })[0].price,
+    "a loyal base carries a higher price than a fickle one"
+  );
 });
 
 test("weekly business plans are canonical commands and are never rejected", () => {
@@ -436,18 +464,22 @@ test("weekly business plans are canonical commands and are never rejected", () =
 });
 
 test("portal AI preserves the established deterministic V1 bids", () => {
-  // Re-baselined with the derived economy. Programs now reach the portal
-  // holding different budgets than the frozen constants left them with, which
-  // moves the donor capacity a rival can commit and therefore which players it
-  // chases. The selector itself is unchanged.
+  // Re-baselined again for the opening reserve and cohort pricing: programs
+  // reach the portal holding more cash and having earned more at the gate, so
+  // the donor capacity a rival can commit is larger and it chases more players.
+  // The selector itself is unchanged.
   const state = portalWindow("portal-view-0");
   const expected = [
-    { type: "BID_PORTAL_PLAYER", programId: "program-1", playerId: "program-1-player-14", points: 12, weeklyNil: 500 },
-    { type: "BID_PORTAL_PLAYER", programId: "program-2", playerId: "program-2-player-30", points: 12, weeklyNil: 1950 },
-    { type: "BID_PORTAL_PLAYER", programId: "program-3", playerId: "program-2-player-30", points: 13, weeklyNil: 1950 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-1", playerId: "program-1-player-14", points: 14, weeklyNil: 500 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-2", playerId: "program-2-player-30", points: 30, weeklyNil: 1950 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-2", playerId: "program-2-player-51", points: 30, weeklyNil: 950 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-2", playerId: "program-2-player-17", points: 30, weeklyNil: 250 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-3", playerId: "program-2-player-30", points: 20, weeklyNil: 1950 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-3", playerId: "program-1-player-14", points: 20, weeklyNil: 500 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-3", playerId: "program-2-player-51", points: 20, weeklyNil: 950 },
     { type: "BID_PORTAL_PLAYER", programId: "program-4", playerId: "program-2-player-30", points: 20, weeklyNil: 1950 },
-    { type: "BID_PORTAL_PLAYER", programId: "program-4", playerId: "program-1-player-14", points: 20, weeklyNil: 500 },
-    { type: "BID_PORTAL_PLAYER", programId: "program-4", playerId: "program-1-player-34", points: 20, weeklyNil: 350 }
+    { type: "BID_PORTAL_PLAYER", programId: "program-4", playerId: "program-4-player-26", points: 30, weeklyNil: 200 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-4", playerId: "program-4-player-29", points: 30, weeklyNil: 200 }
   ];
   const views = portalPlanningKnowledgeViews(state);
   assert.deepEqual(planOffseasonCommands(state, undefined, views), expected);

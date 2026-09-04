@@ -71,7 +71,8 @@ test("the simulator CLI records every weekly AI command without changing simulat
   const causeByCommand = {
     CHOOSE_BOOSTER: "BOOSTER_RESOLVED",
     ACCEPT_SPONSORSHIP: "SPONSORSHIP_ACCEPTED",
-    UPGRADE_FACILITY: "FACILITY_UPGRADED"
+    UPGRADE_FACILITY: "FACILITY_UPGRADED",
+    SET_TICKET_PRICE: "TICKET_PRICE_SET"
   };
   const businessAudits = attributed.state.decisionAudits?.filter((audit) => audit.commandType in causeByCommand) ?? [];
   assert.ok(businessAudits.length > 0, "the fixture must exercise weekly business choices");
@@ -86,6 +87,10 @@ test("the simulator CLI records every weekly AI command without changing simulat
   }
   const multiDecisionProgram = Object.keys(businessViews).find((programId) =>
     businessAudits.filter((audit) => audit.programId === programId).length > 1);
+  // Sponsorship and pricing both land in week one, so a program still makes two
+  // business decisions off one view. It used to be sponsorship and a facility
+  // upgrade; nobody upgrades in week one now, because an upgrade is a permanent
+  // cost and no program yet has a completed week proving it can carry one.
   assert.ok(multiDecisionProgram, "the fixture must pool a view shared by multiple business commands");
   assert.equal(new Set(businessAudits.filter((audit) => audit.programId === multiDecisionProgram)
     .map((audit) => audit.knowledgeId)).size, 1);

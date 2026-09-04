@@ -81,6 +81,38 @@ export const MEDIA_PER_PRESS_POINT = 3_400;
 export const MEDIA_PER_PRESTIGE_POINT = 1_600;
 export const MEDIA_PER_CHAMPIONSHIP = 26_000;
 
+/**
+ * The cash a program is created holding, as a reserve against its own running
+ * costs rather than as a difficulty setting.
+ *
+ * These two ideas were the same three constants — $1.5M / $6M / $20M appeared
+ * both here and in `CAREER_PATHS` — so neither could be tuned without moving
+ * the other. Separating them is the fix; the career path still overrides the
+ * player's own balance, and is untouched.
+ *
+ * The old figures left a low-tier program holding about **a week and a half of
+ * operating cash** against a $1.1M weekly turnover, which no organisation
+ * runs on. Measured, that meant a drift of roughly $320K a season sank 19 of 72
+ * programs inside five years — fast enough to hollow out the league inside one
+ * career. At roughly six weeks of turnover the same drift takes about twenty
+ * seasons, so a program failing is a story that happens once in a dynasty
+ * rather than a third of the league quietly dying.
+ *
+ * The drift itself is deliberately left alone: a badly run program *should*
+ * slowly bleed, and that is where the coaching market gets its churn.
+ *
+ * Measured over five seasons at 72 programs, this is the smaller half of the
+ * fix. Disciplining the rival planner's facility spending took insolvencies
+ * from 22 to 15 on the old balances; the reserve then took them to 2. Neither
+ * alone is enough — with the old float a low-tier program sits at exactly zero
+ * for three straight seasons, where any bad week tips it under.
+ */
+export const OPENING_RESERVE: Readonly<Record<Program["tier"], number>> = {
+  LOW: 6_500_000,
+  MID: 12_000_000,
+  POWER: 20_000_000
+};
+
 const FACILITY_KEYS: readonly FacilityType[] = ["STADIUM", "TRAINING", "ACADEMICS", "RECRUITING", "SCOUTING"];
 
 /** Weekly upkeep for one facility at one level. Exposed so a UI can price an upgrade. */

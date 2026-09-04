@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  advanceOffseasonStep,
   advanceWeek,
   beginSeason,
   createFictionalLeague,
@@ -16,7 +17,7 @@ import {
   RIVAL_PRICING_CEILING,
   RIVAL_PRICING_FLOOR
 } from "../packages/simulation/dist/index.js";
-import { planWeeklyCommands } from "../packages/ai/dist/index.js";
+import { planOffseasonCommands, planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, count = 24) => beginSeason(createFictionalLeague(seed, count));
 const capacityOf = (program) => stadiumCapacity(program.facilities.STADIUM);
@@ -202,4 +203,29 @@ test("rivals price competently rather than optimally", () => {
       `elasticity ${elasticity} produced ${posture}, outside the band`
     );
   }
+});
+
+test("a rival only builds what it can carry", () => {
+  // Introduced by giving facilities upkeep: the rival planner's affordability
+  // rule weighed the purchase price alone, because before this change buying
+  // freely was harmless. Measured, raising opening balances then *doubled*
+  // low-tier facility spending and brought the insolvency forward rather than
+  // pushing it back — every dollar of reserve became permanent weekly cost.
+  let state = beginSeason(createFictionalLeague("build-discipline", 24));
+  const first = state.season;
+  let built = 0;
+  const overspent = [];
+  while (state.season < first + 3) {
+    if (state.phase === "ROSTER_REVIEW") { state = beginSeason(state); continue; }
+    const result = state.phase === "OFFSEASON"
+      ? advanceOffseasonStep(state, planOffseasonCommands(state))
+      : advanceWeek(state, planWeeklyCommands(state));
+    built += result.events.filter((event) => event.type === "FACILITY_UPGRADED").length;
+    state = result.state;
+    for (const program of Object.values(state.programs)) {
+      if (program.budget < 0) overspent.push(program.id);
+    }
+  }
+  assert.ok(built > 0, "rivals must still invest — the rule is discipline, not paralysis");
+  assert.equal(overspent.length, 0, `no rival should build itself insolvent, saw ${[...new Set(overspent)].length}`);
 });

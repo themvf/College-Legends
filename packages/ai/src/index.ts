@@ -2,6 +2,7 @@ import type { BoosterKind, DecisionKnowledgeSnapshot, DevelopmentFocus, Facility
 import {
   FACILITY_UPGRADE_COST,
   mediaRights,
+  facilityUpkeepIncrease,
   operatingCost,
   pricingPosture,
   fairTicketPrice,
@@ -134,6 +135,8 @@ export interface WeeklyBusinessPlanningKnowledgeView {
   readonly ticketPrice: number;
   readonly fairTicketPrice: number;
   readonly fanElasticity: number;
+  /** What the program cleared in its most recent completed week. 0 before any. */
+  readonly lastWeeklyNet: number;
   readonly playingThisWeek: boolean;
   readonly atHome: boolean;
   readonly boosterOptions: readonly {
@@ -310,6 +313,16 @@ export function weeklyBusinessPlanningKnowledgeViews(
     playing.add(game.awayProgramId);
     home.add(game.homeProgramId);
   }
+  // What each program last actually cleared, from one backward pass over the
+  // capped event log rather than a scan per program. A rival needs this to know
+  // whether it can carry a new permanent cost; before facilities had upkeep it
+  // did not need to know anything of the kind.
+  const lastNet = new Map<string, number>();
+  for (let index = state.eventHistory.length - 1; index >= 0; index -= 1) {
+    const event = state.eventHistory[index]!;
+    if (event.type !== "WEEKLY_FINANCES" || lastNet.has(event.programId)) continue;
+    lastNet.set(event.programId, event.net);
+  }
   return Object.freeze(Object.fromEntries(Object.values(state.programs).map((program) => {
     const booster = pendingBoosterOffer(state, program.id);
     const sponsorship = state.sponsorships?.[program.id];
@@ -328,6 +341,7 @@ export function weeklyBusinessPlanningKnowledgeViews(
       // not a per-fixture decision.
       fairTicketPrice: fairTicketPrice(program, null, false),
       fanElasticity: program.fanElasticity,
+      lastWeeklyNet: lastNet.get(program.id) ?? 0,
       playingThisWeek: playing.has(program.id),
       atHome: home.has(program.id),
       boosterOptions: Object.freeze((booster?.options ?? []).map((option) => Object.freeze({
@@ -631,10 +645,34 @@ export function selectFacilityUpgrade(
     .sort((left, right) => left.level - right.level || left.facility.localeCompare(right.facility))[0];
   if (!facility) return [];
   const cost = FACILITY_UPGRADE_COST[facility.level];
-  return cost !== undefined && view.budget >= cost + view.weeklyExpenses * 2
-    ? [{ type: "UPGRADE_FACILITY", programId: view.programId, facility: facility.facility }]
-    : [];
+  if (cost === undefined || view.budget < cost + view.weeklyExpenses * 2) return [];
+  // Build only what the program can carry. The upgrade adds weekly upkeep for
+  // as long as it stands, and a rival that ignored that converted every dollar
+  // of reserve into permanent cost: raising opening balances doubled low-tier
+  // facility spending and brought the insolvency forward rather than pushing it
+  // back. This is the same figure the player's upgrade card posts.
+  const upkeep = facilityUpkeepIncrease(facility.level);
+  // Two ways to be able to carry it, which is how the decision actually works:
+  // the week pays for it, or the bank does. Requiring income alone stopped a
+  // program holding $100M and no trading history from building anything at all.
+  const paysForItself = view.lastWeeklyNet - upkeep >= SUSTAINABLE_UPKEEP_MARGIN;
+  const deeplyReserved = view.budget >= cost + upkeep * DEEP_RESERVE_WEEKS;
+  if (!paysForItself && !deeplyReserved) return [];
+  return [{ type: "UPGRADE_FACILITY", programId: view.programId, facility: facility.facility }];
 }
+
+/**
+ * What a rival keeps clear each week after taking on new upkeep. Above zero so a
+ * program has to be genuinely in the black to expand, not merely break even.
+ */
+export const SUSTAINABLE_UPKEEP_MARGIN = 20_000;
+
+/**
+ * Weeks of the new upkeep a program can cover from reserves alone — about a
+ * thirty seasons. Long enough that a genuinely rich program builds without
+ * consulting last week's takings, short enough that a thin float cannot.
+ */
+export const DEEP_RESERVE_WEEKS = 400;
 
 /** AI programs use the same limited development, media, and recruiting decisions as the human player. */
 export function planWeeklyCommands(
