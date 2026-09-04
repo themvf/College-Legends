@@ -2812,24 +2812,28 @@ function Offseason({ game, busy, error, pending, onQueue, onContinue }: {
 }
 
 const OFFSEASON_STEP_TITLES: Record<OffseasonStep, string> = {
+  BOARD_REVIEW: "Review",
   PORTAL: "Portal",
   SIGNING_DAY: "Signing day",
   COACHING: "Staff",
   TRAINING_CAMP: "Camp"
 };
 const OFFSEASON_STEP_HEADLINES: Record<OffseasonStep, string> = {
+  BOARD_REVIEW: "The board has been through your season.",
   PORTAL: "Players are in the portal. Some of them are yours.",
   SIGNING_DAY: "This is the class you signed.",
   COACHING: "One look at your staff before the season starts.",
   TRAINING_CAMP: "How do you want to spend camp?"
 };
 const OFFSEASON_STEP_BLURBS: Record<OffseasonStep, string> = {
+  BOARD_REVIEW: "They grade you against the wins they asked for at the start of the year, and against what the department spent getting them. Nothing here is a roll — every line below moved your number by the amount it says.",
   PORTAL: "Everybody bids at once and nobody sees anybody else's offer. Bidding on a man who is leaving you is how you keep him — you already know him, and that counts for something.",
   SIGNING_DAY: "Recruiting settled during the season. They arrive on campus when the offseason closes, and only if you have the scholarships free.",
   COACHING: "The market you can reach depends on what the program is worth. Letting a coach go costs you his buyout on top of what the new man wants to sign.",
   TRAINING_CAMP: "One choice, and it is a trade rather than an upgrade. Whatever you pick covers the opening weeks and then runs out."
 };
 const OFFSEASON_STEP_ACTIONS: Record<OffseasonStep, string> = {
+  BOARD_REVIEW: "On to the portal",
   PORTAL: "Close the portal window",
   SIGNING_DAY: "On to the staff",
   COACHING: "On to camp",

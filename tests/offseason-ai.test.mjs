@@ -20,7 +20,13 @@ test("the planner only speaks for the phase that is open", () => {
   let state = beginSeason(createFictionalLeague("offseason-ai-phase", 12));
   assert.deepEqual(planOffseasonCommands(state), [], "silent during the season");
   while (state.phase !== "OFFSEASON") state = advanceWeek(state).state;
-  assert.ok(planOffseasonCommands(state).length > 0, "and speaks once the offseason opens");
+  // The offseason opens on the board review, which is a verdict rather than a
+  // decision — nobody acts on it, so the planner has nothing to say until the
+  // portal opens.
+  assert.equal(state.offseasonStep, "BOARD_REVIEW");
+  assert.deepEqual(planOffseasonCommands(state), [], "silent at the board review, which nobody decides");
+  state = advanceOffseasonStep(state).state;
+  assert.ok(planOffseasonCommands(state).length > 0, "and speaks once a step with a decision in it opens");
   assert.deepEqual(
     planWeeklyCommands(state),
     [],
@@ -31,6 +37,7 @@ test("the planner only speaks for the phase that is open", () => {
 test("the planner excludes the human's program, as the weekly one does", () => {
   let state = beginSeason(createFictionalLeague("offseason-ai-exclude", 12));
   while (state.phase !== "OFFSEASON") state = advanceWeek(state).state;
+  while (state.offseasonStep !== "PORTAL") state = advanceOffseasonStep(state).state;
   const excluded = "program-1";
   const commands = planOffseasonCommands(state, excluded);
   assert.ok(commands.length > 0);
@@ -81,6 +88,7 @@ test("rivals actually compete in the offseason rather than standing still", () =
 test("rivals never bid past their own points or donor ceiling", () => {
   let state = beginSeason(createFictionalLeague("offseason-ai-limits", 24));
   while (state.phase !== "OFFSEASON") state = advanceWeek(state, planWeeklyCommands(state)).state;
+  while (state.offseasonStep !== "PORTAL") state = advanceOffseasonStep(state).state;
   const commands = planOffseasonCommands(state);
   const byProgram = new Map();
   for (const command of commands) {

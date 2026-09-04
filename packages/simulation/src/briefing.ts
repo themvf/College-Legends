@@ -3,6 +3,7 @@ import { fairTicketPrice } from "./business.js";
 import { DOSSIER_THRESHOLDS, MARQUEE_VALUE, WORTH_SCOUTING } from "./department.js";
 import { activeFocuses, focusCapacity, scoutingTargetFor, weekPriorities } from "./priorities.js";
 import { coachSchemeFit } from "./scheme.js";
+import { expectedWins } from "./tenure.js";
 
 /**
  * Where a briefing item sends the player. The UI maps these to screens; keeping
@@ -62,8 +63,9 @@ export function seasonExpectation(state: Readonly<GameState>, programId: string)
     game.homeProgramId === programId || game.awayProgramId === programId).length;
   const gamesLeft = Math.max(0, total - played);
   // What a job of this standing is expected to do. A blueblood that goes 7-5
-  // is in trouble; a bottom-tier program that does it gets an extension.
-  const target = program.tier === "POWER" ? 10 : program.tier === "MID" ? 7 : 5;
+  // is in trouble; a bottom-tier program that does it gets an extension. Shared
+  // with the board review, so the target stated here is the target graded there.
+  const target = expectedWins(program.tier);
   const pace = played > 0 ? program.wins / played : 0;
   const projected = Math.round(pace * total);
   const onTrack = program.wins + gamesLeft >= target;

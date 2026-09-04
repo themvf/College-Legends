@@ -37,6 +37,7 @@ import {
 import { activeSponsorship, advertisingReach, createSponsorshipProgramState, DEFENSIVE_PRESETS, developmentCandidates, fairTicketPrice, matchingPreset, MAXIMUM_TICKET_PRICE, MAXIMUM_WEEKLY_ADVERTISING, MINIMUM_TICKET_PRICE, OFFENSIVE_PRESETS, pricingGoodwill, projectGate, projectSponsorshipOffer, sponsorshipMarketValue, sponsorshipPayment } from "./business.js";
 import { MAXIMUM_REPS_PER_SIDE, TRAINING_CAMP_CONDITIONING_RISK, TRAINING_CAMP_INSTALL_BONUS, TRAINING_CAMP_INSTALL_RISK, TRAINING_CAMP_WEEKS, planExecution, repsFatigue, staffBuyout, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
 import { foldSeasonStats } from "./persistence.js";
+import { jobReview, startingSecurity } from "./tenure.js";
 import { advertisingCredit, applyBooster, boosterDueThisWeek, buildBoosterOffer, takeawayMultiplier } from "./boosters.js";
 import { committedNilTotal, emptyNilState, freeNilCapacity, nilAskingPrice, nilScore, reservedNilTotal, weeklyDonorCapacity, NIL_WITHDRAWAL_INTEREST_PENALTY } from "./nil.js";
 import {
@@ -79,6 +80,21 @@ export {
   PORTAL_INCUMBENT_BONUS,
   PORTAL_MINIMUM_POINTS
 } from "./portal.js";
+export {
+  expectedWins,
+  jobReview,
+  jobVerdict,
+  jobVerdictLabel,
+  startingSecurity,
+  CHAMPIONSHIP_BONUS,
+  DISMISSAL_THRESHOLD,
+  FIRST_YEAR_DISCOUNT,
+  INSOLVENCY_PENALTY,
+  MANDATE_FAILURE_PENALTY,
+  PLAYOFF_BONUS,
+  WIN_WEIGHT
+} from "./tenure.js";
+export type { JobReview } from "./tenure.js";
 
 export {
   advertisingCredit,
@@ -990,7 +1006,9 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       wins: 0,
       losses: 0,
       championships: 0,
-      coachSecurity: tier === "POWER" ? 45 : tier === "MID" ? 65 : 92,
+      coachSecurity: startingSecurity(tier),
+      coachTenure: 0,
+      championshipDeadline: null,
       prestige: tier === "POWER" ? 88 : tier === "MID" ? 72 : 55,
       fanSupport: tier === "POWER" ? 91 : tier === "MID" ? 70 : 48,
       fanBase: tier === "POWER" ? 92_000 : tier === "MID" ? 55_000 : 27_000,
@@ -5122,7 +5140,10 @@ function finalizeSeasonAwards(state: GameState, events: GameEvent[]): SeasonAwar
       player.personalFans += effects.playerFans;
       player.stardom = clamp(player.stardom + effects.playerStardom, 0, 100);
     }
-    if (winner.staffId) program.coachSecurity = clamp(program.coachSecurity + 10, 0, 100);
+    // A coach-of-the-year award used to add 10 security here. Job security now
+    // moves only in the board review, so the award's standing shows up there —
+    // as the wins that earned it — rather than in a second place the projection
+    // on the dashboard would not know about.
     program.fanBase += effects.programFans;
     program.prestige = clamp(program.prestige + effects.prestige, 0, 100);
     program.nationalPress = clamp(program.nationalPress + effects.nationalPress, 0, 100);
@@ -5314,7 +5335,8 @@ function finalizeSeason(state: GameState, events: GameEvent[]): SeasonHistory {
   champion.prestige = clamp(champion.prestige + 10, 0, 100);
   champion.localPress = clamp(champion.localPress + 15, 0, 100);
   champion.nationalPress = clamp(champion.nationalPress + 20, 0, 100);
-  champion.coachSecurity = clamp(champion.coachSecurity + 20, 0, 100);
+  // The title's effect on job security is applied by the board review as a
+  // named reason (`CHAMPIONSHIP_BONUS`), not here — one number, one owner.
   champion.budget += 6_000_000;
   runnerUp.fanBase += Math.round(runnerUp.fanBase * 0.08);
   runnerUp.prestige = clamp(runnerUp.prestige + 4, 0, 100);
@@ -5442,6 +5464,71 @@ function rolloverSeason(state: GameState, events: GameEvent[]): void {
   state.phase = "OFFSEASON";
   state.offseasonStep = OFFSEASON_STEPS[0];
   events.push({ type: "OFFSEASON_BEGAN", season: state.season, step: OFFSEASON_STEPS[0] });
+}
+
+/**
+ * The board meets on every program in the league, in one pass.
+ *
+ * Rivals are judged by the identical rule rather than by a separate AI policy,
+ * which is what this codebase has required of every contested system since the
+ * scouting department: a rule only the player is subject to is a rule the
+ * player should not be subject to either. It is also where the coaching market
+ * gets its churn from — a fired rival leaves a real vacancy that the COACHING
+ * step then has to fill.
+ *
+ * Programs are walked in sorted id order and the review consumes no RNG, so
+ * neither the order nor the presence of this step can shift a draw anywhere
+ * else in the engine.
+ */
+function resolveBoardReview(state: GameState, events: GameEvent[]): void {
+  for (const programId of Object.keys(state.programs).sort()) {
+    const program = state.programs[programId]!;
+    // `jobReview` finds the completed season itself, so the UI's projection and
+    // this verdict are the same call with the same inputs.
+    const review = jobReview(state, programId);
+    if (!review) continue;
+    events.push({
+      type: "BOARD_REVIEW_COMPLETED",
+      season: state.season,
+      programId,
+      verdict: review.verdict,
+      wins: review.wins,
+      losses: review.losses,
+      target: review.target,
+      securityBefore: review.securityBefore,
+      securityAfter: review.securityAfter,
+      reasons: review.reasons
+    });
+    if (review.survives) {
+      program.coachSecurity = review.securityAfter;
+      program.coachTenure += 1;
+      program.championshipDeadline = review.mandateSeasonsLeft;
+      continue;
+    }
+    // Dismissed. The chair empties, and the engine is deliberately silent about
+    // what that means for the human — it emits the same event for all
+    // seventy-two programs and lets the career layer decide that one of them
+    // ends a playthrough.
+    const headCoach = Object.values(state.staff).find(
+      (member) => member.programId === programId && member.role === "HEAD_COACH"
+    );
+    const cause = (program.championshipDeadline !== null && program.championshipDeadline !== undefined && review.mandateSeasonsLeft !== null && review.mandateSeasonsLeft <= 0)
+      ? "MANDATE"
+      : program.budget < 0 ? "INSOLVENCY" : "EXPECTATIONS";
+    events.push({
+      type: "COACH_FIRED",
+      season: state.season,
+      programId,
+      staffId: headCoach?.id ?? null,
+      staffName: headCoach?.name ?? "Nobody",
+      tenure: program.coachTenure,
+      cause
+    });
+    if (headCoach) delete state.staff[headCoach.id];
+    program.coachSecurity = startingSecurity(program.tier);
+    program.coachTenure = 0;
+    program.championshipDeadline = null;
+  }
 }
 
 /**
@@ -5882,7 +5969,12 @@ function completeOffseason(state: GameState, events: GameEvent[]): void {
 }
 
 /** Fixed order. The offseason ends when the last one resolves. */
-export const OFFSEASON_STEPS = ["PORTAL", "SIGNING_DAY", "COACHING", "TRAINING_CAMP"] as const satisfies readonly OffseasonStep[];
+/**
+ * `BOARD_REVIEW` runs first because being told whether you still have the job
+ * has to precede every decision that assumes you do. A coach cannot sensibly
+ * bid on the portal before he knows he will be there to coach the player.
+ */
+export const OFFSEASON_STEPS = ["BOARD_REVIEW", "PORTAL", "SIGNING_DAY", "COACHING", "TRAINING_CAMP"] as const satisfies readonly OffseasonStep[];
 
 /**
  * Resolves the open offseason step for the whole league and moves everyone to
@@ -5903,6 +5995,7 @@ export function advanceOffseasonStep(
   const events: GameEvent[] = [];
   const rng = new AddressableRng(state.identity.rootSeed).fork("offseason", String(state.season), step);
   resolveOffseasonCommands(state, step, commands, rng.fork("commands"), events);
+  if (step === "BOARD_REVIEW") resolveBoardReview(state, events);
   if (step === "PORTAL") resolvePortalMarket(state, rng.fork("portal-market"), events);
   if (!deferStandingClosure) closeStandingDecisionAudits(state, events);
   const nextIndex = OFFSEASON_STEPS.indexOf(step) + 1;
@@ -6070,6 +6163,7 @@ export function trainingCampRiskMultiplier(state: Readonly<GameState>, programId
 }
 
 export const OFFSEASON_STEP_LABELS: Record<OffseasonStep, string> = {
+  BOARD_REVIEW: "the board's review",
   PORTAL: "the transfer portal",
   SIGNING_DAY: "signing day",
   COACHING: "the coaching market",

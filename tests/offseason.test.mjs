@@ -101,9 +101,9 @@ test("skipping every step is legal and reports each one closing", () => {
 });
 
 test("a command belonging to another step is refused with the step that owns it", () => {
-  const { state } = toOffseason("offseason-wrong-step");
+  let { state } = toOffseason("offseason-wrong-step");
   const programId = Object.keys(state.programs)[0];
-  assert.equal(state.offseasonStep, "PORTAL");
+  while (state.offseasonStep !== "PORTAL") state = advanceOffseasonStep(state).state;
   const result = advanceOffseasonStep(state, [
     { type: "SET_TICKET_PRICE", programId, price: 40 }
   ]);

@@ -49,6 +49,8 @@ const trainingCampWindow = (seed) => {
 const portalWindow = (seed, count = 4) => {
   let state = activeLeague(seed, count);
   while (state.phase !== "OFFSEASON") state = advanceWeek(state, planWeeklyCommands(state)).state;
+  // The board review opens the offseason; the portal boundary is the step after it.
+  while (state.offseasonStep !== "PORTAL") state = advanceOffseasonStep(state).state;
   return state;
 };
 

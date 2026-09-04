@@ -12,7 +12,21 @@ export type GamePhase = "ROSTER_REVIEW" | "REGULAR_SEASON" | "OFFSEASON";
  * `CONTINUE_OFFSEASON`, so a program that engages with none of it experiences
  * what the engine did before the phase existed.
  */
-export type OffseasonStep = "PORTAL" | "SIGNING_DAY" | "COACHING" | "TRAINING_CAMP";
+export type OffseasonStep = "BOARD_REVIEW" | "PORTAL" | "SIGNING_DAY" | "COACHING" | "TRAINING_CAMP";
+
+/**
+ * What the board concluded. `FIRED` is the only one that ends a tenure; the
+ * rest are standing states the coach carries into next season.
+ */
+export type JobVerdict = "EXTENDED" | "SECURE" | "WATCHED" | "HOT_SEAT" | "FINAL_WARNING" | "FIRED";
+
+/** Why the board moved the number. One line per reason, with its own signed delta. */
+export interface JobReviewReason {
+  /** Plain sentence the UI prints verbatim. */
+  label: string;
+  /** Signed points of job security. Sums to the review's total movement. */
+  delta: number;
+}
 /**
  * What a program spends camp on. `BALANCED` is the default and the
  * do-nothing outcome; the other two trade against each other rather than
@@ -765,6 +779,19 @@ export interface Program {
   losses: number;
   championships: number;
   coachSecurity: number;
+  /**
+   * Seasons this coach has completed in the chair. A first-year coach inherited
+   * somebody else's roster and the board knows it, so his first review discounts
+   * what went wrong. Resets to zero when the chair changes hands.
+   */
+  coachTenure: number;
+  /**
+   * Seasons left to win a national title before the job is forfeit, for a job
+   * that carries that mandate. Null for a job that does not — which is every
+   * rival program, so the mandate stays a property of the career the player
+   * chose rather than a rule the whole league plays under.
+   */
+  championshipDeadline?: number | null;
   prestige: number;
   fanSupport: number;
   /** The addressable audience that can turn into attendance and game-day revenue. */
@@ -1505,6 +1532,35 @@ export type GameEvent = (
   | { type: "TRAINING_CAMP_SET"; season: Season; programId: ProgramId; focus: TrainingCampFocus; weeks: number }
   /** One offseason step closed. `nextStep` is null when the offseason itself ends. */
   | { type: "OFFSEASON_STEP_COMPLETED"; season: Season; step: OffseasonStep; nextStep: OffseasonStep | null }
+  /**
+   * The board's verdict on one program, every season, whatever it concluded.
+   * Carries the arithmetic rather than a summary, because job security is the
+   * one number in the game that can end a career and it must never move for a
+   * reason the player cannot read back.
+   */
+  | {
+      type: "BOARD_REVIEW_COMPLETED";
+      season: Season;
+      programId: ProgramId;
+      verdict: JobVerdict;
+      wins: number;
+      losses: number;
+      target: number;
+      securityBefore: number;
+      securityAfter: number;
+      reasons: JobReviewReason[];
+    }
+  | {
+      type: "COACH_FIRED";
+      season: Season;
+      programId: ProgramId;
+      /** Null when the chair was already empty — the program still records the change. */
+      staffId: string | null;
+      staffName: string;
+      /** Seasons the dismissed coach had completed. */
+      tenure: number;
+      cause: "EXPECTATIONS" | "INSOLVENCY" | "MANDATE";
+    }
   | { type: "BOOSTER_OFFERED"; season: Season; week: number; programId: ProgramId; options: BoosterOption[] }
   | {
       type: "BOOSTER_RESOLVED";
