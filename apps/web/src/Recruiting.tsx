@@ -14,6 +14,7 @@ import {
   VISIT_COST,
   recruitingEvaluationCost,
   recruitingSearchCost,
+  rosterOutlook,
   visitScore
 } from "@college-legends/simulation";
 import {
@@ -147,6 +148,7 @@ function RecruitingHud({ game, ledger, boardCount, rooms }: {
   rooms: Record<Position, PositionRoom>;
 }): ReactElement {
   const program = game.state.programs[game.playerProgramId]!;
+  const outlook = rosterOutlook(game.state, game.playerProgramId);
   const thinRooms = positions.filter((position) => rooms[position].plan === "THIN");
   return <article className="panel war-room-hud">
     <div className="war-room-brand">
@@ -156,13 +158,26 @@ function RecruitingHud({ game, ledger, boardCount, rooms }: {
     </div>
     <div className="war-room-ledger" aria-label="Recruiting resource ledger">
       <LedgerItem label="Recruiting Points" value={String(ledger.pointsAvailable)} note={`+${ledger.weeklyPoints} next week${ledger.queuedPointSpend ? ` · ${ledger.queuedPointSpend} queued` : ""}`} />
-      <LedgerItem label="Projected openings" value={String(ledger.projectedOpenings)} note={`${ledger.commitments} committed`} />
+      {/* "Projected openings 21 · 0 committed" was a count with no consequence
+          attached — a cold player read it all season and asked "openings for
+          what, when?". The same numbers said as next year's roster answer the
+          question and are the thing they were actually ambushed by. */}
+      <LedgerItem
+        label="Roster next season"
+        value={outlook ? `${outlook.projected} of ${outlook.scholarshipLimit}` : String(ledger.projectedOpenings)}
+        note={outlook
+          ? `${outlook.leaving} leaving · ${outlook.incoming} coming in`
+          : `${ledger.commitments} committed`}
+      />
       <LedgerItem label="Visit weekends" value={`${ledger.visitsRemaining}/${MAX_VISITS_PER_SEASON}`} note="remaining this season" />
       <LedgerItem label="Scholarship offers" value={String(ledger.activeScholarshipOffers)} note={`${boardCount} prospects on board`} />
       <LedgerItem label="NIL capacity / week" value={formatMoney(ledger.nilCapacity)} note={`${formatMoney(ledger.nilFree)} free`} />
       <LedgerItem label="NIL committed / week" value={formatMoney(ledger.nilCommitted)} note={`${formatMoney(ledger.nilReserved)} reserved`} />
     </div>
-    {thinRooms.length > 0 && <p className="roster-warning" role="status"><strong>Roster warning:</strong> {thinRooms.join(", ")} project below the room plan. Recruit those positions first; late scholarships only restore minimum playable depth.</p>}
+    {/* "project below the room plan" used a term the game defines nowhere. What
+        it means is that the position group will not have enough bodies to field
+        and rotate, so that is what it says now. */}
+    {thinRooms.length > 0 && <p className="roster-warning" role="status"><strong>Roster warning:</strong> {thinRooms.join(", ")} won't have enough bodies to field and rotate next season. Recruit those positions first; a late scholarship only buys you a warm body.</p>}
   </article>;
 }
 

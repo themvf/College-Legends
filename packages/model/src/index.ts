@@ -1634,7 +1634,23 @@ export type GameEvent = (
       defensiveExecution: number;
       notes: string[];
     }
-  | { type: "WEEKLY_FINANCES"; season: Season; week: number; programId: ProgramId; revenue: number; sponsorshipRevenue: number; nilSpend: number; expenses: number; net: number }
+  /**
+   * The week's ledger, itemised on both sides.
+   *
+   * `expenses` used to be the only cost field, and the finances screen showed it
+   * as one number — "Last week's costs $1.2M" — against a revenue side broken
+   * down to the sponsor's own arithmetic. A player who cannot see what he is
+   * spending cannot decide whether to spend more, which is why one never bought
+   * a facility: "$49K a week forever" had nothing to sit against. The six cost
+   * components plus `nilSpend` sum exactly to `expenses`, and a test asserts it.
+   */
+  | {
+      type: "WEEKLY_FINANCES"; season: Season; week: number; programId: ProgramId;
+      revenue: number; sponsorshipRevenue: number; mediaRevenue: number; gateRevenue: number;
+      nilSpend: number; squadCost: number; facilitiesCost: number; stadiumCost: number;
+      operationsCost: number; staffPayroll: number; advertisingSpend: number;
+      expenses: number; net: number
+    }
   | {
       type: "WEEKLY_RECAP";
       season: Season;

@@ -59,6 +59,8 @@ import {
   weeklyDonorCapacity,
   SPOTLIGHT_INTENSITY,
   seasonExpectation,
+  OPERATING_SHARE,
+  SQUAD_COST_PER_SCHOLARSHIP,
   mediaRights,
   operatingCost,
   jobReview,
@@ -1707,6 +1709,26 @@ function Finances({ game, pending, onQueue }: { game: GameView; pending: GameCom
         the gate until the week has resolved. A posted number that guesses at an
         engine input is the drift this codebase keeps finding. */}
     <article className="panel"><p className="eyebrow">Athletic department</p><h2>Operating position</h2><div className="snapshot-list"><p><span>Available budget</span><strong>{money(program.budget)}</strong></p><p><span>Weekly media rights</span><strong>{money(mediaRights(program).total)}</strong></p><p><span>Sponsorship earned this season</span><strong>{money(sponsorshipRevenue)}</strong></p><p><span>Last week&rsquo;s revenue</span><strong>{lastFinances ? money(lastFinances.revenue) : "—"}</strong></p><p><span>Last week&rsquo;s costs</span><strong>{lastFinances ? money(lastFinances.expenses) : "—"}</strong></p><p><span>Annual staff payroll</span><strong>{money(staffPayroll)}</strong></p></div></article>
+
+    {/* The cost side used to be a single number, against a revenue side broken
+        down to the sponsor's own arithmetic. Five of these six are things the
+        player can act on — hire, build, price, sign — and showing them as one
+        total is why a cold player never bought a facility: "$49K a week
+        forever" had nothing to sit against. Read back off the event, so the
+        panel states what was charged rather than a recomputed guess at it. */}
+    {lastFinances && <article className="panel"><p className="eyebrow">Where last week went</p><h2>{money(lastFinances.expenses)} of costs</h2>
+      <div className="snapshot-list">
+        <p><span>Scholarships &mdash; {program.scholarshipLimit} at ${SQUAD_COST_PER_SCHOLARSHIP.toLocaleString()} a week</span><strong>{money(lastFinances.squadCost)}</strong></p>
+        <p><span>Facilities upkeep</span><strong>{money(lastFinances.facilitiesCost)}</strong></p>
+        <p><span>Stadium overheads &mdash; {compactNumber(stadiumCapacity(program.facilities.STADIUM))} seats</span><strong>{money(lastFinances.stadiumCost)}</strong></p>
+        <p><span>Running the department &mdash; {Math.round(OPERATING_SHARE * 100)}% of revenue</span><strong>{money(lastFinances.operationsCost)}</strong></p>
+        <p><span>Coaching salaries</span><strong>{money(lastFinances.staffPayroll)}</strong></p>
+        <p><span>NIL commitments</span><strong>{money(lastFinances.nilSpend)}</strong></p>
+        {lastFinances.advertisingSpend > 0 && <p><span>Marketing</span><strong>{money(lastFinances.advertisingSpend)}</strong></p>}
+        <p><span>Against {money(lastFinances.revenue)} of revenue</span><strong>{lastFinances.net >= 0 ? `+${money(lastFinances.net)}` : `−${money(Math.abs(lastFinances.net))}`}</strong></p>
+      </div>
+      <p className="muted">Everything the program has built costs something to keep running. Facilities and the squad are charged every week whether you play or not.</p>
+    </article>}
     <article className="panel"><p className="eyebrow">Sponsor market</p><h2>{money(marketValue)} of weekly reach</h2><p className="muted">Sponsors value the audience and recognition the program has already built. These four inputs set this season's offers.</p><div className="snapshot-list"><p><span>{compactNumber(program.fanBase)} fans × $1.25</span><strong>{money(program.fanBase * 1.25)}</strong></p><p><span>{program.nationalPress} national press points × $900</span><strong>{money(program.nationalPress * 900)}</strong></p><p><span>{program.prestige} prestige points × $400</span><strong>{money(program.prestige * 400)}</strong></p><p><span>{program.championships} titles × $15,000</span><strong>{money(program.championships * 15_000)}</strong></p></div></article>
     {activeSponsor ? <article className="panel sponsor-active span-two">
       <p className="eyebrow">Primary sponsor · signed through Season {game.state.season}</p>

@@ -281,10 +281,10 @@ export {
   ratingByRole
 } from "./attributes.js";
 export type { AttributeDefinition, AttributeRole } from "./attributes.js";
-export { scheduleAhead, seasonExpectation } from "./briefing.js";
+export { scheduleAhead, seasonExpectation, rosterOutlook, RECRUITING_CLASS_CLOSES, CLASS_RECOVERY_RATE, MATERIAL_SHORTFALL } from "./briefing.js";
 export { boxScore, latestBoxScore } from "./boxscore.js";
 export type { BoxScore, BoxScoreGroup, BoxScoreRow, BoxScoreTeam, BoxScoreTeamStat } from "./boxscore.js";
-export type { BriefingDestination, BriefingItem, SeasonExpectation } from "./briefing.js";
+export type { BriefingDestination, BriefingItem, SeasonExpectation, RosterOutlook } from "./briefing.js";
 export { AddressableRng } from "./rng.js";
 export {
   canTransitionDecisionStatus,
@@ -579,8 +579,14 @@ export function projectedRecruitingOpenings(state: Readonly<GameState>, programI
     && player.eligibility.rosterStatus === "SCHOLARSHIP"
     && player.eligibility.seasonsRemaining <= 1
   ).length;
+  // Both statuses, because the rollover takes both. A commitment becomes
+  // SIGNED in the signing week, so counting only COMMITTED meant that from week
+  // 13 the whole signed class vanished from the projection and the screen
+  // reported every filled slot as still open — the recruiting board read
+  // "Projected openings 21 (0 committed)" with sixteen players already signed.
   const commitments = Object.values(state.prospects).filter((prospect) =>
-    prospect.status === "COMMITTED" && prospect.signedProgramId === programId
+    (prospect.status === "COMMITTED" || prospect.status === "SIGNED")
+    && prospect.signedProgramId === programId
   ).length;
   return Math.max(0, program.scholarshipLimit - currentScholarships + certainDepartures - commitments);
 }
@@ -4964,9 +4970,15 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
     // the drain the economy never had: facilities were bought once and then were
     // free, so a program's costs could not grow with its ambitions.
     const operating = operatingCost(program, capacity, revenue);
-    const expenses = Math.round(
-      operating.total + staffPayroll + nilSpend + (playedAtHome ? program.advertisingSpend : 0)
-    );
+    // Rounded per line, then summed, rather than summed and rounded once. The
+    // finances screen itemises this now, and a breakdown whose parts do not add
+    // up to the total is worse than no breakdown — a coaching salary is a
+    // weekly share of an annual figure, so the fractions were real. The
+    // difference to the budget is under a dollar a week.
+    const chargedPayroll = Math.round(staffPayroll);
+    const chargedAdvertising = playedAtHome ? Math.round(program.advertisingSpend) : 0;
+    const expenses = operating.squad + operating.facilities + operating.stadium
+      + operating.operations + chargedPayroll + nilSpend + chargedAdvertising;
     const net = Math.round(revenue - expenses);
     program.budget += net;
     program.lastWeeklyNet = net;
@@ -4977,7 +4989,17 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
       programId: program.id,
       revenue: Math.round(revenue),
       sponsorshipRevenue: sponsorPayment.total,
+      mediaRevenue: media.total,
+      gateRevenue: Math.round(ticketRevenue + concessionRevenue),
       nilSpend,
+      squadCost: operating.squad,
+      facilitiesCost: operating.facilities,
+      stadiumCost: operating.stadium,
+      operationsCost: operating.operations,
+      staffPayroll: chargedPayroll,
+      // Charged only for a home game, which is the same rule the gate runs on:
+      // marketing is inert on the road, so it is neither delivered nor billed.
+      advertisingSpend: chargedAdvertising,
       expenses,
       net
     });

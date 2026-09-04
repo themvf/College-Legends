@@ -84,6 +84,100 @@ export function seasonExpectation(state: Readonly<GameState>, programId: string)
 }
 
 /**
+ * The last week a commitment can still join this class. The rollover fires once
+ * the week passes 14 and takes everyone committed or signed up to that point,
+ * so this is that boundary — not `SIGNING_WEEK`, which only decides when a
+ * verbal stops being contestable.
+ */
+export const RECRUITING_CLASS_CLOSES = 14;
+
+/**
+ * Commitments a week a program can still land when it is genuinely chasing.
+ *
+ * Deliberately well above the rate a healthy class actually runs at — measured
+ * on a competently recruited season, the shortfall goes 21 → 14 → 8 → 6 and
+ * lands at 3, which is about 1.4 a week and 1.7 down the stretch. The number
+ * here is the *ceiling*, not the norm, because it decides when the briefing
+ * stops calling a class slow and starts calling it broken, and a warning that
+ * fires on a program doing fine is a warning players learn to scroll past.
+ */
+export const CLASS_RECOVERY_RATE = 3;
+
+/**
+ * Below this, an unfilled roster is just a roster. Nobody runs at exactly the
+ * limit — a competently recruited class lands 3 short — so escalating on the
+ * rate alone turned the last two weeks of a perfectly good season into a
+ * REQUIRED item about five empty scholarships nobody needed to care about.
+ */
+export const MATERIAL_SHORTFALL = 8;
+
+export interface RosterOutlook {
+  /** Scholarship players on the roster today. */
+  onRoster: number;
+  scholarshipLimit: number;
+  /** Out of eligibility when this season ends. They are gone whatever you do. */
+  leaving: number;
+  /** Prospects committed or signed, both of which the rollover takes. */
+  incoming: number;
+  /** What the roster projects to be on the first day of next season. */
+  projected: number;
+  /** How far under the limit that lands. Zero when the class covers the losses. */
+  shortfall: number;
+  /** Playing weeks left to add to the class before it closes. */
+  weeksLeft: number;
+  /** Commitments a week needed from here to close the gap. */
+  paceNeeded: number;
+}
+
+/**
+ * What the roster looks like next August, stated in players.
+ *
+ * A cold player finished a season with 85 men, went through the offseason, and
+ * came out with 71 — and nothing had warned them. The one recruiting item the
+ * briefing carried all year said "120 recruiting points are sitting unspent",
+ * which is a complaint about a resource; the consequence is that a quarter of
+ * the roster leaves every season and has to be replaced. That is the single
+ * thing this game never told anybody, and it is the difference between the week
+ * and the program.
+ *
+ * Shared by the briefing and the recruiting screen so the warning and the board
+ * cannot state different numbers.
+ */
+export function rosterOutlook(state: Readonly<GameState>, programId: string): RosterOutlook | null {
+  const program = state.programs[programId];
+  if (!program) return null;
+  let onRoster = 0;
+  let leaving = 0;
+  for (const player of Object.values(state.players)) {
+    if (player.programId !== programId) continue;
+    if (player.eligibility.rosterStatus !== "SCHOLARSHIP") continue;
+    onRoster += 1;
+    if (player.eligibility.seasonsRemaining <= 1) leaving += 1;
+  }
+  let incoming = 0;
+  for (const prospect of Object.values(state.prospects)) {
+    if (prospect.signedProgramId !== programId) continue;
+    // Both, because the rollover takes both — a commitment turns into a
+    // signature in the signing week and must not drop out of the projection
+    // the moment it becomes more certain rather than less.
+    if (prospect.status === "COMMITTED" || prospect.status === "SIGNED") incoming += 1;
+  }
+  const projected = onRoster - leaving + incoming;
+  const shortfall = Math.max(0, program.scholarshipLimit - projected);
+  const weeksLeft = Math.max(0, RECRUITING_CLASS_CLOSES - state.week);
+  return {
+    onRoster,
+    scholarshipLimit: program.scholarshipLimit,
+    leaving,
+    incoming,
+    projected,
+    shortfall,
+    weeksLeft,
+    paceNeeded: weeksLeft > 0 ? shortfall / weeksLeft : shortfall
+  };
+}
+
+/**
  * What actually needs the coach this week, in priority order.
  *
  * The dashboard used to be six panels of status and no direction — the player
@@ -196,17 +290,44 @@ export function weeklyBriefing(
     });
   }
 
-  // A large idle recruiting balance. Points bank week to week — the old copy
-  // said they reset, which the recruiting screen visibly contradicted — but a
-  // pile nobody is spending still signs nobody, and the class closes at
-  // season's end.
+  // The roster next August, not the points in the drawer.
+  //
+  // This item used to read "120 recruiting points are sitting unspent", which
+  // is a complaint about a resource. A cold player read it all season, spent
+  // nothing, and arrived at signing day with 64 players and no idea it had been
+  // coming — the one place in a season where they were genuinely ambushed. What
+  // the briefing has to say is the consequence: this many leave, this many are
+  // coming, and here is where that lands you against the limit.
   const recruitingPoints = state.recruiting[programId]?.points ?? 0;
-  if (recruitingPoints >= 25) {
+  const outlook = rosterOutlook(state, programId);
+  if (outlook && outlook.shortfall > 0) {
+    // Required once the weeks left can no longer close the gap at any rate a
+    // program actually recruits at. A 21-man hole in week one is what every
+    // season looks like — nobody has committed to anybody yet — so the row
+    // starts as information and becomes an instruction only when it is too
+    // late to fix by drifting.
+    //
+    // Measured either side: a competently recruited class never trips it, and a
+    // program that has signed nobody trips it in week eight, with six weeks
+    // still left to do something about it. An earlier rule fired only in week
+    // thirteen, which is a warning that arrives after the decision.
+    const behind = outlook.shortfall >= MATERIAL_SHORTFALL
+      && outlook.shortfall > outlook.weeksLeft * CLASS_RECOVERY_RATE;
     items.push({
       id: "RECRUITING",
-      status: "OPTIONAL",
-      headline: `${recruitingPoints} recruiting points are sitting unspent`,
-      detail: "They bank week to week, but the class signs during the season — points still idle at the end sign nobody. Spend them finding players or chasing the ones you've found.",
+      status: behind ? "REQUIRED" : "OPTIONAL",
+      headline: outlook.weeksLeft > 0
+        ? `Next year's roster is ${outlook.shortfall} short`
+        : `You're going into next season ${outlook.shortfall} players short`,
+      detail: [
+        `${outlook.leaving} of your ${outlook.onRoster} are out of eligibility after this year`,
+        outlook.incoming > 0
+          ? `and ${outlook.incoming} ${outlook.incoming === 1 ? "is" : "are"} coming in, which lands you at ${outlook.projected} of ${outlook.scholarshipLimit}.`
+          : `and nobody is coming in yet, which lands you at ${outlook.projected} of ${outlook.scholarshipLimit}.`,
+        outlook.weeksLeft > 0
+          ? `The class closes with the season — ${outlook.weeksLeft} ${outlook.weeksLeft === 1 ? "week" : "weeks"} left${recruitingPoints > 0 ? `, and you're holding ${recruitingPoints} recruiting points` : ""}.`
+          : "The class is closed. These slots stay empty until next year."
+      ].join(" "),
       action: "Work the phones",
       destination: "RECRUITING"
     });

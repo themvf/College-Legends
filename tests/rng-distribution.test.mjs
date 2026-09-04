@@ -48,6 +48,7 @@ import {
   rosterSchemeFit,
   schemeAffinity,
   weeklyBriefing,
+  rosterOutlook,
   seasonExpectation,
   planAlignment,
   focusCapacity,
@@ -1912,4 +1913,56 @@ test("a focused install is worth points, and the cards never disagree with the e
       || offense.baseline !== offense.focused,
       "focusing the offense must change something the card can state");
   }
+});
+
+test("the briefing warns about the roster cliff before it lands, and only when it is real", () => {
+  // A cold player finished a season with 85 men and came out of the offseason
+  // with 71, never warned. The only recruiting item the briefing carried all
+  // year was "120 recruiting points are sitting unspent" — a complaint about a
+  // resource, when the consequence is that a quarter of the roster leaves every
+  // season. It was the one place in a full season where they were ambushed.
+  const me = "program-3";
+  const seasonOf = (neglected) => {
+    let state = beginSeason(createFictionalLeague("cliff", 24));
+    const weeks = [];
+    while (state.phase === "REGULAR_SEASON") {
+      const item = weeklyBriefing(state, me).find((candidate) => candidate.id === "RECRUITING");
+      weeks.push({ week: state.week, status: item?.status ?? null, outlook: rosterOutlook(state, me) });
+      // Passing the program as the player excludes it from rival planning,
+      // which is exactly a player who never opens the recruiting screen.
+      state = advanceWeek(state, neglected ? planWeeklyCommands(state, me) : planWeeklyCommands(state)).state;
+    }
+    return weeks;
+  };
+
+  const recruited = seasonOf(false);
+  const neglected = seasonOf(true);
+
+  // It states the consequence from week one — that is the education that was
+  // missing — but it must never shout at a program doing the job.
+  assert.ok(recruited.every((week) => week.status !== null), "the outlook must be stated all season");
+  assert.ok(
+    recruited.every((week) => week.status === "OPTIONAL"),
+    `a competently recruited class must never raise a REQUIRED item (${recruited.filter((w) => w.status === "REQUIRED").map((w) => `wk${w.week} short ${w.outlook.shortfall}`).join(", ")})`
+  );
+
+  // And it must escalate while there is still time to act on it. An earlier
+  // rule fired in week thirteen, which is a warning that arrives after the
+  // decision it is warning about.
+  const escalated = neglected.find((week) => week.status === "REQUIRED");
+  assert.ok(escalated, "a class that signs nobody must eventually be raised as REQUIRED");
+  assert.ok(
+    escalated.outlook.weeksLeft >= 4,
+    `the warning must leave time to recruit, fired with ${escalated.outlook.weeksLeft} weeks left`
+  );
+
+  // The projection has to survive signing week. Commitments become SIGNED at
+  // week 12, and counting only COMMITTED made the whole class vanish from the
+  // projection at exactly the point it became certain.
+  const late = recruited.find((week) => week.week === 14);
+  assert.ok(late.outlook.incoming > 0, "a signed class must still count as incoming");
+  assert.equal(
+    late.outlook.projected,
+    late.outlook.onRoster - late.outlook.leaving + late.outlook.incoming
+  );
 });

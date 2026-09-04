@@ -1281,3 +1281,43 @@ test("each of the four rewards actually lands when it comes off", () => {
   // And it is one game only.
   assert.equal(takeawayMultiplier(advanceWeek(defense.state).state, defense.programId), 1);
 });
+
+test("the weekly ledger itemises the cost side and the parts sum to the total", () => {
+  // The finances screen showed "Last week's costs $1.2M" as one number against
+  // a revenue side broken down to the sponsor's own arithmetic. Five of the six
+  // components are things the player can act on — hire, build, price, sign, and
+  // the scholarships he is already committed to — so one total is the reason a
+  // cold player never bought a facility: "$49K a week forever" had nothing to
+  // sit against.
+  //
+  // The breakdown is only worth showing if it reconciles, so this asserts it
+  // rather than trusting it.
+  let state = beginSeason(createFictionalLeague("weekly-ledger", 12));
+  for (let week = 0; week < 3; week += 1) state = advanceWeek(state).state;
+
+  const finances = state.eventHistory.filter((event) => event.type === "WEEKLY_FINANCES");
+  assert.ok(finances.length > 0, "weeks must produce a ledger");
+  for (const week of finances) {
+    const parts = week.squadCost + week.facilitiesCost + week.stadiumCost
+      + week.operationsCost + week.staffPayroll + week.nilSpend + week.advertisingSpend;
+    assert.equal(
+      parts,
+      week.expenses,
+      `${week.programId} week ${week.week}: itemised costs must equal the total charged`
+    );
+    assert.equal(week.net, week.revenue - week.expenses);
+    // Every program is committed to a squad and a stadium whether it plays or
+    // not — a zero here would mean the panel is showing an empty breakdown.
+    assert.ok(week.squadCost > 0 && week.stadiumCost > 0);
+    assert.ok(week.mediaRevenue > 0 && week.gateRevenue >= 0);
+    assert.ok(week.gateRevenue <= week.revenue);
+  }
+
+  // Marketing is inert on the road, so it must not be billed there either.
+  const awayWeeks = finances.filter((week) => week.gateRevenue === 0);
+  assert.ok(awayWeeks.length > 0, "some program must be away or on a bye");
+  assert.ok(
+    awayWeeks.every((week) => week.advertisingSpend === 0),
+    "advertising is not charged when there is no gate to fill"
+  );
+});
