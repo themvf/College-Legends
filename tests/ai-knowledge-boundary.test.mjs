@@ -332,9 +332,13 @@ test("weekly business selection uses only one exact deeply frozen program view",
   const state = activeLeague("weekly-business-shape");
   const views = weeklyBusinessPlanningKnowledgeViews(state);
   const view = weeklyBusinessPlanningKnowledgeView(state, "program-1", views);
+  // fanElasticity, fairTicketPrice and ticketPrice were added for the cohort
+  // pricing posture. They are all facts about the program's own business, which
+  // is what this view is permitted to carry.
   assert.deepEqual(Object.keys(view).sort(), [
-    "atHome", "boosterOptions", "budget", "character", "facilities", "kind", "phase", "playingThisWeek",
-    "programId", "season", "sponsorshipActive", "sponsorshipOffers", "week", "weeklyExpenses"
+    "atHome", "boosterOptions", "budget", "character", "facilities", "fairTicketPrice", "fanElasticity",
+    "kind", "phase", "playingThisWeek", "programId", "season", "sponsorshipActive", "sponsorshipOffers",
+    "ticketPrice", "week", "weeklyExpenses"
   ]);
   assert.equal(Object.isFrozen(views), true);
   assert.equal(Object.isFrozen(view), true);

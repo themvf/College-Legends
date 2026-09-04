@@ -3,6 +3,8 @@ import {
   FACILITY_UPGRADE_COST,
   mediaRights,
   operatingCost,
+  pricingPosture,
+  fairTicketPrice,
   stadiumCapacity,
   focusCapacity,
   freeNilCapacity,
@@ -116,7 +118,7 @@ export type PortalPlanningKnowledgeViews = Readonly<Record<string, PortalPlannin
 
 export type WeeklyBusinessSelectionCommand = Extract<
   GameCommand,
-  { type: "CHOOSE_BOOSTER" | "ACCEPT_SPONSORSHIP" | "UPGRADE_FACILITY" }
+  { type: "CHOOSE_BOOSTER" | "ACCEPT_SPONSORSHIP" | "UPGRADE_FACILITY" | "SET_TICKET_PRICE" }
 >;
 
 /** Exact program and boundary facts used by the three existing V1 business policies. */
@@ -129,6 +131,9 @@ export interface WeeklyBusinessPlanningKnowledgeView {
   readonly budget: number;
   readonly weeklyExpenses: number;
   readonly character: ProgramCharacter;
+  readonly ticketPrice: number;
+  readonly fairTicketPrice: number;
+  readonly fanElasticity: number;
   readonly playingThisWeek: boolean;
   readonly atHome: boolean;
   readonly boosterOptions: readonly {
@@ -317,6 +322,12 @@ export function weeklyBusinessPlanningKnowledgeViews(
       budget: program.budget,
       weeklyExpenses: operatingCost(program, stadiumCapacity(program.facilities.STADIUM), mediaRights(program).total).total,
       character: program.character,
+      ticketPrice: program.ticketPrice,
+      // The posture is priced off the fair value for an ordinary week, not for
+      // the specific opponent: this is a standing price the program sets once,
+      // not a per-fixture decision.
+      fairTicketPrice: fairTicketPrice(program, null, false),
+      fanElasticity: program.fanElasticity,
       playingThisWeek: playing.has(program.id),
       atHome: home.has(program.id),
       boosterOptions: Object.freeze((booster?.options ?? []).map((option) => Object.freeze({
@@ -591,6 +602,25 @@ export function selectSponsorship(
   return offer ? [{ type: "ACCEPT_SPONSORSHIP", programId: view.programId, offerId: offer.id }] : [];
 }
 
+/**
+ * Price the tickets once a season, from the cohort the program belongs to.
+ *
+ * Rivals used to never touch this at all, so seventy-one programs ran on their
+ * creation price forever and left the biggest revenue lever in the game
+ * untouched. This is deliberately a posture rather than an optimisation: five
+ * fan-elasticity cohorts, one standing multiple of fair value each, set in week
+ * one and left alone. It costs one comparison a season per program instead of a
+ * weekly search, which is what makes it affordable across seventy-two of them.
+ */
+export function selectTicketPrice(
+  view: Readonly<WeeklyBusinessPlanningKnowledgeView>
+): Extract<WeeklyBusinessSelectionCommand, { type: "SET_TICKET_PRICE" }>[] {
+  if (view.week !== 1) return [];
+  const target = Math.round(view.fairTicketPrice * pricingPosture(view.fanElasticity));
+  if (target === view.ticketPrice) return [];
+  return [{ type: "SET_TICKET_PRICE", programId: view.programId, price: target }];
+}
+
 /** Select the same cheapest weak facility as the legacy weekly planner. */
 export function selectFacilityUpgrade(
   view: Readonly<WeeklyBusinessPlanningKnowledgeView>
@@ -650,6 +680,7 @@ export function planWeeklyCommands(
     // The scheme is the game plan. The retired weekly command is intentionally
     // never emitted; doing so only produced a rejection for every rival.
     commands.push(...selectFacilityUpgrade(businessView));
+    commands.push(...selectTicketPrice(businessView));
 
     const roster = rostersByProgram.get(program.id) ?? [];
     const returningRooms = returningByProgram.get(program.id)!;
