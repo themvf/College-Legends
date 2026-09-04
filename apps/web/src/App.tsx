@@ -59,6 +59,8 @@ import {
   weeklyDonorCapacity,
   SPOTLIGHT_INTENSITY,
   seasonExpectation,
+  mediaRights,
+  operatingCost,
   jobReview,
   jobVerdictLabel,
   startingLineup,
@@ -105,6 +107,7 @@ import {
   unitLabel,
   developmentPayoff,
   facilityPayoff,
+  facilityUpkeepIncrease,
   marqueeGameOptions,
   playerMediaPayoff,
   projectedDevelopmentPayoff,
@@ -1667,6 +1670,10 @@ function Finances({ game, pending, onQueue }: { game: GameView; pending: GameCom
       && event.programId === program.id
       && event.season === game.state.season)
     .reduce((total, event) => total + event.total, 0);
+  const lastFinances = [...game.state.eventHistory].reverse().find(
+    (event): event is Extract<GameEvent, { type: "WEEKLY_FINANCES" }> =>
+      event.type === "WEEKLY_FINANCES" && event.programId === program.id
+  );
   const marketValue = sponsorshipMarketValue(program);
   const strategyName = (strategy: "GUARANTEED" | "HOME_CROWD" | "WINNING"): string =>
     strategy === "GUARANTEED" ? "Guaranteed partner" : strategy === "HOME_CROWD" ? "Game-day partner" : "Performance partner";
@@ -1680,7 +1687,11 @@ function Finances({ game, pending, onQueue }: { game: GameView; pending: GameCom
     return "No conditions. The full amount is guaranteed, including bye weeks";
   };
   return <section className="finance-layout">
-    <article className="panel"><p className="eyebrow">Athletic department</p><h2>Operating position</h2><div className="snapshot-list"><p><span>Available budget</span><strong>{money(program.budget)}</strong></p><p><span>Base weekly revenue</span><strong>{money(program.weeklyRevenue)}</strong></p><p><span>Sponsorship earned this season</span><strong>{money(sponsorshipRevenue)}</strong></p><p><span>Base weekly expenses</span><strong>{money(program.weeklyExpenses)}</strong></p><p><span>Annual staff payroll</span><strong>{money(staffPayroll)}</strong></p></div></article>
+    {/* Read back what the engine actually charged rather than recomputing it:
+        the operating cost is a share of total revenue, and the UI does not know
+        the gate until the week has resolved. A posted number that guesses at an
+        engine input is the drift this codebase keeps finding. */}
+    <article className="panel"><p className="eyebrow">Athletic department</p><h2>Operating position</h2><div className="snapshot-list"><p><span>Available budget</span><strong>{money(program.budget)}</strong></p><p><span>Weekly media rights</span><strong>{money(mediaRights(program).total)}</strong></p><p><span>Sponsorship earned this season</span><strong>{money(sponsorshipRevenue)}</strong></p><p><span>Last week&rsquo;s revenue</span><strong>{lastFinances ? money(lastFinances.revenue) : "—"}</strong></p><p><span>Last week&rsquo;s costs</span><strong>{lastFinances ? money(lastFinances.expenses) : "—"}</strong></p><p><span>Annual staff payroll</span><strong>{money(staffPayroll)}</strong></p></div></article>
     <article className="panel"><p className="eyebrow">Sponsor market</p><h2>{money(marketValue)} of weekly reach</h2><p className="muted">Sponsors value the audience and recognition the program has already built. These four inputs set this season's offers.</p><div className="snapshot-list"><p><span>{compactNumber(program.fanBase)} fans × $1.25</span><strong>{money(program.fanBase * 1.25)}</strong></p><p><span>{program.nationalPress} national press points × $900</span><strong>{money(program.nationalPress * 900)}</strong></p><p><span>{program.prestige} prestige points × $400</span><strong>{money(program.prestige * 400)}</strong></p><p><span>{program.championships} titles × $15,000</span><strong>{money(program.championships * 15_000)}</strong></p></div></article>
     {activeSponsor ? <article className="panel sponsor-active span-two">
       <p className="eyebrow">Primary sponsor · signed through Season {game.state.season}</p>
@@ -1721,7 +1732,7 @@ function Finances({ game, pending, onQueue }: { game: GameView; pending: GameCom
       const queued = pending.some((item) => item.type === "UPGRADE_FACILITY" && item.facility === facility);
       const cost = level >= 5 ? null : [0, 350_000, 750_000, 1_500_000, 3_000_000][level];
       return <article className="panel business-decision" key={facility}><p className="eyebrow">{label(facility)}</p><h2>Level {level}/5</h2><div className="level-track"><span style={{ width: `${level * 20}%` }} /></div><p className="muted">{facilityBenefit(facility)}</p>
-        <div className="choice-compare"><p><span>Current payoff</span><strong>{facilityPayoff(facility, level)}</strong></p><p><span>After upgrade</span><strong>{level >= 5 ? "Maximum reached" : facilityPayoff(facility, level + 1)}</strong></p>{cost && <p><span>Decision cost</span><strong>{money(cost)} now</strong></p>}</div>
+        <div className="choice-compare"><p><span>Current payoff</span><strong>{facilityPayoff(facility, level)}</strong></p><p><span>After upgrade</span><strong>{level >= 5 ? "Maximum reached" : facilityPayoff(facility, level + 1)}</strong></p>{cost && <p><span>Decision cost</span><strong>{money(cost)} now</strong></p>}{level < 5 && <p><span>Adds to every week</span><strong>{money(facilityUpkeepIncrease(level))} forever</strong></p>}</div>
         <button disabled={queued || !cost || program.budget < cost} onClick={() => onQueue({ type: "UPGRADE_FACILITY", programId: program.id, facility })}>{level >= 5 ? "Maximum level" : queued ? "Upgrade queued" : `Queue upgrade · ${money(cost!)}`}</button></article>;
     })}</div>
   </section>;

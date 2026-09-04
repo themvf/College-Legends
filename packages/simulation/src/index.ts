@@ -38,6 +38,7 @@ import { activeSponsorship, advertisingReach, createSponsorshipProgramState, DEF
 import { MAXIMUM_REPS_PER_SIDE, TRAINING_CAMP_CONDITIONING_RISK, TRAINING_CAMP_INSTALL_BONUS, TRAINING_CAMP_INSTALL_RISK, TRAINING_CAMP_WEEKS, planExecution, repsFatigue, staffBuyout, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
 import { foldSeasonStats } from "./persistence.js";
 import { jobReview, startingSecurity } from "./tenure.js";
+import { mediaRights, operatingCost } from "./economy.js";
 import { advertisingCredit, applyBooster, boosterDueThisWeek, buildBoosterOffer, takeawayMultiplier } from "./boosters.js";
 import { committedNilTotal, emptyNilState, freeNilCapacity, nilAskingPrice, nilScore, reservedNilTotal, weeklyDonorCapacity, NIL_WITHDRAWAL_INTEREST_PENALTY } from "./nil.js";
 import {
@@ -95,6 +96,22 @@ export {
   WIN_WEIGHT
 } from "./tenure.js";
 export type { JobReview } from "./tenure.js";
+export {
+  facilityUpkeep,
+  facilityUpkeepIncrease,
+  mediaRights,
+  operatingCost,
+  CONFERENCE_FLOOR,
+  OPERATING_SHARE,
+  FACILITY_UPKEEP_EXPONENT,
+  FACILITY_UPKEEP_UNIT,
+  MEDIA_PER_CHAMPIONSHIP,
+  MEDIA_PER_PRESS_POINT,
+  MEDIA_PER_PRESTIGE_POINT,
+  SQUAD_COST_PER_SCHOLARSHIP,
+  STADIUM_COST_PER_SEAT
+} from "./economy.js";
+export type { MediaRights, OperatingCost } from "./economy.js";
 
 export {
   advertisingCredit,
@@ -1025,11 +1042,11 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       pipelineStrength: {},
       ticketPrice: tier === "POWER" ? 58 : tier === "MID" ? 42 : 28,
       advertisingSpend: 0,
-      weeklyRevenue: tier === "POWER" ? 1_200_000 : tier === "MID" ? 520_000 : 210_000,
+
       // Includes the full cost of operating an 85-man football program, not
       // only game-day bills. At these levels, a losing season is near break-even
       // and sustained winning, sponsorships and smart pricing create the margin.
-      weeklyExpenses: tier === "POWER" ? 3_850_000 : tier === "MID" ? 1_800_000 : 825_000,
+
       // A scouting department starts a tier behind the rest: information is the
       // thing a program has to decide to invest in rather than inherit.
       facilities: {
@@ -4929,13 +4946,22 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
         ...sponsorPayment
       });
     }
-    const revenue = program.weeklyRevenue + ticketRevenue + concessionRevenue + sponsorPayment.total;
+    // Media money is a function of the program's own recognition now, not a
+    // constant stamped on it at creation, so becoming a national name pays.
+    const media = mediaRights(program);
+    const revenue = media.total + ticketRevenue + concessionRevenue + sponsorPayment.total;
     const staffPayroll = staffPayrollByProgram.get(program.id) ?? 0;
     // NIL commitments charge every week from the moment a recruit commits.
     // They ride the finance line rather than emitting their own weekly event —
     // the inbox lesson about the simulation talking to itself.
     const nilSpend = committedNilTotal(state, program.id);
-    const expenses = Math.round(program.weeklyExpenses + staffPayroll + nilSpend + (playedAtHome ? program.advertisingSpend : 0));
+    // Everything the program has built costs something to keep running. This is
+    // the drain the economy never had: facilities were bought once and then were
+    // free, so a program's costs could not grow with its ambitions.
+    const operating = operatingCost(program, capacity, revenue);
+    const expenses = Math.round(
+      operating.total + staffPayroll + nilSpend + (playedAtHome ? program.advertisingSpend : 0)
+    );
     const net = Math.round(revenue - expenses);
     program.budget += net;
     events.push({

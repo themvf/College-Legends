@@ -304,6 +304,10 @@ const businessCommands = (commands) => commands.filter((command) =>
   || command.type === "UPGRADE_FACILITY");
 
 test("weekly business AI preserves the established deterministic V1 choices", () => {
+  // Re-baselined when weeklyExpenses stopped being a frozen constant and became
+  // the derived operating cost. The AI reads it to judge what a program can
+  // afford, so the affordability line moved and program-4 can now carry an
+  // academics upgrade. The choices are otherwise unchanged.
   let state = activeLeague("weekly-business-view-0");
   assert.deepEqual(businessCommands(planWeeklyCommands(state)), [
     { type: "ACCEPT_SPONSORSHIP", programId: "program-1", offerId: "program-1:2027:guaranteed" },
@@ -311,7 +315,8 @@ test("weekly business AI preserves the established deterministic V1 choices", ()
     { type: "UPGRADE_FACILITY", programId: "program-2", facility: "ACADEMICS" },
     { type: "ACCEPT_SPONSORSHIP", programId: "program-3", offerId: "program-3:2027:winning" },
     { type: "UPGRADE_FACILITY", programId: "program-3", facility: "SCOUTING" },
-    { type: "ACCEPT_SPONSORSHIP", programId: "program-4", offerId: "program-4:2027:home-crowd" }
+    { type: "ACCEPT_SPONSORSHIP", programId: "program-4", offerId: "program-4:2027:home-crowd" },
+    { type: "UPGRADE_FACILITY", programId: "program-4", facility: "ACADEMICS" }
   ]);
   state = advanceWeek(state, planWeeklyCommands(state)).state;
   state = advanceWeek(state, planWeeklyCommands(state)).state;
@@ -427,14 +432,18 @@ test("weekly business plans are canonical commands and are never rejected", () =
 });
 
 test("portal AI preserves the established deterministic V1 bids", () => {
+  // Re-baselined with the derived economy. Programs now reach the portal
+  // holding different budgets than the frozen constants left them with, which
+  // moves the donor capacity a rival can commit and therefore which players it
+  // chases. The selector itself is unchanged.
   const state = portalWindow("portal-view-0");
   const expected = [
     { type: "BID_PORTAL_PLAYER", programId: "program-1", playerId: "program-1-player-14", points: 12, weeklyNil: 500 },
     { type: "BID_PORTAL_PLAYER", programId: "program-2", playerId: "program-2-player-30", points: 12, weeklyNil: 1950 },
     { type: "BID_PORTAL_PLAYER", programId: "program-3", playerId: "program-2-player-30", points: 13, weeklyNil: 1950 },
     { type: "BID_PORTAL_PLAYER", programId: "program-4", playerId: "program-2-player-30", points: 20, weeklyNil: 1950 },
-    { type: "BID_PORTAL_PLAYER", programId: "program-4", playerId: "program-4-player-26", points: 30, weeklyNil: 200 },
-    { type: "BID_PORTAL_PLAYER", programId: "program-4", playerId: "program-4-player-29", points: 30, weeklyNil: 200 }
+    { type: "BID_PORTAL_PLAYER", programId: "program-4", playerId: "program-1-player-14", points: 20, weeklyNil: 500 },
+    { type: "BID_PORTAL_PLAYER", programId: "program-4", playerId: "program-1-player-34", points: 20, weeklyNil: 350 }
   ];
   const views = portalPlanningKnowledgeViews(state);
   assert.deepEqual(planOffseasonCommands(state, undefined, views), expected);
