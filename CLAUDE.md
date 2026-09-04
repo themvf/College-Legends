@@ -2130,15 +2130,65 @@ Measured after, over one season at 24 programs:
 
 ### Still open here
 
-**Rivals never price a ticket.** The AI issues sponsorship, booster and facility
-commands and nothing else on the business side, so every rival runs on the
-default ticket price for its entire existence — and pricing is documented above
-as worth about $5M a season. That, not the cost model, is why 22 of 72 programs
-drift insolvent over five seasons. Fixing it means extending the bounded weekly
-business knowledge view, which is its own slice.
+**Rivals price by cohort now.** ~~The AI issues sponsorship, booster and
+facility commands and nothing else on the business side.~~ Fixed — see "Rivals
+price by cohort" below. The claim that this was why 22 of 72 programs drifted
+insolvent was **wrong**, and measuring it is what showed that: fixing pricing
+moved the count from 22 to 19.
 
 **The top still accumulates.** POWER budgets grow about 2.5x over four seasons.
 It is *earned* now rather than automatic — winning pays and losing costs — but
 whether that is a problem depends on rivals spending it on NIL, which is the
 same open item.
+
+
+## Rivals price by cohort
+
+Seventy-one programs ran on their creation ticket price for their entire
+existence, because the rival planner issued sponsorship, booster and facility
+commands and nothing else on the business side — while pricing is measured
+above as worth about $5M a season.
+
+**A posture per cohort, not a decision per week.** `fanElasticity` takes exactly
+five values, one per program character, so this is five postures across
+seventy-two programs: `pricingPosture(elasticity)` returns a standing multiple
+of fair value, `selectTicketPrice` issues it in week one only, and no week after
+that pays to think about pricing again. One comparison a season per program
+instead of a weekly optimisation, which is what makes it affordable at league
+size. A test asserts week two produces no pricing commands at all.
+
+| cohort | elasticity | posture | price | as × fair |
+|---|---|---|---|---|
+| Diehard | 0.35 | 1.180 | $38 → $60 | 1.17× |
+| Blueblood | 0.60 | 1.124 | $52 → $69 | 1.13× |
+| Developer | 0.80 | 1.079 | $35 → $53 | 1.07× |
+| Talent magnet | 1.00 | 1.034 | $35 → $51 | 1.06× |
+| Front-runner | 1.60 | 0.900 | $34 → $42 | 0.91× |
+
+**Competent, not optimal.** The band is `0.90–1.18`, deliberately inside the
+`0.86x–1.24x` the real optimum spans. A rival that prices perfectly makes the
+player's own pricing worth nothing relative to the league, so there is room to
+beat them at both ends.
+
+### The insolvency claim was wrong, and measuring it is what showed that
+
+This work was justified on the grounds that unpriced rivals were why 22 of 72
+programs drifted insolvent. They were not. Measured after:
+
+| | before pricing | after |
+|---|---|---|
+| programs insolvent by season 5 | 22 of 72 | **19 of 72** |
+| LOW weekly net | −$55K | **−$12K** |
+| MID / POWER weekly net | +$213K / +$463K | +$220K / +$576K |
+
+Pricing helps every tier proportionally, which means it helps the biggest gates
+most in absolute terms — POWER budgets grew *faster* after the fix, not slower.
+
+The real cause is the opening balance. A LOW program holds $1.5M against a
+$1.1M weekly turnover — about a week and a half of operating cash — so a drift
+of roughly $320K a season takes it under in five years even though its weekly
+line is close to break-even. Whether that is wrong depends on whether a
+low-tier program run by nobody in particular *should* slowly fail; the opening
+budgets are career-path constants and have never been re-tuned against a derived
+cost model. Left as a decision rather than quietly changed.
 

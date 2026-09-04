@@ -9,9 +9,14 @@ import {
   mediaRights,
   operatingCost,
   stadiumCapacity,
+  fairTicketPrice,
+  pricingPosture,
   FACILITY_UPGRADE_COST,
-  OPERATING_SHARE
+  OPERATING_SHARE,
+  RIVAL_PRICING_CEILING,
+  RIVAL_PRICING_FLOOR
 } from "../packages/simulation/dist/index.js";
+import { planWeeklyCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, count = 24) => beginSeason(createFictionalLeague(seed, count));
 const capacityOf = (program) => stadiumCapacity(program.facilities.STADIUM);
@@ -139,5 +144,62 @@ test("the weekly finance event still reconciles against the budget it moved", ()
   for (const [programId, net] of nets) {
     const moved = result.state.programs[programId].budget - before[programId];
     assert.equal(moved, net, `${programId}: the budget moved by something the finance event did not report`);
+  }
+});
+
+test("every rival cohort prices its tickets, and prices them differently", () => {
+  // The defect: the rival planner issued sponsorship, booster and facility
+  // commands and nothing else on the business side, so seventy-one programs ran
+  // on their creation price for their entire existence while pricing is worth
+  // about $5M a season.
+  const before = beginSeason(createFictionalLeague("cohort-pricing", 24));
+  const opening = Object.fromEntries(Object.values(before.programs).map((p) => [p.id, p.ticketPrice]));
+  const after = advanceWeek(before, planWeeklyCommands(before)).state;
+
+  const moved = Object.values(after.programs).filter((p) => p.ticketPrice !== opening[p.id]);
+  assert.ok(moved.length > 20, `rivals must actually set a price, saw ${moved.length} of 24 move`);
+
+  const postureByCharacter = new Map();
+  for (const program of Object.values(after.programs)) {
+    const ratio = program.ticketPrice / fairTicketPrice(program, null, false);
+    assert.ok(
+      ratio >= RIVAL_PRICING_FLOOR - 0.05 && ratio <= RIVAL_PRICING_CEILING + 0.05,
+      `${program.id} priced at ${ratio.toFixed(2)}x fair, outside the cohort band`
+    );
+    postureByCharacter.set(program.character, ratio);
+  }
+  assert.ok(postureByCharacter.size >= 4, "the cohorts must be distinguishable, not one league-wide price");
+  const diehard = postureByCharacter.get("DIEHARD");
+  const frontrunner = postureByCharacter.get("FRONTRUNNER");
+  assert.ok(
+    diehard > frontrunner,
+    `a loyal base absorbs a higher price than a fickle one: ${diehard?.toFixed(2)} vs ${frontrunner?.toFixed(2)}`
+  );
+});
+
+test("the pricing posture is a cohort lookup, not a weekly search", () => {
+  // The cost argument for the whole design: one command a season per program,
+  // not one a week. A second week must produce no further pricing commands.
+  let state = beginSeason(createFictionalLeague("cohort-cost", 24));
+  const week1 = planWeeklyCommands(state).filter((c) => c.type === "SET_TICKET_PRICE");
+  assert.ok(week1.length > 20, "week one sets the standing price");
+  state = advanceWeek(state, planWeeklyCommands(state)).state;
+  const week2 = planWeeklyCommands(state).filter((c) => c.type === "SET_TICKET_PRICE");
+  assert.equal(week2.length, 0, "and no week after it pays to think about pricing again");
+});
+
+test("rivals price competently rather than optimally", () => {
+  // A rival that prices perfectly makes the player's own pricing worth nothing
+  // relative to the league. The band is deliberately inside the 0.86x-1.24x the
+  // real optimum spans, so there is room to beat them at both ends.
+  assert.ok(RIVAL_PRICING_FLOOR > 0.86, "there is room to undercut a front-runner");
+  assert.ok(RIVAL_PRICING_CEILING < 1.24, "and room to out-charge a diehard");
+  assert.ok(pricingPosture(0.35) > pricingPosture(1.6), "an inelastic base carries a higher price");
+  for (const elasticity of [0, 0.35, 0.8, 1.6, 5]) {
+    const posture = pricingPosture(elasticity);
+    assert.ok(
+      posture >= RIVAL_PRICING_FLOOR && posture <= RIVAL_PRICING_CEILING,
+      `elasticity ${elasticity} produced ${posture}, outside the band`
+    );
   }
 });

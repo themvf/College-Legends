@@ -34,7 +34,7 @@ import {
   weeklyScoutingOutput,
   WORTH_SCOUTING
 } from "./department.js";
-import { activeSponsorship, advertisingReach, createSponsorshipProgramState, DEFENSIVE_PRESETS, developmentCandidates, fairTicketPrice, matchingPreset, MAXIMUM_TICKET_PRICE, MAXIMUM_WEEKLY_ADVERTISING, MINIMUM_TICKET_PRICE, OFFENSIVE_PRESETS, pricingGoodwill, projectGate, projectSponsorshipOffer, sponsorshipMarketValue, sponsorshipPayment } from "./business.js";
+import { pricingPosture, RIVAL_PRICING_CEILING, RIVAL_PRICING_FLOOR, activeSponsorship, advertisingReach, createSponsorshipProgramState, DEFENSIVE_PRESETS, developmentCandidates, fairTicketPrice, matchingPreset, MAXIMUM_TICKET_PRICE, MAXIMUM_WEEKLY_ADVERTISING, MINIMUM_TICKET_PRICE, OFFENSIVE_PRESETS, pricingGoodwill, projectGate, projectSponsorshipOffer, sponsorshipMarketValue, sponsorshipPayment } from "./business.js";
 import { MAXIMUM_REPS_PER_SIDE, TRAINING_CAMP_CONDITIONING_RISK, TRAINING_CAMP_INSTALL_BONUS, TRAINING_CAMP_INSTALL_RISK, TRAINING_CAMP_WEEKS, planExecution, repsFatigue, staffBuyout, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
 import { foldSeasonStats } from "./persistence.js";
 import { jobReview, startingSecurity } from "./tenure.js";
@@ -179,6 +179,9 @@ export {
   DEFENSIVE_PRESETS,
   developmentCandidates,
   fairTicketPrice,
+  pricingPosture,
+  RIVAL_PRICING_CEILING,
+  RIVAL_PRICING_FLOOR,
   matchingPreset,
   MAXIMUM_TICKET_PRICE,
   MAXIMUM_WEEKLY_ADVERTISING,

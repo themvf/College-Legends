@@ -209,6 +209,37 @@ export function fairTicketPrice(
 }
 
 /**
+ * Where a rival prices its tickets, as a multiple of the fair price, from how
+ * elastic its following is.
+ *
+ * The defect this closes: the rival planner issued sponsorship, booster and
+ * facility commands and nothing else on the business side, so every one of the
+ * seventy-one programs the player does not run priced at whatever it was
+ * created with, for its entire existence — while pricing is measured elsewhere
+ * in this file as worth about $5M a season. Rivals were leaving that on the
+ * table and drifting insolvent for it.
+ *
+ * **A posture per cohort rather than a decision per week.** Fan elasticity takes
+ * exactly five values, one per program character, so this is five postures
+ * across seventy-two programs: one lookup a season instead of a weekly
+ * optimisation, which is the whole reason it is affordable at league size.
+ *
+ * Deliberately narrower than the 0.86x-1.24x band the optimum actually spans.
+ * A rival that prices perfectly makes the player's own pricing worth nothing
+ * relative to the league, so rivals are competent rather than optimal and there
+ * is room to beat them at both ends.
+ */
+export const RIVAL_PRICING_FLOOR = 0.90;
+export const RIVAL_PRICING_CEILING = 1.18;
+const ELASTICITY_RANGE = { low: 0.35, high: 1.6 } as const;
+
+export function pricingPosture(fanElasticity: number): number {
+  const span = ELASTICITY_RANGE.high - ELASTICITY_RANGE.low;
+  const position = clamp((fanElasticity - ELASTICITY_RANGE.low) / span, 0, 1);
+  return RIVAL_PRICING_CEILING - position * (RIVAL_PRICING_CEILING - RIVAL_PRICING_FLOOR);
+}
+
+/**
  * How demand responds to price. Charging under the fair price fills seats but
  * leaves money on the table; charging over it empties them. The curve is
  * deliberately gentle near the fair price so small adjustments are a nudge
