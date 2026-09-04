@@ -22,9 +22,18 @@ ROSTER_REVIEW ──beginSeason()──► REGULAR_SEASON ──week > 14──�
 
 | phase | what is legal |
 |---|---|
-| `ROSTER_REVIEW` | scheme, staff hiring, marquee scheduling, depth chart |
+| `ROSTER_REVIEW` | scheme, staff hiring, marquee scheduling, depth chart, and the standing weekly priorities |
 | `REGULAR_SEASON` | the weekly loop (below) |
 | `OFFSEASON` | one step at a time, in a fixed order |
+
+**Weekly priorities are standing, so they are legal in the preseason.** This row
+used to stop at "depth chart", and issue 2026-09-04-02 was filed partly against
+it. Measured: `SET_WEEK_FOCUS` commits during `ROSTER_REVIEW` with status `DONE`
+and emits `WEEK_FOCUS_SET`. That is correct — priorities carry over rather than
+being re-entered every week, so choosing them before the opener is a real
+decision and not an out-of-phase one. `SET_SCOUTING_TARGET` is accepted by the
+phase too; it is refused only when the named opponent is not on the remaining
+schedule, which is a schedule reason rather than a phase one.
 
 **Engine entry points.** These are the only ways state advances:
 

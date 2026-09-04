@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   AddressableRng,
   advanceWeek,
+  advanceOffseasonStep,
   beginSeason,
   createFictionalLeague,
   prepareWeek,
@@ -1218,6 +1219,53 @@ test("a roster suits some schemes better than others, and it is never an exact n
   const sharp = rosterSchemeFit(roster, "OFFENSE", 0.95)[0];
   assert.ok(sharp.high - sharp.low < vague.high - vague.low, "confidence must narrow the band");
   assert.ok(sharp.high > sharp.low, "and never collapse it");
+});
+
+test("a settled roster does not invert its scheme fit over one offseason", async () => {
+  // The takeover screen is read once a year, and a cold player read it twice:
+  // an offense that scored 66–76% "Good fit" in the opening preseason came back
+  // at 19–29% "Wrong personnel" a season later, with no explanation available
+  // anywhere in the game. They could not tell graduation from a bug.
+  //
+  // It was neither. The comparative scale amplified every roster by a flat
+  // ×3.2, which is right for the freshly generated roster it was calibrated on
+  // — internally uniform, raw scores within a few points — and saturating for
+  // one that a season of development, graduation, the portal and a recruiting
+  // class has separated. Measured over these 24 programs before the cap: the
+  // displayed spread went 18 → 70, the program's own scheme moved a median of
+  // 30 points, and 19 of 48 programs went from Good fit or Built for it
+  // straight to Wrong personnel.
+  const bands = ["Wrong personnel", "Workable", "Good fit", "Built for it"];
+  const ownFit = (state) => Object.fromEntries(Object.values(state.programs).map((program) => {
+    const ordered = rosterSchemeFit(programRoster(state, program.id), "OFFENSE", 0.72);
+    const mine = ordered.find((fit) => fit.scheme === program.schemeIdentity.offense);
+    return [program.id, { expected: mine.expected, verdict: mine.verdict, spread: ordered[0].expected - ordered.at(-1).expected }];
+  }));
+
+  let state = beginSeason(createFictionalLeague("fd1", 24));
+  const before = ownFit(state);
+  while (state.phase === "REGULAR_SEASON") state = advanceWeek(state, planWeeklyCommands(state)).state;
+  while (state.phase === "OFFSEASON") state = advanceOffseasonStep(state).state;
+  const after = ownFit(state);
+
+  const ids = Object.keys(before);
+  const moves = ids.map((id) => Math.abs(after[id].expected - before[id].expected)).sort((a, b) => a - b);
+  assert.ok(
+    moves[Math.floor(moves.length / 2)] <= 15,
+    `a year should not rewrite what the roster is built for (median move ${moves[Math.floor(moves.length / 2)]})`
+  );
+  for (const id of ids) {
+    const jump = Math.abs(bands.indexOf(after[id].verdict) - bands.indexOf(before[id].verdict));
+    assert.ok(jump <= 1, `${id} jumped ${before[id].verdict} → ${after[id].verdict} in one offseason`);
+  }
+
+  // And the cap must not flatten the opening screen, which is the whole reason
+  // the amplification exists: an unspread screen cannot say what a roster is for.
+  const openingSpreads = ids.map((id) => before[id].spread).sort((a, b) => a - b);
+  assert.ok(
+    openingSpreads[Math.floor(openingSpreads.length / 2)] >= 12,
+    "the opening preseason must still separate the schemes"
+  );
 });
 
 test("opening rosters have real depth-chart gaps and character", () => {

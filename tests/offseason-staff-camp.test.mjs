@@ -9,6 +9,7 @@ import {
   playerInjuryRisk,
   staffBuyout,
   staffCandidatesFor,
+  coachSchemeFit,
   BUYOUT_SALARY_FRACTION,
   TRAINING_CAMP_INSTALL_BONUS,
   TRAINING_CAMP_WEEKS
@@ -173,4 +174,41 @@ test("a camp focus sent to the wrong step is refused", () => {
   const rejection = result.events.find((event) => event.type === "COMMAND_REJECTED");
   assert.ok(rejection);
   assert.match(rejection.reason, /signing day/i);
+});
+
+test("every coaching market holds somebody who runs what the program runs", () => {
+  // The dashboard raises a REQUIRED item on a coordinator whose scheme fit is
+  // under 0.78 — "replace him, or change what you run" — and scheme is only
+  // changeable in the preseason. So if the market cannot beat that same
+  // threshold, neither branch of the instruction can be taken and the item
+  // stands for the rest of the career, which is what a cold player hit.
+  //
+  // Measured across these six leagues before the fix: 5 of 50 flagged posts
+  // (10%) had no reachable candidate clearing 0.78, and 3 (6%) had nobody
+  // better than the incumbent at all. Systematic, not a property of one seed —
+  // each candidate drew his schemes independently and uniformly, so with six
+  // candidates a program could simply come up empty.
+  let flagged = 0;
+  for (const seed of ["m1", "m2", "m3", "m4", "m5", "m6"]) {
+    const state = createFictionalLeague(seed, 24);
+    for (const member of Object.values(state.staff)) {
+      if (member.role !== "OFFENSIVE_COORDINATOR" && member.role !== "DEFENSIVE_COORDINATOR") continue;
+      const program = state.programs[member.programId];
+      const reachable = staffCandidatesFor(state, program.id, member.id)
+        .filter((candidate) => !candidate.unavailableReason);
+      assert.ok(
+        reachable.some((candidate) => candidate.schemeFit >= 0.78),
+        `${program.name} can never resolve its ${member.role} — no reachable candidate coaches the scheme`
+      );
+      const incumbentFit = coachSchemeFit(member, program.schemeIdentity);
+      if (incumbentFit >= 0.78) continue;
+      flagged += 1;
+      assert.ok(
+        Math.max(...reachable.map((candidate) => candidate.schemeFit)) > incumbentFit,
+        `${program.name}'s ${member.role} is flagged with nobody better available`
+      );
+    }
+  }
+  // If nothing is ever flagged the assertions above are vacuous.
+  assert.ok(flagged > 0, "these seeds must actually raise the item this test is about");
 });

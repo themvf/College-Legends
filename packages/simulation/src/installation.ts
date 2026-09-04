@@ -331,7 +331,22 @@ export function staffCandidates(
       ? Math.round(clamp(rng.between(`${index}:reach-rating`, ceiling + 3, ceiling + 14), 40, 99))
       : Math.round(clamp(rng.between(`${index}:rating`, ceiling - 22, ceiling), 40, 99));
     const salary = staffSalary(rating, outgoing.role);
-    const schemePreference: SchemeIdentity = {
+    // One coach in every market runs what the program runs.
+    //
+    // Measured across six leagues before this existed: of the coordinator posts
+    // the dashboard flags REQUIRED — "he installs about 30% less of it than a
+    // coach who knows the scheme; replace him, or change what you run" — 10% had
+    // no reachable candidate clearing the same 0.78 fit the item is raised at,
+    // and 6% had nobody better than the incumbent at all. Scheme is only
+    // changeable in the preseason, so for those posts both branches of a
+    // REQUIRED instruction were unavailable and the item stood for the rest of
+    // the career. A briefing the player cannot act on teaches them to stop
+    // reading the briefing, which costs more than the item was ever worth.
+    //
+    // Index 0 is always reachable, and overriding him shifts nothing else:
+    // `AddressableRng` keys on the path rather than on call order, so the draws
+    // this skips were never feeding any other candidate.
+    const schemePreference: SchemeIdentity = index === 0 ? { ...identity } : {
       offense: OFFENSIVE_SCHEMES[Math.floor(rng.between(`${index}:offense`, 0, OFFENSIVE_SCHEMES.length - 0.0001))]!,
       defense: DEFENSIVE_SCHEMES[Math.floor(rng.between(`${index}:defense`, 0, DEFENSIVE_SCHEMES.length - 0.0001))]!
     };

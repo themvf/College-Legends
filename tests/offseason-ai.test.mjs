@@ -122,12 +122,24 @@ test("the league does not churn its entire coaching staff every single year", ()
     }
     state = advance(state).state;
   }
-  // Measured at 0.18 changes per program per year — a post turning over about
-  // every five seasons. The floor that matters is the upper one: at the old
-  // +8 threshold this ran to 41 changes, nearly one per program per year.
+  // Re-baselined from 0.4 when every coaching market gained a guaranteed
+  // on-scheme candidate, because the rival planner filters on scheme fit before
+  // it compares ratings: markets that previously offered nobody who fitted now
+  // offer one, so more posts have a candidate worth the buyout at all. Measured
+  // across six leagues after that change: 0.44 0.52 0.58 0.54 0.54 0.52, mean
+  // 0.52 — and this seed is the lowest of the six, so the old ceiling was being
+  // cleared by the effect rather than by noise.
+  //
+  // 0.52 changes per program per year over four posts is an average tenure near
+  // eight years, which is still longer than a real coordinator's. The 0.18 this
+  // used to measure was a post turning over roughly every twenty years, which
+  // was only that low because a third of the markets had nobody the planner
+  // would consider. The bound this test exists to hold is the upper one: at the
+  // old +8 rating threshold this ran to 41 changes, nearly one per program per
+  // year, and that is what "churns its entire staff" looks like.
   const perProgramPerYear = changes / programCount / 2;
   assert.ok(
-    perProgramPerYear < 0.4,
+    perProgramPerYear < 0.7,
     `a coaching change must clear the buyout to be worth it, saw ${perProgramPerYear.toFixed(2)} per program per year`
   );
 });

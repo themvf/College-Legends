@@ -203,6 +203,13 @@ function scoreDemands(roster: readonly Player[], demands: readonly SchemeDemand[
   return clamp(50 + (weighted / weight) * 3.4, 12, 94);
 }
 
+/**
+ * How far the best and worst scheme on the screen may sit from the middle of
+ * it. Sets the widest displayed spread at roughly twice this, which is the
+ * ~22–30 points the comparative scale was designed to show.
+ */
+export const MAXIMUM_FIT_DEVIATION = 15;
+
 export interface SchemeFit {
   scheme: OffensiveIdentity | DefensiveIdentity;
   label: string;
@@ -237,8 +244,28 @@ export function rosterSchemeFit(
   // takeover-screen estimate until slice 2 replaces it with weighted role
   // deficits and derived traits; slice 1 deliberately changes personnel only.
   const average = raw.reduce((total, value) => total + value, 0) / Math.max(1, raw.length);
+  // The amplification is capped rather than fixed.
+  //
+  // A flat ×3.2 was calibrated on a freshly generated roster, which is
+  // internally uniform: raw scores land within a few points of each other and
+  // need spreading before the screen can say what the roster is built for. One
+  // season of development, graduation, the portal and a recruiting class
+  // separates the rooms, and the same multiplier then drove every scheme into
+  // the clamps. Measured over 48 programs across two leagues: the displayed
+  // spread went from 18 points in the opening preseason to 70 a year later, the
+  // program's own scheme moved a median of 30 points, and 85% of programs
+  // changed verdict — 19 of 48 from "Good fit" or "Built for it" straight to
+  // "Wrong personnel", which is what a cold player met at their second takeover
+  // screen with no explanation available anywhere.
+  //
+  // Capping the gain leaves the opening preseason untouched, where the raw
+  // scores are tight enough that ×3.2 never binds, and stops a settled roster
+  // reading as a disaster. It is a monotone transform, so the ordering — the
+  // only part of this that `bestSchemeFor` consumes — is unchanged.
+  const deviation = Math.max(...raw.map((value) => Math.abs(value - average)));
+  const gain = deviation > 0 ? Math.min(3.2, MAXIMUM_FIT_DEVIATION / deviation) : 0;
   return schemes.map((scheme, index) => {
-    const centre = clamp(64 + (raw[index]! - average) * 3.2, 24, 94);
+    const centre = clamp(64 + (raw[index]! - average) * gain, 24, 94);
     const low = Math.round(clamp(centre - width / 2, 5, 99));
     const high = Math.round(clamp(centre + width / 2, 7, 99));
     return {

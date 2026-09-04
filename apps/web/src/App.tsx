@@ -189,6 +189,10 @@ function nextRequestId(): string { return `${Date.now()}-${Math.random().toStrin
 export function App(): ReactElement {
   const workerRef = useRef<Worker | undefined>(undefined);
   const playerProgramIdRef = useRef<ProgramId | undefined>(undefined);
+  // The phase the last response left the career in, so the setup flow can be
+  // reopened on the transition into roster review rather than on every reply
+  // that happens to arrive while it is open.
+  const phaseRef = useRef<GameState["phase"] | undefined>(undefined);
   const [game, setGame] = useState<GameView>();
   const [screen, setScreen] = useState<Screen>("ROSTER");
   const [weekTab, setWeekTab] = useState<WeekTab>();
@@ -245,7 +249,18 @@ export function App(): ReactElement {
       // Completing training camp returns to the same preseason setup flow used
       // at takeover. Without resetting this flag, later seasons skipped scheme
       // and staff setup even though the engine correctly entered roster review.
-      if (response.state.phase === "ROSTER_REVIEW") {
+      //
+      // Only on the way *in*, though. Testing it on every reply meant that any
+      // command answered while the preseason was still open — setting the
+      // week's priorities from the dashboard, putting the film room on a game —
+      // threw the player back to a takeover screen they had already finished,
+      // with no message. Nothing was lost, but a new player cannot tell that
+      // from a crash, and it was the dashboard's own REQUIRED instruction that
+      // sent them there.
+      const enteringRosterReview = phaseRef.current !== "ROSTER_REVIEW"
+        && response.state.phase === "ROSTER_REVIEW";
+      phaseRef.current = response.state.phase;
+      if (enteringRosterReview) {
         setSetupDone(false);
         setScreen("ROSTER");
       }
@@ -2827,11 +2842,16 @@ function JobStanding({ game }: { game: GameView }): ReactElement | null {
   const played = program.wins + program.losses;
   if (played < MEANINGFUL_RECORD) return null;
   const mandate = program.championshipDeadline ?? null;
-  const pressured = review.verdict === "HOT_SEAT"
-    || review.verdict === "FINAL_WARNING"
-    || review.verdict === "FIRED";
-  if (!pressured && mandate === null) return null;
 
+  // This used to render only while the job was in trouble or carried a mandate,
+  // on the reasoning that a permanent status line would be noise through the
+  // many seasons where nothing is wrong. That optimised for quiet at the cost of
+  // the thing the banner exists for: a number nobody has ever seen cannot warn
+  // anybody. A cold player went 10–3 and met their security score for the first
+  // time in February, when the board announced it had moved from 65 to 96 —
+  // a good verdict, and still a surprise, because they had not known they were
+  // being graded. The band shows from a meaningful record onward whatever it
+  // says; only its tone changes.
   const tone = review.verdict === "FIRED" || review.verdict === "FINAL_WARNING" ? "critical"
     : review.verdict === "HOT_SEAT" ? "warning"
       : "neutral";
@@ -2841,12 +2861,17 @@ function JobStanding({ game }: { game: GameView }): ReactElement | null {
       ? "One more year like this and you are gone."
       : review.verdict === "HOT_SEAT"
         ? "You are on the hot seat."
-        : `${mandate} ${mandate === 1 ? "season" : "seasons"} to win a title, or the job is forfeit.`;
+        : review.verdict === "WATCHED"
+          ? "The board is watching this one."
+          : review.verdict === "EXTENDED"
+            ? "A year like this puts an extension on the table."
+            : "The board has no questions about the job.";
 
   return <p className={`job-standing ${tone}`}>
     <strong>{jobVerdictLabel(review.verdict)}.</strong> {headline}
     {" "}Finish on this pace, {review.wins}–{review.losses}, and the board has you at {review.securityAfter}
     {review.securityAfter === review.securityBefore ? ", unchanged" : ` from ${review.securityBefore}`}.
+    {mandate !== null && ` You have ${mandate} ${mandate === 1 ? "season" : "seasons"} to win a title, or the job is forfeit.`}
   </p>;
 }
 
