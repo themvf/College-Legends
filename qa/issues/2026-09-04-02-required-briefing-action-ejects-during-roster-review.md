@@ -4,7 +4,7 @@
 |---|---|
 | **ID** | 2026-09-04-02 |
 | **Severity** | P2 |
-| **Status** | open |
+| **Status** | fixed |
 | **Area** | Weekly priorities · Career loop / phases |
 | **Found by** | new-player-tester |
 | **Found in** | `710251b` |
@@ -64,11 +64,35 @@ as a crash to someone who cannot tell the difference.
 
 ## Diagnosis
 
-*Hypothesis.* The briefing is generated without a phase guard, so an item whose
-destination is only valid in `REGULAR_SEASON` is offered during `ROSTER_REVIEW`.
-The re-render to the takeover screen is consistent with `App.tsx` returning
+*Half right.* The re-render was correctly identified: `App.tsx` returns
 `<SetUpProgram>` whenever `phase === "ROSTER_REVIEW" && !setupDone`.
 
-Note `weeklyBriefing` is already called with `{ excludeWeeklyPriorities: true }`
-on the dashboard, and the priority item comes from `weeklyPriorityDecision`
-instead — so the guard, if added, belongs there.
+The missing phase guard was not the cause, and the fix is not where the issue
+suggested. Measured: `SET_WEEK_FOCUS` commits during `ROSTER_REVIEW` with status
+`DONE` and emits `WEEK_FOCUS_SET`. The engine accepts it, and correctly so —
+priorities are standing rather than re-entered every week, so choosing them
+before the opener is a real decision. The action was never out of phase.
+
+`game-rules.md` said it was, which is why the issue was framed that way. That
+row has been corrected; a document the testers treat as ground truth was wrong.
+
+## Fix
+
+The setup flow reopened on *every* worker reply whose state was in
+`ROSTER_REVIEW`, rather than on the transition into it. The reset exists so
+completing training camp reopens the preseason flow in later seasons; testing
+the phase instead of the change meant any command answered while the preseason
+was still open threw the player back to the start of it.
+
+`App.tsx` now tracks the previous phase and reopens setup only on the way in.
+
+## Verified fixed
+
+The reporter's exact repro, re-run in the browser against the dev server:
+
+| | before | after |
+|---|---|---|
+| `h1` after "Make it a priority" | `"What are you going to run?"` | `"Blue Ridge Commonwealth Foxhounds"` |
+| ejected to takeover | yes | **no** |
+| priority actually committed | — | yes, briefing panel updates |
+| page errors | none | none |

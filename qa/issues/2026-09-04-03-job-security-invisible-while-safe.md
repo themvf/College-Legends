@@ -4,7 +4,7 @@
 |---|---|
 | **ID** | 2026-09-04-03 |
 | **Severity** | P2 |
-| **Status** | open |
+| **Status** | fixed |
 | **Area** | Board review / firing · Onboarding |
 | **Found by** | new-player-tester |
 | **Found in** | `710251b` |
@@ -78,3 +78,25 @@ argues the code should: a number nobody has ever seen cannot warn anybody.
 The reporter also notes this looks like an over-correction of
 `PLAYABILITY_PASS_2026-08` #2, which retired job security from the header
 *because firing did not exist yet*. Firing exists now and nothing was restored.
+
+## Fix
+
+The gate is gone. `JobStanding` renders from `MEANINGFUL_RECORD` onward whatever
+the verdict says; only the tone changes. `EXTENDED`, `SECURE` and `WATCHED` have
+headlines of their own, and a championship mandate is now appended to whichever
+band is showing rather than being the only reason a safe coach saw the banner
+at all.
+
+The `MEANINGFUL_RECORD` floor stays. It is a different rule solving a different
+defect — at 0–0 every coach in the league projects as missing the target by the
+whole target, which is what once put a fresh hire on a final warning in week one.
+
+## Verified fixed
+
+Driven in the browser, Program Riser, undefeated through week 7:
+
+> **Extension on the table.** A year like this puts an extension on the table.
+> Finish on this pace, 12–0, and the board has you at 100 from 65.
+
+Present at `.job-standing` on the dashboard with no page errors. Before the fix
+the element was absent entirely at the same point in the same career.

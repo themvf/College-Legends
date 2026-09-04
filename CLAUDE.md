@@ -2235,3 +2235,129 @@ particular *should* bleed, and that is where the coaching market gets its churn
 story that happens once in a dynasty instead of a third of the league quietly
 dying inside one career.
 
+
+
+## What the first QA cycle found
+
+Two AI agents — a cold-read comprehension pass and a determinism baseline — were
+run against `710251b` and produced four defects. All four are fixed. The pattern
+in them is worth more than any one fix: **three of the four were invisible to a
+passing test suite, and two contradicted something that was written down.**
+
+### The event log is a record, not gameplay state
+
+A save trims `eventHistory` from ~10,000 rows to 400, which is deliberate and is
+most of how a two-season career fits in 3 MB. That was safe until the rival
+planner started deriving `lastWeeklyNet` from the log to decide whether a program
+could carry a new facility's upkeep. After a load every program read 0, and
+**six of twenty-four made a different facility decision purely because the game
+had been saved.** Divergence then compounds every season.
+
+`Program.lastWeeklyNet` is written by the weekly finance step now, on the line
+that moves the budget. Cheaper than the backward pass it replaces, and it
+survives the trim.
+
+**The existing round-trip test passed through all of this**, and how it did is
+the more useful lesson. It advanced one week and copied `loaded.eventHistory`
+onto the in-memory state before comparing — so both sides read the same trimmed
+log and agreed about a number that was wrong in both. It plays a full season on
+each side now, each with its own log.
+
+Two further drafts of the companion test were thrown away for passing vacuously:
+comparing the planned commands after a real save proves nothing, because at most
+weeks every rival declines a facility anyway and two empty lists match. The
+assertion that holds is on the planner's *view* — identical with the log emptied
+— which is corrupted at every seed and every week. A test that has not been run
+against the defect is not a regression test.
+
+### A briefing you cannot act on
+
+Two separate defects, both inside a new player's first ten minutes, both the
+game instructing them to do something.
+
+**The preseason setup flow reopened on the wrong condition.** It reset whenever a
+worker reply arrived with the career in `ROSTER_REVIEW`, rather than on the
+transition into it — so following the dashboard's own REQUIRED "Set priority"
+re-rendered the takeover screen the player had already finished, with no message.
+Nothing was lost. A new player cannot tell that from a crash, and the reporter
+assumed they had broken the game.
+
+The issue filed this as a missing phase guard on a command that should not have
+been offered. Measured: `SET_WEEK_FOCUS` commits during `ROSTER_REVIEW` with
+status `DONE`. Priorities are standing, so setting them before the opener is a
+real decision, and `game-rules.md` — which the QA agents read as ground truth —
+was the thing that was wrong.
+
+**Every coaching market now holds somebody who runs what the program runs.**
+Candidates drew their schemes independently and uniformly with no coverage
+guarantee. Measured across six leagues, over the coordinator posts the dashboard
+actually flags REQUIRED:
+
+| | before | after |
+|---|---|---|
+| flagged posts with no reachable candidate clearing the item's own 0.78 fit | 5 of 50 (10%) | **0** |
+| flagged posts with nobody better than the incumbent | 3 (6%) | **0** |
+
+Scheme is only changeable in the preseason, so for one flagged post in ten
+*both* branches of "replace him, or change what you run" were unavailable and the
+item stood for the rest of the career. The reporter: *"This is where I stopped
+reasoning and started clicking Advance week."* An unresolvable item does not cost
+you the item — it costs you the briefing, which is the game's answer to "what do
+I do now".
+
+That change tripled league coaching churn, 0.18 → a mean **0.52** changes per
+program per year across six leagues, because the rival planner filters on scheme
+fit before it compares ratings. Recorded rather than absorbed: 0.52 across four
+posts is an average tenure near eight years, still longer than a real
+coordinator's, and the 0.18 was only that low because a third of the markets had
+nobody worth considering.
+
+### A number nobody has seen cannot warn anybody
+
+Job security rendered only while the job was already in trouble, on the reasoning
+that a permanent status line would be noise through the many seasons where
+nothing is wrong. That optimised for quiet at the cost of the thing the banner
+exists for. A cold player went 10–3 and met their security score for the first
+time in February, when the board announced it had moved from 65 to 96 — a *good*
+verdict, and still a surprise, because they had not known they were being graded.
+
+The band shows from a meaningful record onward whatever it says; only the tone
+changes. The `MEANINGFUL_RECORD` floor stays, because it solves a different
+defect: at 0–0 every coach projects as missing the target by the whole target,
+which once put a fresh hire on a final warning in week one.
+
+### The fit screen was saturating, not describing the roster
+
+Found while investigating the item above, and the larger of the two. A cold
+player's offense read 66–76% "Good fit" at the first takeover screen and 19–29%
+"Wrong personnel" at the second, with no explanation available anywhere. Measured
+over 48 programs across two leagues, that was the median case:
+
+| over one offseason | before | after |
+|---|---|---|
+| median move in the program's own scheme fit | 30 points | **9** |
+| programs whose verdict changed | 41 of 48 (85%) | 34, **every one a single adjacent band** |
+| "Good fit"/"Built for it" → "Wrong personnel" | **19** | **0** |
+| displayed spread, opening preseason | 18 | 18 |
+| displayed spread, one season later | **70** | 27 |
+
+The roster was not the cause. `rosterSchemeFit` amplified each roster's deviation
+from its own mean by a flat ×3.2 — right for the freshly generated roster it was
+calibrated on, which is internally uniform, and saturating for one that a season
+of development, graduation, the portal and a class has separated. Every scheme
+was driven into the 24/94 clamps.
+
+The gain is capped now. The opening screen is untouched, because ×3.2 never binds
+there; a settled roster stops reading as a disaster. It is a monotone transform,
+so the ordering is unchanged — and ordering is all `bestSchemeFor` consumes,
+which is why a display defect could be corrected without changing what a single
+program runs.
+
+### What this says about the process
+
+The engine suite was green for every one of these. Three needed the app driven,
+one needed the engine measured at league size, and none would have been found by
+reading the code — the two that looked most like reading-the-code defects had
+causes that reading the code got wrong. The QA framework in `agents/` and `qa/`
+exists for that reason, and its first rule is the one that keeps earning: measure,
+do not assert.
