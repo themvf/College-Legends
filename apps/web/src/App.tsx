@@ -63,6 +63,7 @@ import {
   SQUAD_COST_PER_SCHOLARSHIP,
   mediaRights,
   operatingCost,
+  opponentValue,
   jobReview,
   jobVerdictLabel,
   startingLineup,
@@ -1423,12 +1424,24 @@ function Schedule({ game, pending, onQueue }: { game: GameView; pending: GameCom
   return <section className="schedule-layout">
     {game.state.phase === "ROSTER_REVIEW" && <article className="panel marquee-planner"><p className="eyebrow">Preseason business decision</p><h2>Bring a Top-25 program to your stadium</h2>
       <p className="muted">Pay an appearance guarantee now to replace one cross-division opponent. An upset creates a major national story; a loss causes only a small recognition dip. The ranked visitor also lifts attendance, tickets, and concessions.</p>
+      {/* This was the only decision in the game with a posted price and no
+          posted payoff — a cold player declined it because they could not price
+          it, five minutes after the scouting board had told them beating a
+          ranked side was worth "2,618 fans and 19 points of national buzz". The
+          per-option lines below use that same function, so the two screens
+          cannot value the same fixture differently. It also has to say that a
+          harder schedule works against the win target the dashboard states. */}
+      <p className="muted">A Top-25 visitor is a harder game than the one it replaces, so it works against the {seasonExpectation(game.state, program.id)?.target ?? 0} wins the board is asking for. What you are buying is the crowd it brings and the story a win makes.</p>
       <p className="muted"><strong>These offers expire the moment you accept the roster</strong> — this is the only window to buy one. The guarantee comes out of your {money(program.budget)} budget on the spot.</p>
       <div className="marquee-options">{options.slice(0, 8).map((option) => {
         const opponent = game.state.programs[option.opponentProgramId]!;
         const selected = queued?.opponentProgramId === opponent.id;
+        const payoff = opponentValue(program, opponent, Object.keys(game.state.programs).length);
+        const share = option.guarantee / Math.max(1, program.budget);
         return <button className={selected ? "selected" : ""} key={opponent.id} onClick={() => onQueue({ type: "SCHEDULE_MARQUEE_HOME_GAME", programId: program.id, opponentProgramId: opponent.id })}>
-          <span>#{option.rank} {opponent.name}</span><small>Week {option.week} · {money(option.guarantee)} guarantee</small>
+          <span>#{option.rank} {opponent.name}</span>
+          <small>Week {option.week} · {money(option.guarantee)} guarantee, {Math.round(share * 100)}% of your budget</small>
+          <small>{payoff.note}</small>
         </button>;
       })}</div>
       {!options.length && <p className="muted">No affordable compatible Top-25 date is available.</p>}
@@ -2490,11 +2503,26 @@ function WeekDecisions({ game, pending, onQueue }: {
       <h2>{!atHome ? "Not this week" : spend > 0 ? `${money(spend)} this week` : "No spend"}</h2>
       <input type="range" min={0} max={MAXIMUM_WEEKLY_ADVERTISING} step={5_000} value={spend} disabled={!atHome}
         onChange={(event) => onQueue({ type: "SET_ADVERTISING", programId, spend: Number(event.target.value) })} />
-      <div className="snapshot-list">
-        <p><span>New fans this week</span><strong>{atHome ? gate.advertisingFans.toLocaleString() : "—"}</strong></p>
-        <p><span>Extra bodies in seats</span><strong>{atHome ? `${Math.max(0, gate.attendance - projectGate(program, opponent, capacity, false, price, 0).attendance).toLocaleString()}` : "—"}</strong></p>
-        <p><span>Net this week</span><strong>{atHome ? money(gate.net) : "$0"}</strong></p>
-      </div>
+      {/* "Net this week" was the whole week's net — $2.5M whether marketing was
+          $0 or $150,000, so the one number that exists to price this decision
+          was rounded past it. What the slider is worth is the difference the
+          spend makes, which is what these three lines say. Marketing is
+          deliberately not weekly arbitrage: a big spend loses money on the day
+          and pays back through the followers it compounds, so the panel states
+          both rather than hiding the loss. */}
+      {(() => {
+        const unspent = projectGate(program, opponent, capacity, fixture?.matchupType === "MARQUEE", price, 0);
+        const extraGate = Math.max(0, (gate.ticketRevenue + gate.concessionRevenue) - (unspent.ticketRevenue + unspent.concessionRevenue));
+        const sameDay = extraGate - spend;
+        return <div className="snapshot-list">
+          <p><span>Extra bodies in seats</span><strong>{atHome ? `+${Math.max(0, gate.attendance - unspent.attendance).toLocaleString()}` : "—"}</strong></p>
+          <p><span>What they pay at the gate</span><strong>{atHome ? `+${money(extraGate)}` : "—"}</strong></p>
+          <p><span>Against a spend of</span><strong>{atHome ? money(spend) : "—"}</strong></p>
+          <p><span>On the day, that&rsquo;s</span><strong>{atHome ? (sameDay >= 0 ? `+${money(sameDay)}` : `−${money(Math.abs(sameDay))}`) : "—"}</strong></p>
+          <p><span>Followers it wins you</span><strong>{atHome ? `+${gate.advertisingFans.toLocaleString()}` : "—"}</strong></p>
+        </div>;
+      })()}
+      <p className="muted">Marketing rarely pays for itself on the day. What you are buying is the fan base, which raises every gate after this one.</p>
     </article>
 
     <article className="panel">
