@@ -681,3 +681,58 @@ are genuinely good. What is still missing is everything that spans more than sev
 recruiting is unreadable, the roster cliff is unannounced, job security is invisible until it
 is a verdict, the cost side of the ledger is one number, and season two opens by asking the
 hardest unevaluable question in the game.
+
+---
+
+# Disposition — 2026-09-04, after the fixes
+
+Written by the team that acted on this log, not by the reporter. The run above
+is unedited; this section says what was done about each finding and what a
+re-read should check.
+
+## Fixed
+
+| finding | what changed |
+|---|---|
+| **F1** eject during ROSTER_REVIEW | The setup flow reopened on every worker reply while in the phase rather than on the transition into it. Re-run in the browser: the exact repro no longer ejects. Issue 01/02. |
+| **F2** job security invisible | The band shows from a meaningful record onward whatever it says. Verified at week 7 of an undefeated season: "Extension on the table." |
+| **F3** roster cliff unannounced | `rosterOutlook` states leaving, incoming, and where that lands against the limit. Escalates when the class can no longer close — measured to never fire on a healthy class, and to fire in week eight on one that signs nobody. |
+| **F5** unfixable coordinator items | Every coaching market now holds a candidate who runs the program's scheme; measured at 10% of flagged posts having none before. The fit inversion behind it was a saturating display scale, now capped. |
+| **F5** (second half) the unevaluable scheme decision | `installIfScheme` posts, per option, what your coordinator would install it at — the number that was previously only ever shown for the scheme you already ran. |
+| **F6** marquee has no payoff | Each option carries the fans and press a win is worth, from the same function the scouting board uses, plus the guarantee as a share of budget and a note that it works against the win target. |
+| **F7** "Net this week" blind to $150K | Replaced with the marginal effect: extra bodies, extra gate, the spend, what it nets on the day, and the followers won. |
+| **F9** "all four phases" | Named on every card. |
+| **F11** "costs 45% of what he'd do" | States the remainder instead, which cannot be read backwards. |
+| **F13** undefined nouns | NIL expanded and explained; Stardom → Fame 0–100; Game risk → Injury risk this game; "room plan" replaced with what it means. |
+| **F16** development state reported two ways | A real bug: the panel's fallback was `x ? undefined : undefined`, so it never read committed state. |
+| **F17** count over a longer list | The heading counts what is listed and says separately how many are urgent. |
+| **F18** Budget vs In the bank | One name. |
+| **F19** "them" with no antecedent | Names the opponent. |
+| **F21** "on the road" with no fixture | Distinguishes a bye and the preseason from an away game. |
+| **F27** cost side is one number | `WEEKLY_FINANCES` carries the breakdown and the screen itemises it. A test asserts the parts sum to the total; weekly expenses are now rounded per line so they can. |
+
+Also fixed while here, not in the log: `projectedRecruitingOpenings` counted only
+`COMMITTED` prospects, so from the signing week the whole signed class vanished
+from the projection and the board reported filled slots as open. That is the
+number behind the log's "PROJECTED OPENINGS 21 (0 committed)".
+
+## Not fixed, and why
+
+| finding | why it is still open |
+|---|---|
+| **F4** recruiting is unreadable | The largest single piece of work in the project and already specified — build order step 5, "an offer, a price, and a percentage". Not something to patch. **This is the next thing to build.** |
+| **F8** portal bids have no odds | Same class as F4 and best done with it, since both are "post the percentage on a contested bid". |
+| **F10** "installed to 56%" of what | Partly addressed: the takeover screen now says what install means in words and posts it per scheme. Naming both ends of the band is still open. |
+| **F12** "MATTERS 43/100" | Still unlabelled in words. Cheap, and worth doing in the next pass. |
+| **F14** "22% dependable" about what | Unchanged. |
+| **F15** default worse than the recommendation | Half fixed. The film-room default is unchanged. The scheme default is **not** a defect — programs deliberately run one of their two best fits, and the screen now posts both numbers so the choice is readable. |
+| **F20** booster feed row title/body mismatch | Unchanged. |
+| **F22–F26** roster table, unnumbered sixth step, 30 repeated cards, booster affordance, fifteen nav destinations | Layout and information-architecture work. Worth one pass together rather than piecemeal. |
+
+## What a re-read should check
+
+The claim being made is that the *program* is now legible where only the *week*
+was. A second cold read should be able to answer, without help: how many players
+leave every year and what replaces them; what last week's money was spent on;
+whether the job is safe; and what switching scheme costs. It should still fail on
+recruiting — that is expected until F4 is built.
