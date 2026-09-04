@@ -196,7 +196,7 @@ export {
   ticketDemandMultiplier
 } from "./business.js";
 export type { GateProjection, SponsorshipPayment, SponsorshipProjection, StrategyPreset } from "./business.js";
-export { BUYOUT_SALARY_FRACTION, MAXIMUM_REPS_PER_SIDE, TRAINING_CAMP_CONDITIONING_RISK, TRAINING_CAMP_INSTALL_BONUS, TRAINING_CAMP_INSTALL_RISK, TRAINING_CAMP_WEEKS, planExecution, planInstaller, repsFatigue, staffBuyout, staffCard, staffModifiers, staffSalary } from "./installation.js";
+export { BUYOUT_SALARY_FRACTION, MAXIMUM_REPS_PER_SIDE, TRAINING_CAMP_CONDITIONING_RISK, TRAINING_CAMP_INSTALL_BONUS, TRAINING_CAMP_INSTALL_RISK, TRAINING_CAMP_WEEKS, planExecution, planInstaller, installIfScheme, repsFatigue, staffBuyout, staffCard, staffModifiers, staffSalary } from "./installation.js";
 export {
   filmGamesAvailable,
   preparationWeeklyPoints,

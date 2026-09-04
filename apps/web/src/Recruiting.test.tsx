@@ -14,9 +14,14 @@ describe("Recruiting War Room", () => {
     const game = fixture();
     render(<Recruiting game={game} locked={false} pending={[]} onQueue={() => undefined} />);
     expect(await screen.findByRole("heading", { name: "The War Room" })).toBeInTheDocument();
-    expect(screen.getByText("NIL capacity / week")).toBeInTheDocument();
-    expect(screen.getByText("NIL committed / week")).toBeInTheDocument();
+    expect(screen.getByText("Player pay (NIL) available")).toBeInTheDocument();
+    expect(screen.getByText("Player pay committed")).toBeInTheDocument();
     const copy = document.body.textContent ?? "";
+    // A cold player met "NIL" as a headline stat that the game never once
+    // expanded, alongside "projected openings" for something it never named.
+    expect(copy).toContain("Name, image and likeness");
+    expect(copy).toContain("Roster next season");
+    expect(copy).not.toContain("room plan");
     expect(copy).not.toContain("To Sign");
     expect(copy).not.toContain("/ yr");
     expect(copy).not.toContain("Class Rank");

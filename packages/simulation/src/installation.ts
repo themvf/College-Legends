@@ -1,6 +1,8 @@
 import type {
   GameState,
+  DefensiveIdentity,
   SchemeIdentity,
+  OffensiveIdentity,
   PlanExecution,
   Program,
   StaffCandidate,
@@ -115,6 +117,61 @@ export function planInstaller(
 }
 
 /**
+ * What your staff would install a scheme at, before a single rep.
+ *
+ * The takeover screen posts a roster fit for every scheme and an install
+ * percentage for the one you already run, and never relates them. A cold player
+ * met the worst decision in the game at the start of season two — stay on a
+ * 19–29% roster fit installed at 56%, or switch to an 89–99% fit installed at
+ * 48% — and described it as two numbers moving in opposite directions, in
+ * different units, with no exchange rate. Both numbers were on the screen; the
+ * second one was only ever shown for the incumbent scheme, so the cost of
+ * switching could not be read anywhere.
+ *
+ * Shares `staffModifiers`' arithmetic rather than repeating it, so the number
+ * posted per option is the number the engine would run.
+ */
+export function installIfScheme(
+  state: Readonly<GameState>,
+  programId: string,
+  side: "OFFENSE" | "DEFENSE",
+  scheme: OffensiveIdentity | DefensiveIdentity
+): number | null {
+  const program = state.programs[programId];
+  if (!program) return null;
+  const coordinator = Object.values(state.staff).find((member) =>
+    member.programId === programId && member.role === INSTALLER_ROLE[side]);
+  if (!coordinator) return null;
+  const identity: SchemeIdentity = side === "OFFENSE"
+    ? { ...program.schemeIdentity, offense: scheme as OffensiveIdentity }
+    : { ...program.schemeIdentity, defense: scheme as DefensiveIdentity };
+  return installCentre(
+    coordinator.rating,
+    focusShare(coordinator, "PREPARE"),
+    coachSchemeFit(coordinator, identity),
+    traitAptitude(coordinator.trait, "PREPARE"),
+    Math.max(0, program.facilities.TRAINING - 1) * 0.012
+  );
+}
+
+/**
+ * Where a coordinator's install band sits before reps. Extracted so the staff
+ * card and the scheme picker cannot drift: a card that disagrees with the engine
+ * breaks "payoffs are visible", and two copies of one formula is how that
+ * happens.
+ */
+function installCentre(
+  rating: number,
+  share: number,
+  fit: number,
+  prepAptitude: number,
+  facilityBonus: number
+): number {
+  const effective = Math.max(42, rating * (0.72 + clamp(share, 0, 1) * 0.28) * fit * prepAptitude);
+  return Math.round((0.3 + effective / 100 * 0.28 + facilityBonus) * 100);
+}
+
+/**
  * The execution band for one side of the plan. Reps raise it with diminishing
  * returns; a better installer raises it and narrows it, because good coaching is
  * more consistent as well as better.
@@ -208,22 +265,31 @@ export function staffModifiers(
   const share = context?.prepareShare ?? 1;
   const facilityBonus = context?.facilityBonus ?? 0;
   const prepAptitude = traitAptitude(member.trait, "PREPARE");
+  // Named, not counted. "All four phases" appeared on every staff card in the
+  // game and the four were never listed on any screen that used it, so a cold
+  // player read the most repeated phrase in the UI as four phases of nothing.
   const prep = (roleWeight: number): string =>
-    `+${(rating * roleWeight * share * prepAptitude / 100).toFixed(1)} to all four phases`;
+    `+${(rating * roleWeight * share * prepAptitude / 100).toFixed(1)} to your run game, pass game, run defense and pass defense`;
 
   if (member.role === "OFFENSIVE_COORDINATOR" || member.role === "DEFENSIVE_COORDINATOR") {
     const side = member.role === "OFFENSIVE_COORDINATOR" ? "offense" : "defense";
     const effective = Math.max(42, rating * (0.72 + clamp(share, 0, 1) * 0.28) * fit * prepAptitude);
     // Includes the weight-room term planExecution applies, so the posted
     // number is the number the engine will actually run.
-    const centre = Math.round((0.3 + effective / 100 * 0.28 + facilityBonus) * 100);
+    const centre = installCentre(rating, share, fit, prepAptitude, facilityBonus);
     const spread = Math.round(clamp(0.32 - effective / 100 * 0.16, 0.08, 0.32) * 100);
     const modifiers: StaffModifier[] = [
       { label: `Gets your ${side} installed to`, value: `${centre}% before practice reps` },
       { label: "Week to week, that swings", value: `±${Math.round(spread / 2)}%` },
       { label: "Game prep", value: prep(1.4) }
     ];
-    if (fit < 0.99) modifiers.push({ label: "Running a scheme that isn't his costs", value: `${Math.round((1 - fit) * 100)}% of what he'd do` });
+    // "Costs 45% of what he'd do" reads as "he delivers 45%". It means he loses
+    // 45%, and a cold player only worked that out by switching schemes and
+    // watching the number fall. Say the remainder, which cannot be read backwards.
+    if (fit < 0.99) modifiers.push({
+      label: "Coaching a scheme that isn't his",
+      value: `you get ${Math.round(fit * 100)}% of what he'd do in his own`
+    });
     return modifiers;
   }
   if (member.role === "HEAD_COACH") {

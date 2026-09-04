@@ -154,7 +154,7 @@ function RecruitingHud({ game, ledger, boardCount, rooms }: {
     <div className="war-room-brand">
       <p className="eyebrow">{program.abbreviation} recruiting command</p>
       <h1 id="war-room-title">The <span>War Room</span></h1>
-      <p>Build the class with verified intel, weekly resources, and the full recruiting trail in one place.</p>
+      <p>Build the class with verified intel, weekly resources, and the full recruiting trail in one place. Name, image and likeness money &mdash; NIL &mdash; is what you pay a recruit every week to sign, and it is charged for as long as he is on the roster.</p>
     </div>
     <div className="war-room-ledger" aria-label="Recruiting resource ledger">
       <LedgerItem label="Recruiting Points" value={String(ledger.pointsAvailable)} note={`+${ledger.weeklyPoints} next week${ledger.queuedPointSpend ? ` · ${ledger.queuedPointSpend} queued` : ""}`} />
@@ -171,8 +171,11 @@ function RecruitingHud({ game, ledger, boardCount, rooms }: {
       />
       <LedgerItem label="Visit weekends" value={`${ledger.visitsRemaining}/${MAX_VISITS_PER_SEASON}`} note="remaining this season" />
       <LedgerItem label="Scholarship offers" value={String(ledger.activeScholarshipOffers)} note={`${boardCount} prospects on board`} />
-      <LedgerItem label="NIL capacity / week" value={formatMoney(ledger.nilCapacity)} note={`${formatMoney(ledger.nilFree)} free`} />
-      <LedgerItem label="NIL committed / week" value={formatMoney(ledger.nilCommitted)} note={`${formatMoney(ledger.nilReserved)} reserved`} />
+      {/* "NIL" was a headline stat that the game never once expanded. It is
+          money paid to players for their name, image and likeness — the label
+          says so, and the panel below says what it buys. */}
+      <LedgerItem label="Player pay (NIL) available" value={formatMoney(ledger.nilCapacity)} note={`${formatMoney(ledger.nilFree)} a week still free`} />
+      <LedgerItem label="Player pay committed" value={formatMoney(ledger.nilCommitted)} note={`${formatMoney(ledger.nilReserved)} a week reserved`} />
     </div>
     {/* "project below the room plan" used a term the game defines nowhere. What
         it means is that the position group will not have enough bodies to field

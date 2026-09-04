@@ -75,6 +75,7 @@ import {
   MINIMUM_TICKET_PRICE,
   personnelLabel,
   planExecution,
+  installIfScheme,
   staffModifiers,
   staffCard,
   staffCandidatesFor,
@@ -765,6 +766,17 @@ function SetUpProgram({ busy, game, onPrepare, onDone }: {
         These guys are built to run <strong>{best.label}</strong> ({best.summary}). Going another direction
         isn't a mistake — it's a rebuild, and it'll cost you until you recruit the right kids.
       </p>
+      {/* Roster fit and install are the two halves of this decision and the
+          screen only ever posted the second one for the scheme you were already
+          running, so the cost of switching could not be read anywhere. Both are
+          on every option now: how well the players suit it, and how much of it
+          your coordinator would actually get installed. */}
+      <p className="muted">
+        <strong>Roster fit</strong> is how well these players suit the scheme. <strong>Installed</strong> is
+        how much of it your coordinator gets across in a week — he coaches one scheme himself, and
+        teaching somebody else's costs him. A great fit nobody can install is worse than a good one
+        your coordinator knows.
+      </p>
       <div className="plan-options">{fits.map((fit) =>
         <button className={chosen === fit.scheme ? "plan-option active" : "plan-option"} key={fit.scheme}
           disabled={busy}
@@ -774,7 +786,13 @@ function SetUpProgram({ busy, game, onPrepare, onDone }: {
           })}>
           <strong>{fit.label} · {fit.verdict}</strong>
           <span className="effect">{personnelSummary(side, fit.scheme)}</span>
-          <span className="effect fit-line">{fit.summary}</span>
+          <span className="effect fit-line">
+            Roster fit {fit.summary}
+            {(() => {
+              const install = installIfScheme(game.state, programId, side, fit.scheme);
+              return install === null ? "" : ` · your coordinator installs it to ${install}%`;
+            })()}
+          </span>
           <span className="effect">{fit.blurb}</span>
           <div className="execution-bar" aria-label={`${fit.label} roster fit`}>
             <span className="execution-band" style={{ left: `${fit.low}%`, width: `${Math.max(2, fit.high - fit.low)}%` }} />
@@ -962,7 +980,9 @@ function Dashboard({ game, screen, busy, error, pendingCommands, inFlightDecisio
       <Metric label="Record" value={`${program.wins}–${program.losses}`} />
       <Metric label="National rank" value={`#${program.nationalRank}`} />
       <Metric label="Fans" value={compactNumber(program.fanBase)} />
-      <Metric label="Budget" value={money(program.budget)} />
+      {/* Was "Budget" here and "In the bank" on the panel below it —
+          the same number under two names on one screen. */}
+      <Metric label="In the bank" value={money(program.budget)} />
       {/* Job security is retired from the header until the firing loop exists —
           the simulation never reads it, and a headline stat that nothing can
           move is a promise the game does not keep. seasonExpectation's win
@@ -1050,9 +1070,11 @@ function ProgramDashboard({ game, roster, inFlightDecision, onNavigate }: {
       {expectation && <p className="muted">{expectation.standing}</p>}
       <JobStanding game={game} />
       {nextGame && <p className="muted">
+        {/* "You haven't scouted them at all" had no antecedent in the panel —
+            a cold player had to open the schedule to learn who "them" was. */}
         {file && file.tiers.length > 0
-          ? `You've got ${file.tiers.length === 3 ? "a complete file" : "a partial file"} on them — what it reports is about ${file.confidence}% dependable.`
-          : "You haven't scouted them at all."}
+          ? `You've got ${file.tiers.length === 3 ? "a complete file" : "a partial file"} on ${opponent?.name ?? "them"} — what it reports is about ${file.confidence}% dependable.`
+          : `You haven't scouted ${opponent?.name ?? "them"} at all.`}
         {opponent ? ` They're #${opponent.nationalRank} at ${opponent.wins}–${opponent.losses}.` : ""}
       </p>}
     </article>
@@ -1061,9 +1083,15 @@ function ProgramDashboard({ game, roster, inFlightDecision, onNavigate }: {
       <p className="eyebrow">What needs you this week</p>
       {unresolvedCount === 0
         ? <><h2>You're square</h2><p className="muted">Nothing is being wasted. Advance the week whenever you're ready.</p></>
+        // The count used to be of the REQUIRED items alone while the list below
+        // showed everything, so "2 things are costing you right now" sat on top
+        // of four rows. The heading counts what is listed now, and says
+        // separately how many of them are urgent.
         : <><h2>{urgentCount === 0
           ? `${unresolvedCount} thing${unresolvedCount === 1 ? "" : "s"} worth a look`
-          : `${urgentCount} thing${urgentCount === 1 ? "" : "s"} ${urgentCount === 1 ? "is" : "are"} costing you right now`}</h2>
+          : unresolvedCount === urgentCount
+            ? `${urgentCount} thing${urgentCount === 1 ? "" : "s"} ${urgentCount === 1 ? "is" : "are"} costing you right now`
+            : `${unresolvedCount} things need you — ${urgentCount} ${urgentCount === 1 ? "is" : "are"} costing you right now`}</h2>
           <div className="briefing-list">
             {priorityUnresolved && <button
               className={`briefing-item ${priorityDecision.status.toLowerCase()}`}
@@ -1162,10 +1190,10 @@ function Roster({ game, roster }: { game: GameView; roster: Player[] }): ReactEl
       </div>
     </article>
     <article className="panel table-panel"><SectionHeading eyebrow="Team management" title={`${roster.length} scholarship players`} detail={`Average rating ${average.toFixed(1)} · risk assumes a normal game workload and includes fatigue plus your strength coach`} />
-      <div className="data-table roster-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>OVR</span><span>POT</span><span>Durability</span><span>Game risk</span><span>Health</span><span>Stardom</span><span>Fans</span><span>Year / status</span></div>
+      <div className="data-table roster-table"><div className="data-row data-header"><span>Player</span><span>Pos</span><span>OVR</span><span>POT</span><span>Durability</span><span>Injury risk this game</span><span>Health</span><span>Fame 0&ndash;100</span><span>Personal fans</span><span>Year / status</span></div>
         {roster.map((player) => {
           const risk = playerInjuryRisk(game.state, player, 55);
-          return <div className="data-row" key={player.id}><strong data-label="Player">{player.name}</strong><span data-label="Position">{player.position}</span><span data-label="Overall">{Math.round(player.overall)}</span><span data-label="Potential">{Math.round(player.potential)}</span><span data-label="Durability">{Math.round(ratingByRole(player.position, player.ratings, "DURABILITY"))}</span><span data-label="Game risk">{risk.riskPercent}%<small>{risk.riskWithoutCoachPercent}% before coach · {Math.round(player.fatigue)}% fatigue</small></span><span className={currentInjury(player) ? "injured-status" : "healthy-status"} data-label="Health">{injuryStatus(player)}</span><span data-label="Stardom">{player.stardom}/100</span><span data-label="Personal fans">{compactNumber(player.personalFans)}</span><span data-label="Year / status">{eligibilityClass(player)}<small>{player.eligibility.redshirtStatus === "REDSHIRTING" ? "Redshirting" : `${player.eligibility.seasonsRemaining} season${player.eligibility.seasonsRemaining === 1 ? "" : "s"} left`}</small></span></div>;
+          return <div className="data-row" key={player.id}><strong data-label="Player">{player.name}</strong><span data-label="Position">{player.position}</span><span data-label="Overall">{Math.round(player.overall)}</span><span data-label="Potential">{Math.round(player.potential)}</span><span data-label="Durability">{Math.round(ratingByRole(player.position, player.ratings, "DURABILITY"))}</span><span data-label="Injury risk this game">{risk.riskPercent}%<small>{risk.riskWithoutCoachPercent}% before coach · {Math.round(player.fatigue)}% fatigue</small></span><span className={currentInjury(player) ? "injured-status" : "healthy-status"} data-label="Health">{injuryStatus(player)}</span><span data-label="Fame">{player.stardom}/100</span><span data-label="Personal fans">{compactNumber(player.personalFans)}</span><span data-label="Year / status">{eligibilityClass(player)}<small>{player.eligibility.redshirtStatus === "REDSHIRTING" ? "Redshirting" : `${player.eligibility.seasonsRemaining} season${player.eligibility.seasonsRemaining === 1 ? "" : "s"} left`}</small></span></div>;
         })}
       </div>
     </article>
@@ -2412,8 +2440,15 @@ function WeekDecisions({ game, pending, onQueue }: {
   const plan: GamePlan = { ...(game.state.gamePlans?.[programId] ?? DEFAULT_GAME_PLAN),
     ...Object.assign({}, ...pending.filter((command) => command.type === "SET_GAME_PLAN").map((command) => (command as Extract<GameCommand, { type: "SET_GAME_PLAN" }>).plan)) };
   const candidates = developmentCandidates(game.state, programId);
+  // The fallback here used to be `state.developmentSpotlights?.[programId] ?
+  // undefined : undefined`, which is `undefined` either way — so this panel read
+  // only the queued command and never the committed one. Your week said "Tariq
+  // Cruz gets the full spotlight" while this section said "Nobody yet" about the
+  // same player in the same moment, which is two screens disagreeing about one
+  // piece of state rather than two vocabularies for it.
   const spotlight = pending.find((command): command is Extract<GameCommand, { type: "SET_DEVELOPMENT_SPOTLIGHT" }> => command.type === "SET_DEVELOPMENT_SPOTLIGHT")
-    ?? (game.state.developmentSpotlights?.[programId] ? undefined : undefined);
+    ?? game.state.developmentSpotlights?.[programId]
+    ?? undefined;
   const spotlightPlayerId = spotlight?.target.type === "PLAYER" ? spotlight.target.playerId : null;
   const spotlightPosition = spotlight?.target.type === "POSITION" ? spotlight.target.position : null;
   const roster = Object.values(game.state.players).filter((player) =>
@@ -2433,7 +2468,12 @@ function WeekDecisions({ game, pending, onQueue }: {
   return <div className="week-tab-body">
     <article className={atHome ? "panel" : "panel locked-panel"}>
       <Header id="TICKET_PRICE" title="1 · Ticket price" />
-      {!atHome && <p className="locked-note">You're on the road this week. Gate business happens at home.</p>}
+      {/* A bye week and the preseason both have no fixture at all, and saying
+          "you're on the road" there is simply false — a cold player read it in
+          a week when their next game was at home. */}
+      {!atHome && <p className="locked-note">{fixture
+        ? "You're on the road this week. Gate business happens at home."
+        : "There's no game this week, so there's no gate. Pricing applies to your next home game."}</p>}
       <h2>{money(price)} a seat</h2>
       <input type="range" min={MINIMUM_TICKET_PRICE} max={MAXIMUM_TICKET_PRICE} value={price} disabled={!atHome}
         onChange={(event) => onQueue({ type: "SET_TICKET_PRICE", programId, price: Number(event.target.value) })} />

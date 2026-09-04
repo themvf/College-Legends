@@ -9,6 +9,8 @@ import {
   playerInjuryRisk,
   staffBuyout,
   staffCandidatesFor,
+  staffCard,
+  installIfScheme,
   coachSchemeFit,
   BUYOUT_SALARY_FRACTION,
   TRAINING_CAMP_INSTALL_BONUS,
@@ -211,4 +213,42 @@ test("every coaching market holds somebody who runs what the program runs", () =
   }
   // If nothing is ever flagged the assertions above are vacuous.
   assert.ok(flagged > 0, "these seeds must actually raise the item this test is about");
+});
+
+test("the scheme picker's install number is the same number the staff card posts", () => {
+  // A card that disagrees with the engine breaks "payoffs are visible", which
+  // is an invariant rather than a nicety — and the scheme picker now posts an
+  // install percentage per option, which is a second place for the same
+  // arithmetic to live. Both read one shared function; this is what keeps them
+  // honest if somebody edits one of them.
+  const state = createFictionalLeague("install-per-scheme", 12);
+  for (const programId of ["program-1", "program-5", "program-9"]) {
+    const program = state.programs[programId];
+    for (const [side, scheme, role] of [
+      ["OFFENSE", program.schemeIdentity.offense, "OFFENSIVE_COORDINATOR"],
+      ["DEFENSE", program.schemeIdentity.defense, "DEFENSIVE_COORDINATOR"]
+    ]) {
+      const coordinator = Object.values(state.staff)
+        .find((member) => member.programId === programId && member.role === role);
+      assert.ok(coordinator);
+      const card = staffCard(state, programId, coordinator.id)
+        .find((modifier) => modifier.label.startsWith("Gets your"));
+      assert.ok(card, "a coordinator card must post an install percentage");
+      assert.equal(
+        `${installIfScheme(state, programId, side, scheme)}% before practice reps`,
+        card.value,
+        `${programId} ${side}: the picker and the card must agree about the scheme actually being run`
+      );
+    }
+  }
+
+  // And it has to actually discriminate, or the line it prints says nothing.
+  const spreads = Object.values(state.programs).map((program) => {
+    const installs = ["POWER_RUN", "TRIPLE_OPTION", "SPREAD_TEMPO", "PRO_BALANCED", "AIR_RAID"]
+      .map((scheme) => installIfScheme(state, program.id, "OFFENSE", scheme))
+      .filter((value) => value !== null);
+    return Math.max(...installs) - Math.min(...installs);
+  });
+  const median = [...spreads].sort((left, right) => left - right)[Math.floor(spreads.length / 2)];
+  assert.ok(median >= 4, `which scheme a coordinator knows must be worth something (median spread ${median})`);
 });
