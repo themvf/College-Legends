@@ -22,7 +22,10 @@ function toPortalWindow(seed, programCount = 12) {
     state = result.state;
     events = result.events;
   }
-  assert.equal(state.offseasonStep, "PORTAL");
+  // The board reviews every job before the portal opens. The listings this
+  // helper hands back were emitted by the rollover, so the rollover's events
+  // are kept rather than the review's.
+  while (state.offseasonStep !== "PORTAL") state = advanceOffseasonStep(state).state;
   return { state, events };
 }
 

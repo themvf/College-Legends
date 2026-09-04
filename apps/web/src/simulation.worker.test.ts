@@ -345,6 +345,8 @@ describe("simulation worker decision routing", () => {
     let state = beginSeason(createFictionalLeague("worker-portal-knowledge", 4));
     while (state.phase !== "OFFSEASON") state = advanceWeek(state, planWeeklyCommands(state)).state;
     const playerProgramId = "program-1";
+    // The board reviews every job first; the portal boundary is the step after it.
+    while (state.offseasonStep !== "PORTAL") state = advanceOffseasonStep(state).state;
     const views = portalPlanningKnowledgeViews(state);
     storage.bytes = await encodeSave(state, playerProgramId) as Uint8Array<ArrayBuffer>;
     dispatch({ type: "LOAD_SAVE", requestId: "load-portal" });

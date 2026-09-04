@@ -5,6 +5,7 @@ import {
   beginSeason,
   advanceWeek,
   advanceWeekWithDecisions,
+  advanceOffseasonStep,
   advanceOffseasonStepWithDecisions,
   canTransitionDecisionStatus,
   commitWeeklyDecision,
@@ -28,7 +29,7 @@ const activeLeague = (seed) => beginSeason(createFictionalLeague(seed, 4));
 const portalWindow = (seed) => {
   let state = beginSeason(createFictionalLeague(seed, 12));
   while (state.phase !== "OFFSEASON") state = advanceWeek(state).state;
-  assert.equal(state.offseasonStep, "PORTAL");
+  while (state.offseasonStep !== "PORTAL") state = advanceOffseasonStep(state).state;
   return state;
 };
 
@@ -519,7 +520,7 @@ test("delegated weekly planning accepts only the program head coach and exact pl
 test("a portal bid audit records accepted standing intent, not the later market winner", () => {
   let state = activeLeague("decision-portal-intent");
   while (state.phase !== "OFFSEASON") state = advanceWeek(state).state;
-  assert.equal(state.offseasonStep, "PORTAL");
+  while (state.offseasonStep !== "PORTAL") state = advanceOffseasonStep(state).state;
   const [playerId, listing] = Object.entries(state.portal ?? {}).sort(([left], [right]) => left.localeCompare(right))[0] ?? [];
   assert.ok(playerId && listing);
   const programId = listing.previousProgramId;

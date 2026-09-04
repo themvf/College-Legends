@@ -177,12 +177,17 @@ Highest-leverage single change: make `weeklyRevenue` a function of fanBase,
 nationalPress, prestige, and championships instead of a stored constant, and
 give facilities and staff recurring costs.
 
-### 4. Career paths and job security are UI-only
+### 4. Career paths and job security are UI-only — FIXED
 
-`championshipDeadline` is displayed but never read by the simulation.
-`coachSecurity` is set at start and only ever increases (+10 coach award, +20
-title). There is no expectation, evaluation, or firing. GAME_DESIGN says firing
-risk must never be a hidden roll — currently it is not a roll at all.
+`championshipDeadline` was displayed but never read by the simulation, and
+`coachSecurity` was set at start and only ever increased (+10 coach award, +20
+title). Measured over five seasons across all 72 programs, the league minimum
+never left its starting 45 and the average rose by two — nobody could be fired,
+so no decision anywhere in the game carried a consequence.
+
+`BOARD_REVIEW` is now the first offseason step, ahead of the portal, because
+whether you still have the job has to precede every decision that assumes you
+do. See "The board meets every February" below.
 
 ### 5. No offseason, so systems run once
 
@@ -1997,3 +2002,75 @@ Each step is playable and each depends on the one before it.
     sort keys so a comparator never scans. Every change there is caching or
     ordering and must not move a single RNG draw — the guard is a byte-identical
     replay test.
+
+## The board meets every February
+
+Job security is the only way to lose, and it is arithmetic rather than a roll.
+`jobReview(state, programId)` grades one program and is the same call in both
+places it matters: the engine runs it at the `BOARD_REVIEW` step, and the
+dashboard runs it mid-season, where it reads as "finish on this pace and here is
+where you stand". It consumes no RNG, so it can never shift a draw elsewhere.
+
+Three rules, and each one closed a defect found while building:
+
+- **The board grades the target the dashboard already stated.** `expectedWins`
+  is shared with `seasonExpectation`, so the number on the header from week one
+  is the number graded in February.
+- **Security moves in the review and nowhere else.** The +20 for a title and
+  +10 for a coach award were deleted from the rollover and folded in as named
+  reasons. Two systems moving one number is how a posted projection drifts away
+  from what the engine does.
+- **Every movement is printed with its own signed delta**, and a test asserts
+  the reasons sum exactly to the movement. A verdict with an unexplained number
+  in it is a hidden roll wearing a UI.
+
+| reason | delta |
+|---|---|
+| each win above or below the target | ±7 |
+| national championship | +25 |
+| reaching the playoff | +10 |
+| finishing the year with a negative budget | −20 |
+| first season in the job | half of any damage, forgiven |
+| a championship mandate running out | **ends the tenure outright** |
+
+Bands are named so they can be shown early: `EXTENDED`, `SECURE`, `WATCHED`,
+`HOT_SEAT`, `FINAL_WARNING`, `FIRED`. A coach who has watched "Hot seat" on his
+dashboard since October was warned; one who finds out in the offseason was
+ambushed, and GAME_DESIGN forbids the second.
+
+**Rivals are judged by the identical rule**, in one pass over all 72 programs,
+which is where the coaching market finally gets its churn — a dismissed rival
+leaves a real vacancy. Measured at 24 programs over six seasons: dismissals went
+from 0 to 5, and the league average holds near 70 instead of ratcheting to 100.
+
+### Four defects the build found, three of them only by playing
+
+The unit tests passed on all four. These came from driving the actual app.
+
+**Patience belongs in the target, not the leash.** Starting LOW security at 92
+meant the bottom of the table never churned once in six seasons — a low program
+is already forgiven by being asked for only five wins, and starting it near the
+ceiling double-counted the same mercy. Baselines are 45 / 55 / 62 now. The
+career path still overrides the player's own number, so Dynasty Builder keeps
+its long leash without freezing the league.
+
+**A mandate a winning coach survives is not a mandate.** Built first as a −60
+penalty, it was measured in the browser against a coach going 12-2, 13-1, 14-1:
+he banked about +31 a season and simply absorbed it, and because the clock kept
+counting past zero the penalty was charged *again* every following year against
+a "−1 seasons left" that means nothing. An expired mandate is a condition now —
+it ends the tenure directly and carries no delta, so the printed arithmetic
+still sums while the verdict is decided by the condition. The resulting screen
+is the best thing in the feature: 25-3, #3 in the country, prestige 92, fired.
+
+**A half-finished season is not a season.** Grading the raw record told an
+undefeated 4-0 power program it was on the hot seat, because four wins is six
+short of ten — true of the record and false of the season. The review grades the
+*pace* while games remain; once they are all played the pace is the record, so
+the verdict is unchanged and the projection still cannot drift from it.
+
+**`jobReview` used to take the completed season as an argument.** A caller who
+omitted it — which the UI did — got a review missing the playoff and
+championship reasons and disagreed with the engine. It looks the season up
+itself now, so the footgun does not exist.
+

@@ -161,5 +161,5 @@ test("the simulator CLI uses attributed resolution at every offseason boundary",
     state = legacy.state;
   }
 
-  assert.deepEqual(visited, ["PORTAL", "SIGNING_DAY", "COACHING", "TRAINING_CAMP"]);
+  assert.deepEqual(visited, ["BOARD_REVIEW", "PORTAL", "SIGNING_DAY", "COACHING", "TRAINING_CAMP"]);
 });

@@ -47,6 +47,7 @@ function bytesFor(envelope) {
 function portalWindow(seed, count) {
   let state = beginSeason(createFictionalLeague(seed, count));
   while (state.phase !== "OFFSEASON") state = advanceWeek(state).state;
+  while (state.offseasonStep !== "PORTAL") state = advanceOffseasonStep(state).state;
   return state;
 }
 
