@@ -91,7 +91,7 @@ test("late signing converts an unsigned athlete when a position pool is exhauste
   assert.ok(defensiveLinemen.every((player) => Object.keys(player.ratings).length > 0));
 });
 
-test("a losing season is financially near break-even and does not inflate fandom", () => {
+test("a losing season costs money, a winning one earns it, and losing does not inflate fandom", () => {
   let state = beginSeason(createFictionalLeague("losing-economy", 24));
   const opening = Object.fromEntries(Object.values(state.programs).map((program) => [program.id, {
     budget: program.budget,
@@ -99,10 +99,28 @@ test("a losing season is financially near break-even and does not inflate fandom
   }]));
   while (state.phase === "REGULAR_SEASON") state = advanceWeek(state).state;
   const losing = Object.values(state.programs).filter((program) => program.losses >= 9);
-  assert.ok(losing.length > 0);
+  const winning = Object.values(state.programs).filter((program) => program.wins >= 9);
+  assert.ok(losing.length > 0 && winning.length > 0);
+  const change = (program) => program.budget - opening[program.id].budget;
+
+  // This used to assert a losing season was "near break-even", which was true
+  // only because expenses were a frozen constant: a bad year cost nothing. It
+  // costs money now, and the bound is that it must not be ruinous in one go.
   for (const program of losing) {
-    const budgetChange = program.budget - opening[program.id].budget;
-    assert.ok(Math.abs(budgetChange) < 3_000_000, `${program.id} moved ${budgetChange} in a losing year`);
+    assert.ok(change(program) < 0, `${program.id} did not lose money going ${program.wins}-${program.losses}`);
+    assert.ok(change(program) > -6_000_000, `${program.id} moved ${change(program)} in a losing year`);
     assert.ok(program.fanBase <= opening[program.id].fans * 1.1, `${program.id} fandom grew despite losing`);
   }
+
+  // The direction is the assertion that matters. An earlier build of the
+  // economy scaled costs superlinearly with prestige and press while media
+  // money rose linearly, so improving the program cost more than it earned:
+  // 11-2 and 9-5 mid-tier programs lost $7.4M and $5.7M while nobody who went
+  // 3-9 lost more than $3.7M. Winning must always be worth more than losing.
+  const worstWinner = Math.min(...winning.map(change));
+  const bestLoser = Math.max(...losing.map(change));
+  assert.ok(
+    worstWinner > bestLoser,
+    `the worst winning season (${worstWinner}) must beat the best losing one (${bestLoser})`
+  );
 });

@@ -831,8 +831,6 @@ export interface Program {
   ticketPrice: number;
   /** Weekly marketing spend. Buys attendance now and fan base later. */
   advertisingSpend: number;
-  weeklyRevenue: number;
-  weeklyExpenses: number;
   facilities: Record<FacilityType, number>;
 }
 

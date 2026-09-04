@@ -150,7 +150,7 @@ against it, and individual quality decides games. `simulateGameScore`,
 numbers in this section are the targets that work was calibrated against, kept
 because they document where the rates came from.
 
-### 3. Money and fame loops do not exist
+### 3. Money and fame loops do not exist — FIXED
 
 Highest-value remaining work, and the one that most directly serves the stated
 goal. Measured over 5 seasons, no program ever went negative:
@@ -2073,4 +2073,72 @@ the verdict is unchanged and the projection still cannot drift from it.
 omitted it — which the UI did — got a review missing the playoff and
 championship reasons and disagreed with the engine. It looks the season up
 itself now, so the footgun does not exist.
+
+
+## Both sides of the ledger are derived now
+
+`weeklyRevenue` and `weeklyExpenses` were constants stamped on each program at
+league creation and never mutated. Measured across 24 programs, the frozen
+expense constant was **96–98% of everything a program spent** — payroll, NIL and
+advertising together came to 2–4%. So nothing the player built ever cost
+anything to sustain while revenue grew with the gate, and that asymmetry is the
+whole compounding problem.
+
+`mediaRights(program)` and `operatingCost(program, capacity, revenue)` replace
+them. Neither consumes RNG, so the UI can post exactly what the week will
+charge.
+
+| | what it is |
+|---|---|
+| media rights | a conference floor per tier, plus national press, prestige and titles — the first thing outside a sponsorship to turn fame into money |
+| squad | scholarships × a weekly figure, charged against the *limit* because a scholarship is a commitment already made |
+| facilities | `level^1.7` per facility, so building is a commitment rather than a purchase |
+| stadium | year-round overheads per seat |
+| operations | **a share of revenue**, not a curve |
+
+**Facilities cost money forever now**, which is the new decision: the upgrade
+card posts `Decision cost $3.0M now · Adds to every week $58K forever`.
+
+### Three defects, each found by measuring rather than reading
+
+**The expense side was the broken half.** The finding predicted revenue. It was
+wrong: the gate already responded to winning, and the frozen constant was only
+23–30% of revenue against 96–98% of costs.
+
+**Nothing may scale with an unbounded quantity.** The first build drove the
+department cost off `fanBase`, which has no ceiling — power programs reach
+748,000 against an 88,000 stadium. Costs compounded without limit and **55 of 72
+programs were insolvent within five seasons**, the runaway running backwards.
+Prestige, press and capacity are all bounded; the gate is bounded by capacity.
+
+**Costs must never outrun the revenue the same attributes earn.** The second
+build scaled the department superlinearly with prestige and press while media
+money rose linearly, so improving the program cost more than it earned. Measured
+over one season, mid-tier programs going 11–2 and 9–5 lost **$7.4M and $5.7M**
+while nobody who went 3–9 lost more than $3.7M. Winning cost more than losing,
+which is worse than the runaway. Scaling operations as a *share of revenue*
+cannot punish success by construction, and a test now asserts the margin rises
+monotonically with revenue.
+
+Measured after, over one season at 24 programs:
+
+| | before | after |
+|---|---|---|
+| a losing season (≥9 losses) | roughly break-even | **−$0.6M to −$1.8M** |
+| a winning season (≥9 wins) | −$8.5M to +$3.2M | **+$1.3M to +$12.0M** |
+| weekly net, LOW / MID / POWER | +$62K / +$299K / +$47K | −$55K / +$213K / +$463K |
+
+### Still open here
+
+**Rivals never price a ticket.** The AI issues sponsorship, booster and facility
+commands and nothing else on the business side, so every rival runs on the
+default ticket price for its entire existence — and pricing is documented above
+as worth about $5M a season. That, not the cost model, is why 22 of 72 programs
+drift insolvent over five seasons. Fixing it means extending the bounded weekly
+business knowledge view, which is its own slice.
+
+**The top still accumulates.** POWER budgets grow about 2.5x over four seasons.
+It is *earned* now rather than automatic — winning pays and losing costs — but
+whether that is a problem depends on rivals spending it on NIL, which is the
+same open item.
 

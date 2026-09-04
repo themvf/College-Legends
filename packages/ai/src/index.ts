@@ -1,6 +1,9 @@
 import type { BoosterKind, DecisionKnowledgeSnapshot, DevelopmentFocus, FacilityType, GameState, GameCommand, Player, Position, ProgramCharacter, Prospect, SponsorshipStrategy, TeamUnitRatings, WeekFocus } from "@college-legends/model";
 import {
   FACILITY_UPGRADE_COST,
+  mediaRights,
+  operatingCost,
+  stadiumCapacity,
   focusCapacity,
   freeNilCapacity,
   MAX_VISITS_PER_SEASON,
@@ -221,7 +224,7 @@ export function coachingPlanningKnowledgeView(
     kind: "COACHING_PLANNING_KNOWLEDGE_V1" as const,
     programId,
     availableBudget: program.budget,
-    weeklyExpenses: program.weeklyExpenses,
+    weeklyExpenses: operatingCost(program, stadiumCapacity(program.facilities.STADIUM), mediaRights(program).total).total,
     posts
   });
 }
@@ -312,7 +315,7 @@ export function weeklyBusinessPlanningKnowledgeViews(
       week: state.week,
       phase: "REGULAR_SEASON" as const,
       budget: program.budget,
-      weeklyExpenses: program.weeklyExpenses,
+      weeklyExpenses: operatingCost(program, stadiumCapacity(program.facilities.STADIUM), mediaRights(program).total).total,
       character: program.character,
       playingThisWeek: playing.has(program.id),
       atHome: home.has(program.id),

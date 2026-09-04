@@ -11,6 +11,7 @@ import { fictionalPersonName } from "@college-legends/content";
 import type { AddressableRng } from "./rng.js";
 import { MAXIMUM_WEEKLY_ADVERTISING } from "./business.js";
 import { attributesFor, computeOverall } from "./attributes.js";
+import { mediaRights } from "./economy.js";
 
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.max(minimum, Math.min(maximum, value));
@@ -97,10 +98,12 @@ export function buildBoosterOffer(
   const seed = `${state.season}:${state.week}:${programId}`;
   const ordinal = Math.floor(rng.at(`${seed}:names`) * 100_000);
 
-  // A donor's cheque is priced off what the program earns in a week, so it is
-  // meaningful at every tier without being authored per tier.
+  // A donor's cheque is priced off the program's media money, so it is
+  // meaningful at every tier without being authored per tier. It used to be
+  // priced off `weeklyRevenue`, which was a constant — the cheque now grows
+  // with the program's own recognition, like everything else the donors read.
   const amount = Math.round(
-    program.weeklyRevenue * (1.5 + rng.at(`${seed}:donor-size`) * 2.5) * clamp(program.donorCulture, 0.5, 2)
+    mediaRights(program).total * (1.5 + rng.at(`${seed}:donor-size`) * 2.5) * clamp(program.donorCulture, 0.5, 2)
     / 50_000
   ) * 50_000;
 
