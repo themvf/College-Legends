@@ -135,3 +135,22 @@ winning coach could absorb, and a hot-seat warning that fired at 0–0.
 
 **Unit tests prove the engine is right. Driving the app proves the game is.**
 Both are required.
+
+---
+
+## Wiring (already done)
+
+`.claude/agents/` holds a symlink to each agent file, so they are invocable by
+name without duplicating content — `agents/` stays the single source of truth.
+
+```bash
+# how they were created, if you ever need to redo it
+mkdir -p .claude/agents
+for f in agents/*.md; do
+  n=$(basename "$f"); [ "$n" = "agents.md" ] && continue
+  ln -sf "../../agents/$n" ".claude/agents/$n"
+done
+```
+
+Symlinks need developer mode on Windows. Copy the files instead if that bites,
+and accept that they will drift.

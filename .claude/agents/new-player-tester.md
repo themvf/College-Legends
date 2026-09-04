@@ -1,0 +1,1 @@
+../../agents/new-player-tester.md
