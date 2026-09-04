@@ -1,4 +1,6 @@
 node_modules/
 dist/
-reports/
+# Simulator CLI output. Anchored to the root: unanchored, this also matched
+# qa/reports/ and silently swallowed every QA cycle report.
+/reports/
 *.tsbuildinfo
