@@ -94,6 +94,7 @@ export function advanceHeadlessCareerStep(input: Readonly<GameState>): Simulatio
       command.type === "CHOOSE_BOOSTER"
         || command.type === "ACCEPT_SPONSORSHIP"
         || command.type === "UPGRADE_FACILITY"
+        || command.type === "SET_TICKET_PRICE"
         ? weeklyBusinessPlanningKnowledgeSnapshot(input, command.programId, businessViews[command.programId]!)
         : undefined
     ));

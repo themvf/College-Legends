@@ -2184,11 +2184,54 @@ programs drifted insolvent. They were not. Measured after:
 Pricing helps every tier proportionally, which means it helps the biggest gates
 most in absolute terms — POWER budgets grew *faster* after the fix, not slower.
 
-The real cause is the opening balance. A LOW program holds $1.5M against a
-$1.1M weekly turnover — about a week and a half of operating cash — so a drift
-of roughly $320K a season takes it under in five years even though its weekly
-line is close to break-even. Whether that is wrong depends on whether a
-low-tier program run by nobody in particular *should* slowly fail; the opening
-budgets are career-path constants and have never been re-tuned against a derived
-cost model. Left as a decision rather than quietly changed.
+The real cause was two things, neither of them pricing — see "What was actually
+bankrupting the league" below.
+
+
+## What was actually bankrupting the league
+
+Two defects, found only by chasing the insolvency count after the pricing fix
+failed to move it. Insolvencies over five seasons at 72 programs went **22 → 3**.
+
+**A rival built whatever it could buy.** `selectFacilityUpgrade` asked
+`budget >= cost + weeklyExpenses * 2` — the purchase price and nothing else.
+That rule was correct until facilities gained upkeep, and then it was a trap:
+every upgrade added permanent weekly cost the planner could not see. Proof came
+from the fix that failed — raising opening balances **doubled** low-tier facility
+spending, from $175K to $350K a season, and brought the collapse forward rather
+than pushing it back. Reserves were being converted straight into cost.
+
+A rival now needs one of two things, which is how the decision actually works:
+the week pays for it (`lastWeeklyNet - upkeep >= 20K`), or the bank does
+(`budget >= cost + upkeep × 400` weeks, about thirty seasons). Requiring income
+alone stopped a program holding $100M and no trading history from building
+anything at all — an existing test caught exactly that. `lastWeeklyNet` comes
+from one backward pass over the capped event log, not a scan per program.
+
+**One constant was doing two jobs.** `$1.5M / $6M / $20M` appeared both in
+`createFictionalLeague`, as every program's operating reserve, and in
+`CAREER_PATHS`, as the player's difficulty. Neither could be tuned without
+moving the other. `OPENING_RESERVE` splits them; the career path still overrides
+the player's own balance and is untouched, so a Dynasty Builder still starts on
+$1.5M — it is simply now a stated disadvantage against the league rather than
+the league-wide default.
+
+The old figure left a low-tier program holding about **a week and a half of
+operating cash** against a $1.1M weekly turnover.
+
+| | insolvent by season 5 |
+|---|---|
+| before | 22 of 72 |
+| cohort pricing only | 19 |
+| build discipline only | 15 |
+| build discipline + reserve | **3** |
+
+Neither half is sufficient alone: on the old float a low-tier program sits at
+exactly zero for three straight seasons, where any bad week tips it under.
+
+The slow drift itself is deliberately left in. A program run by nobody in
+particular *should* bleed, and that is where the coaching market gets its churn
+— it now takes about twenty seasons rather than five, so a program failing is a
+story that happens once in a dynasty instead of a third of the league quietly
+dying inside one career.
 
