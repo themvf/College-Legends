@@ -1046,6 +1046,7 @@ export function createFictionalLeague(rootSeed: string, programCount = FICTIONAL
       pipelineStrength: {},
       ticketPrice: tier === "POWER" ? 58 : tier === "MID" ? 42 : 28,
       advertisingSpend: 0,
+      lastWeeklyNet: 0,
 
       // Includes the full cost of operating an 85-man football program, not
       // only game-day bills. At these levels, a losing season is near break-even
@@ -4968,6 +4969,7 @@ function processWeeklyRecapsAndFinances(state: GameState, playerBrandImpact: Rea
     );
     const net = Math.round(revenue - expenses);
     program.budget += net;
+    program.lastWeeklyNet = net;
     events.push({
       type: "WEEKLY_FINANCES",
       season: state.season,

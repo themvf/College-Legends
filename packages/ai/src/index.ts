@@ -313,16 +313,6 @@ export function weeklyBusinessPlanningKnowledgeViews(
     playing.add(game.awayProgramId);
     home.add(game.homeProgramId);
   }
-  // What each program last actually cleared, from one backward pass over the
-  // capped event log rather than a scan per program. A rival needs this to know
-  // whether it can carry a new permanent cost; before facilities had upkeep it
-  // did not need to know anything of the kind.
-  const lastNet = new Map<string, number>();
-  for (let index = state.eventHistory.length - 1; index >= 0; index -= 1) {
-    const event = state.eventHistory[index]!;
-    if (event.type !== "WEEKLY_FINANCES" || lastNet.has(event.programId)) continue;
-    lastNet.set(event.programId, event.net);
-  }
   return Object.freeze(Object.fromEntries(Object.values(state.programs).map((program) => {
     const booster = pendingBoosterOffer(state, program.id);
     const sponsorship = state.sponsorships?.[program.id];
@@ -341,7 +331,11 @@ export function weeklyBusinessPlanningKnowledgeViews(
       // not a per-fixture decision.
       fairTicketPrice: fairTicketPrice(program, null, false),
       fanElasticity: program.fanElasticity,
-      lastWeeklyNet: lastNet.get(program.id) ?? 0,
+      // What the program last actually cleared. A rival needs this to know
+      // whether it can carry a new permanent cost; before facilities had upkeep
+      // it did not need to know anything of the kind. Read from program state
+      // rather than the event log, which a save trims away.
+      lastWeeklyNet: program.lastWeeklyNet ?? 0,
       playingThisWeek: playing.has(program.id),
       atHome: home.has(program.id),
       boosterOptions: Object.freeze((booster?.options ?? []).map((option) => Object.freeze({

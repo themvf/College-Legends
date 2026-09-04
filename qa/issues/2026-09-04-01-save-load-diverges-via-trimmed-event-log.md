@@ -4,7 +4,7 @@
 |---|---|
 | **ID** | 2026-09-04-01 |
 | **Severity** | P1 |
-| **Status** | open |
+| **Status** | fixed |
 | **Area** | Save / load · Rival AI · Determinism |
 | **Found by** | regression-tester (cycle 1 determinism baseline) |
 | **Found in** | `bf977ff` |
@@ -108,14 +108,40 @@ save.
 week-1 facility decision with a populated finance history. The assertion is
 right; its scenario is too narrow.
 
-## Suggested fix direction
+## Fix
 
-Not implemented — filed for separate work.
+`Program.lastWeeklyNet` is written by the weekly finance step, on the same line
+that moves the budget, and the rival planner reads it from there. The backward
+pass over `eventHistory` is gone — so the coupling is gone, and the read is
+cheaper than the scan it replaces. `decodeSave` backfills the field to 0 so an
+older save still loads.
 
-Store what the planner needs in state rather than deriving it from the event
-log. A `lastWeeklyNet` per program on `ProgramState`, written by the weekly
-finance step, would survive the save and remove the coupling entirely. It is
-also cheaper than the backward pass.
+The diagnosis in this issue was correct.
 
-Whatever the fix, it needs a regression test that advances **a full season either
-side of a save**, not a week.
+## Verified fixed
+
+The reporter's own repro, re-run: seed `qa-baseline-2026-09`, 24 programs, one
+season, save, then a further season either side.
+
+| | hash of `programs` + `players` |
+|---|---|
+| never saved | `a94ee420ac469144` |
+| saved and reloaded | `a94ee420ac469144` |
+
+Two regression tests, both confirmed red against the pre-fix build and green
+after — a test that has not been run against the defect is not a regression
+test:
+
+- **The existing round-trip test was widened.** It advanced *one week* and, more
+  importantly, copied `loaded.eventHistory` onto the in-memory state before
+  comparing — which handed both sides the same trimmed log and made them agree
+  about a number that was wrong in both. That is why it passed. It now plays a
+  full season on each side, with rivals planning, each reading its own log.
+- **A new test states the rule**: `weeklyBusinessPlanningKnowledgeViews` must be
+  identical with `eventHistory` emptied. Two weaker versions of this assertion
+  were written and thrown away first — comparing planned commands after a real
+  save passes vacuously, because at most weeks every rival declines a facility
+  regardless and the two empty lists match. The view is corrupted at every seed
+  and every week; the commands are not.
+
+Full suite: 249 engine tests pass.

@@ -831,6 +831,14 @@ export interface Program {
   ticketPrice: number;
   /** Weekly marketing spend. Buys attendance now and fan base later. */
   advertisingSpend: number;
+  /**
+   * What the program actually cleared last week, written by the weekly finance
+   * step. It lives here rather than being derived from the event log because
+   * the event log is a record, not gameplay state: a save trims it, and
+   * anything the engine reads to make a decision has to survive that trim.
+   * Zero before a week has been played.
+   */
+  lastWeeklyNet: number;
   facilities: Record<FacilityType, number>;
 }
 

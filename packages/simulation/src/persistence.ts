@@ -237,6 +237,9 @@ export async function decodeSave(bytes: Uint8Array): Promise<LoadedSave> {
   state.playerSeasonStats ??= [];
   state.weekFocus ??= {};
   state.scoutingTarget ??= {};
+  // Written by the weekly finance step from format 2 onward. An older save has
+  // no record of it, and a program that has not banked a week reads zero.
+  for (const program of Object.values(state.programs ?? {})) program.lastWeeklyNet ??= 0;
   const decisionKnowledge = { ...(state.decisionKnowledge ?? {}) };
   const decisionAudits = (state.decisionAudits ?? []).map((audit) => {
     if ("knowledgeId" in audit && typeof audit.knowledgeId === "string" && audit.knowledgeId.trim()) {

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { advanceOffseasonStep, advanceWeek, activeEmergencyQuarterback, activeSponsorship, AddressableRng, beginSeason, createFictionalLeague, currentInjury, marqueeGameOptions, playerInjuryRisk, prepareWeek, projectSponsorshipOffer, projectedRecruitingOpenings, prospectScoutingReport, recruitingWeeklyPoints, sponsorshipMarketValue, sponsorshipPayment, staffCapacity, computeOverall, schemePersonnel, schemeSpots, ROSTER_COMPOSITION, seasonAwardRace, planWeekHours, encodeSave, decodeSave, foldSeasonStats, boosterDueThisWeek, pendingBoosterOffer, advertisingCredit, takeawayMultiplier, TAKEAWAY_BOOST, STARTING_ROSTER_SIZE, weeklyStories } from "../packages/simulation/dist/index.js";
-import { planWeeklyCommands } from "../packages/ai/dist/index.js";
+import { planWeeklyCommands, weeklyBusinessPlanningKnowledgeViews } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
 
@@ -1132,13 +1132,67 @@ test("a dynasty saves small, folds finished seasons, and round-trips exactly", a
   assert.deepEqual(loaded.weekFocus, state.weekFocus);
   assert.deepEqual(loaded.playerSeasonStats, state.playerSeasonStats);
 
-  // And a loaded career must advance identically to one that was never saved.
-  const fromSave = advanceWeek(beginSeason(loaded));
-  const fromMemory = advanceWeek(beginSeason({ ...state, eventHistory: loaded.eventHistory }));
-  assert.equal(
-    JSON.stringify(fromSave.state.programs),
-    JSON.stringify(fromMemory.state.programs),
-    "a save must reload into a byte-identical simulation"
+  // And a loaded career must advance identically to one that was never saved —
+  // over a whole season, with rivals planning, and with each side reading its
+  // own event log.
+  //
+  // The earlier version of this assertion advanced one week and copied
+  // `loaded.eventHistory` onto the in-memory state, which is precisely what
+  // hid QA issue 01: the save trims the log to 400 rows, the rival planner was
+  // deriving `lastWeeklyNet` from it, and handing both sides the same trimmed
+  // log made the two agree about a number that was wrong in both. A save must
+  // survive being compared against a career that was never saved.
+  const playSeason = (start) => {
+    let current = beginSeason(start);
+    while (current.phase === "REGULAR_SEASON") {
+      current = advanceWeek(current, planWeeklyCommands(current)).state;
+    }
+    while (current.phase === "OFFSEASON") current = advanceOffseasonStep(current).state;
+    return current;
+  };
+  const fromSave = playSeason(loaded);
+  const fromMemory = playSeason(state);
+  for (const field of ["programs", "players", "seasonHistory"]) {
+    assert.equal(
+      JSON.stringify(fromSave[field]),
+      JSON.stringify(fromMemory[field]),
+      `a save must reload into a byte-identical simulation (${field} diverged)`
+    );
+  }
+});
+
+test("the rival planner reads what a program cleared from state, not from the event log", async () => {
+  // The event log is a record, not gameplay state. It is capped at 10,000 rows
+  // in memory and trimmed to 400 by a save, so anything the engine reads to
+  // make a decision has to live somewhere that survives both.
+  let state = beginSeason(createFictionalLeague("finance-not-from-log", 24));
+  for (let week = 0; week < 4; week += 1) state = advanceWeek(state, planWeeklyCommands(state)).state;
+
+  for (const program of Object.values(state.programs)) {
+    assert.equal(typeof program.lastWeeklyNet, "number");
+  }
+  assert.ok(
+    Object.values(state.programs).some((program) => program.lastWeeklyNet !== 0),
+    "a played week must record what each program cleared"
+  );
+
+  const { state: loaded } = await decodeSave(await encodeSave(state));
+  assert.deepEqual(
+    Object.fromEntries(Object.values(loaded.programs).map((p) => [p.id, p.lastWeeklyNet])),
+    Object.fromEntries(Object.values(state.programs).map((p) => [p.id, p.lastWeeklyNet])),
+    "what a program cleared must survive a save"
+  );
+
+  // The assertion is on the view rather than on the commands, because which
+  // week a rival can afford a facility is seed-dependent: at most points in a
+  // season every program declines regardless, and a comparison of the planned
+  // commands then passes while saying nothing. The view is what the defect
+  // actually corrupted, and it is corrupted at every seed and every week.
+  const forgotten = { ...state, eventHistory: [] };
+  assert.deepEqual(
+    weeklyBusinessPlanningKnowledgeViews(forgotten),
+    weeklyBusinessPlanningKnowledgeViews(state),
+    "nothing a rival is told about itself may come from the event log"
   );
 });
 
