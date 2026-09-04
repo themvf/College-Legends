@@ -59,6 +59,8 @@ import {
   weeklyDonorCapacity,
   SPOTLIGHT_INTENSITY,
   seasonExpectation,
+  jobReview,
+  jobVerdictLabel,
   startingLineup,
   attributesFor,
   ratingByRole,
@@ -392,6 +394,18 @@ export function App(): ReactElement {
   if (game && game.state.phase === "ROSTER_REVIEW" && !setupDone) {
     return <SetUpProgram busy={busy} game={game} onPrepare={prepare}
       onDone={() => { setSetupDone(true); setScreen("ROSTER"); }} />;
+  }
+  // A dismissal ends the career. The event stays in history, so this survives a
+  // reload rather than being a moment the player can navigate away from.
+  const dismissal = game
+    ? [...game.state.eventHistory].reverse().find(
+        (event): event is Extract<GameEvent, { type: "COACH_FIRED" }> =>
+          event.type === "COACH_FIRED" && event.programId === game.playerProgramId
+      )
+    : undefined;
+  if (game && dismissal) {
+    return <CareerOver game={game} dismissal={dismissal} busy={busy}
+      onStartOver={() => { abandon(); setGame(undefined); setOffers(undefined); }} />;
   }
   if (game && game.state.phase === "OFFSEASON") {
     return <Offseason game={game} busy={busy} error={error} pending={pendingCommands} onQueue={queue}
@@ -1014,6 +1028,7 @@ function ProgramDashboard({ game, roster, inFlightDecision, onNavigate }: {
         ? "Get the program ready"
         : nextGame ? `${nextGame.homeProgramId === program.id ? "Hosting" : "At"} ${opponent?.name}` : "Season's over"}</h2>
       {expectation && <p className="muted">{expectation.standing}</p>}
+      <JobStanding game={game} />
       {nextGame && <p className="muted">
         {file && file.tiers.length > 0
           ? `You've got ${file.tiers.length === 3 ? "a complete file" : "a partial file"} on them — what it reports is about ${file.confidence}% dependable.`
@@ -2772,6 +2787,58 @@ function Metric({ label: metricLabel, value }: { label: string; value: string })
  * Every step is skippable. "Continue" with nothing chosen is a legal, sane
  * week — the engine's own default — so the flow is never homework.
  */
+/**
+ * Games that have to be played before "if the season ended today" says anything.
+ * A third of a season is enough to separate a bad start from a bad team.
+ */
+const MEANINGFUL_RECORD = 4;
+
+/**
+ * Where the job stands, on the screen the player opens most.
+ *
+ * The point of showing this every week is that a dismissal must never be a
+ * surprise. `jobReview` is the same call the board makes in the offseason, so
+ * this is not an estimate of the verdict — it is the verdict, on today's
+ * record. A coach who has watched "Hot seat" sit here since October was warned;
+ * one who finds out in the offseason was ambushed.
+ *
+ * Quiet while the job is safe: a permanent status line about job security would
+ * be noise for the many seasons where nothing is wrong.
+ */
+function JobStanding({ game }: { game: GameView }): ReactElement | null {
+  const review = jobReview(game.state, game.playerProgramId);
+  if (!review) return null;
+  const program = game.state.programs[game.playerProgramId]!;
+  // "If it ended today" is a nonsense premise before anybody has played. At 0–0
+  // every coach in the league projects as missing the target by the whole
+  // target, so the banner opened the season telling a fresh hire he was on his
+  // final warning. Wait until the record carries information.
+  const played = program.wins + program.losses;
+  if (played < MEANINGFUL_RECORD) return null;
+  const mandate = program.championshipDeadline ?? null;
+  const pressured = review.verdict === "HOT_SEAT"
+    || review.verdict === "FINAL_WARNING"
+    || review.verdict === "FIRED";
+  if (!pressured && mandate === null) return null;
+
+  const tone = review.verdict === "FIRED" || review.verdict === "FINAL_WARNING" ? "critical"
+    : review.verdict === "HOT_SEAT" ? "warning"
+      : "neutral";
+  const headline = review.verdict === "FIRED"
+    ? "As it stands, the board lets you go at the end of the year."
+    : review.verdict === "FINAL_WARNING"
+      ? "One more year like this and you are gone."
+      : review.verdict === "HOT_SEAT"
+        ? "You are on the hot seat."
+        : `${mandate} ${mandate === 1 ? "season" : "seasons"} to win a title, or the job is forfeit.`;
+
+  return <p className={`job-standing ${tone}`}>
+    <strong>{jobVerdictLabel(review.verdict)}.</strong> {headline}
+    {" "}Finish on this pace, {review.wins}–{review.losses}, and the board has you at {review.securityAfter}
+    {review.securityAfter === review.securityBefore ? ", unchanged" : ` from ${review.securityBefore}`}.
+  </p>;
+}
+
 function Offseason({ game, busy, error, pending, onQueue, onContinue }: {
   game: GameView;
   busy: boolean;
@@ -2798,6 +2865,7 @@ function Offseason({ game, busy, error, pending, onQueue, onContinue }: {
     {error && <article className="panel offseason-error"><p className="eyebrow">Something went wrong</p><p>{error}</p></article>}
     <OffseasonRecap game={game} />
 
+    {step === "BOARD_REVIEW" && <BoardReview game={game} />}
     {step === "PORTAL" && <PortalBoard game={game} busy={busy} pending={pending} onQueue={onQueue} />}
     {step === "SIGNING_DAY" && <SigningDay game={game} />}
     {step === "COACHING" && <CoachingMarket game={game} busy={busy} pending={pending} onQueue={onQueue} />}
@@ -2839,6 +2907,125 @@ const OFFSEASON_STEP_ACTIONS: Record<OffseasonStep, string> = {
   COACHING: "On to camp",
   TRAINING_CAMP: "Open the season"
 };
+
+/**
+ * The end of a career, which until now the game had no way of reaching.
+ *
+ * Deliberately not a failure screen. It reports the tenure as a record — what
+ * the program looked like when it was taken over against what it looks like
+ * now — because a coach who was fired having doubled the fan base and left a
+ * full trophy case did something, and a business sim should say so.
+ */
+function CareerOver({ game, dismissal, busy, onStartOver }: {
+  game: GameView;
+  dismissal: Extract<GameEvent, { type: "COACH_FIRED" }>;
+  busy: boolean;
+  onStartOver: () => void;
+}): ReactElement {
+  const program = game.state.programs[game.playerProgramId]!;
+  const seasons = game.state.seasonHistory.filter(
+    (history) => history.finalRecords[program.id] !== undefined
+  );
+  const totals = seasons.reduce((running, history) => {
+    const record = history.finalRecords[program.id]!;
+    return { wins: running.wins + record.wins, losses: running.losses + record.losses };
+  }, { wins: 0, losses: 0 });
+  const titles = seasons.filter((history) => history.nationalChampionProgramId === program.id).length;
+  const cause = dismissal.cause === "MANDATE"
+    ? "You were hired to win a national championship and the clock ran out."
+    : dismissal.cause === "INSOLVENCY"
+      ? "The athletic department could not go on funding the program you were running."
+      : "The wins were not there often enough, for long enough.";
+
+  return <main className="new-game career-over">
+    <header className="masthead">
+      <p className="eyebrow">{program.name} · {dismissal.season}</p>
+      <h1>They have decided to go in a different direction.</h1>
+      <p>{cause}</p>
+    </header>
+
+    <article className="panel">
+      <p className="eyebrow">{dismissal.tenure} {dismissal.tenure === 1 ? "season" : "seasons"} in the chair</p>
+      <dl className="career-record">
+        <div><dt>Record</dt><dd>{totals.wins}–{totals.losses}</dd></div>
+        <div><dt>National titles</dt><dd>{titles}</dd></div>
+        <div><dt>Final ranking</dt><dd>#{program.nationalRank}</dd></div>
+        <div><dt>Fan base</dt><dd>{program.fanBase.toLocaleString()}</dd></div>
+        <div><dt>Prestige</dt><dd>{program.prestige}</dd></div>
+        <div><dt>Left the books at</dt><dd>${(program.budget / 1_000_000).toFixed(1)}M</dd></div>
+      </dl>
+    </article>
+
+    <div className="job-actions">
+      <button disabled={busy} onClick={onStartOver}>Take another job</button>
+    </div>
+  </main>;
+}
+
+/**
+ * The board's verdict, with its arithmetic shown.
+ *
+ * Every line is a reason the engine actually applied, carrying the signed
+ * number it moved. That is the whole design: a career can end here, so the
+ * player has to be able to read back exactly why, and add it up himself if he
+ * wants to. Nothing on this screen is a summary of something hidden.
+ *
+ * Rendered before the step is advanced, so it is a projection of the verdict;
+ * it comes from `jobReview`, which is the same call the engine will make.
+ */
+function BoardReview({ game }: { game: GameView }): ReactElement {
+  const review = jobReview(game.state, game.playerProgramId);
+  const program = game.state.programs[game.playerProgramId]!;
+  if (!review) return <article className="panel"><p>No review available.</p></article>;
+
+  const movement = review.securityAfter - review.securityBefore;
+  return <article className={`panel board-review ${review.survives ? "" : "dismissed"}`}>
+    <header className="board-review-head">
+      <div>
+        <p className="eyebrow">{program.name} · {game.state.season}</p>
+        <h2>{review.wins}–{review.losses}, against {review.target} asked for</h2>
+      </div>
+      <div className="board-review-verdict">
+        <span className="verdict-label">{jobVerdictLabel(review.verdict)}</span>
+        <span className="verdict-number">{review.securityAfter}</span>
+        <span className="verdict-move">
+          {movement === 0 ? "no change" : `${movement > 0 ? "+" : ""}${movement} from ${review.securityBefore}`}
+        </span>
+      </div>
+    </header>
+
+    <ul className="board-review-reasons">
+      {review.reasons.map((reason, index) => (
+        <li key={index} className={reason.delta > 0 ? "up" : reason.delta < 0 ? "down" : "flat"}>
+          <span className="reason-label">{reason.label}</span>
+          <span className="reason-delta">
+            {reason.delta === 0 ? "—" : `${reason.delta > 0 ? "+" : ""}${reason.delta}`}
+          </span>
+        </li>
+      ))}
+    </ul>
+
+    <p className="board-review-outcome">
+      {review.survives
+        ? review.verdict === "FINAL_WARNING"
+          ? "You keep the job. You will not keep it through another year like this one."
+          : review.verdict === "HOT_SEAT"
+            ? "You keep the job, and everybody knows what next season is."
+            : "You keep the job."
+        : review.mandateExpired
+          // The number can be excellent and the tenure still over — a coach who
+          // went 13–1 reads "Dismissed" beside a 95, which needs saying out loud
+          // or the screen looks broken.
+          ? `You are relieved of your duties. ${review.securityAfter >= 60
+              ? "Your record was never the problem. You were hired to win a national championship, and that is the job you did not do."
+              : "You were hired to win a national championship, and the time is up."}`
+          : "You are relieved of your duties. Thanks for your service."}
+      {review.mandateSeasonsLeft !== null && review.survives
+        ? ` ${review.mandateSeasonsLeft} ${review.mandateSeasonsLeft === 1 ? "season" : "seasons"} left on the title mandate.`
+        : ""}
+    </p>
+  </article>;
+}
 
 /** What the step the player just closed actually did. Saturday names Monday. */
 function OffseasonRecap({ game }: { game: GameView }): ReactElement | null {

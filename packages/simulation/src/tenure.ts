@@ -36,7 +36,13 @@ export const CHAMPIONSHIP_BONUS = 25;
 export const PLAYOFF_BONUS = 10;
 /** Running the athletic department underwater for a season. */
 export const INSOLVENCY_PENALTY = 20;
-/** Letting a championship mandate expire. Usually terminal, which is the point. */
+/**
+ * Retained only so a save or a caller referring to it still resolves. An expired
+ * mandate no longer subtracts anything — it ends the tenure outright. See the
+ * comment in `jobReview` for the two defects that produced that change.
+ *
+ * @deprecated An expired mandate is a condition, not a penalty.
+ */
 export const MANDATE_FAILURE_PENALTY = 60;
 /** A first-year coach inherited the roster, so his first review halves the damage. */
 export const FIRST_YEAR_DISCOUNT = 0.5;
@@ -116,6 +122,8 @@ export interface JobReview {
   survives: boolean;
   /** Seasons left on the mandate after this review, when the job carries one. */
   mandateSeasonsLeft: number | null;
+  /** True on the one review where a title mandate ran out. Ends the tenure by itself. */
+  mandateExpired: boolean;
 }
 
 const round = (value: number): number => Math.round(value);
@@ -150,16 +158,34 @@ export function jobReview(
   const target = expectedWins(program.tier);
   const reasons: JobReviewReason[] = [];
 
-  const winDelta = (program.wins - target) * WIN_WEIGHT;
+  // Mid-season, the useful question is "if I finish like this", not "if the
+  // season stopped this instant". Grading the raw record told a 4–0 team it was
+  // on the hot seat, because four wins is six short of a power program's ten —
+  // true of the record and false of the season. Once every game is played the
+  // pace *is* the record, so the verdict at the board review is unchanged and
+  // the projection still cannot drift from it.
+  const played = program.wins + program.losses;
+  const scheduled = state.schedule.filter(
+    (game) => game.homeProgramId === programId || game.awayProgramId === programId
+  ).length;
+  const remaining = Math.max(0, scheduled - played);
+  const projecting = remaining > 0 && played > 0;
+  const wins = projecting ? Math.round((program.wins / played) * scheduled) : program.wins;
+  const losses = projecting ? scheduled - wins : program.losses;
+  const record = projecting
+    ? `On pace for ${wins}–${losses}`
+    : `${wins}–${losses}`;
+
+  const winDelta = (wins - target) * WIN_WEIGHT;
   if (winDelta !== 0) {
     reasons.push({
       label: winDelta > 0
-        ? `${program.wins}–${program.losses}, ${program.wins - target} clear of the ${target} they asked for`
-        : `${program.wins}–${program.losses}, ${target - program.wins} short of the ${target} they asked for`,
+        ? `${record}, ${wins - target} clear of the ${target} they asked for`
+        : `${record}, ${target - wins} short of the ${target} they asked for`,
       delta: winDelta
     });
   } else {
-    reasons.push({ label: `${program.wins}–${program.losses}, exactly the ${target} they asked for`, delta: 0 });
+    reasons.push({ label: `${record}, exactly the ${target} they asked for`, delta: 0 });
   }
 
   const wonTitle = history?.nationalChampionProgramId === programId;
@@ -186,17 +212,31 @@ export function jobReview(
     }
   }
 
-  // The mandate is checked last so its penalty reads as the closing line, and
-  // it is only ever fatal on the season the clock actually runs out.
+  // An expired mandate is a *condition*, not arithmetic.
+  //
+  // It was first built as a large penalty, and playing three seasons of a
+  // Championship Mandate career showed why that is wrong twice over. A coach
+  // who went 12-2, 13-1 and 14-1 banked about +31 a season, so the penalty was
+  // something a winning program simply absorbed — a mandate a good coach
+  // survives is not a mandate. And because the clock kept counting past zero,
+  // the same penalty was charged again every following season against a
+  // "-1 seasons left" that means nothing.
+  //
+  // Being hired to win a title and not winning one ends the tenure directly.
+  // The reason carries no delta, so the printed arithmetic still sums exactly
+  // to the movement while the verdict is decided by the condition.
   let mandateSeasonsLeft = program.championshipDeadline ?? null;
+  let mandateExpired = false;
   if (history && mandateSeasonsLeft !== null) {
     if (wonTitle) {
       mandateSeasonsLeft = null;
-      reasons.push({ label: "Championship mandate satisfied", delta: 0 });
+      reasons.push({ label: "Championship mandate satisfied — the job is yours", delta: 0 });
     } else {
       mandateSeasonsLeft -= 1;
       if (mandateSeasonsLeft <= 0) {
-        reasons.push({ label: "Hired to win a title and did not", delta: -MANDATE_FAILURE_PENALTY });
+        mandateSeasonsLeft = 0;
+        mandateExpired = true;
+        reasons.push({ label: "Hired to win a national title, and the time is up", delta: 0 });
       } else {
         reasons.push({
           label: `${mandateSeasonsLeft} ${mandateSeasonsLeft === 1 ? "season" : "seasons"} left to win a title`,
@@ -208,18 +248,19 @@ export function jobReview(
 
   const movement = reasons.reduce((total, reason) => total + reason.delta, 0);
   const securityAfter = clamp(round(program.coachSecurity + movement), 0, 100);
-  const verdict = jobVerdict(securityAfter);
+  const verdict = mandateExpired ? "FIRED" : jobVerdict(securityAfter);
 
   return {
     programId,
     target,
-    wins: program.wins,
-    losses: program.losses,
+    wins,
+    losses,
     securityBefore: program.coachSecurity,
     securityAfter,
     reasons,
     verdict,
     survives: verdict !== "FIRED",
-    mandateSeasonsLeft
+    mandateSeasonsLeft,
+    mandateExpired
   };
 }

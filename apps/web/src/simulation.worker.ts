@@ -138,6 +138,11 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       if (!program) throw new Error("That program is not in this league.");
       program.budget = profile.budget;
       program.coachSecurity = profile.initialSecurity;
+      // The mandate is a property of the career the player chose, not a rule the
+      // league plays under — every rival keeps a null deadline. Without this the
+      // board had nothing to count down and "win a title in two years" was a
+      // sentence on the job card that nothing ever enforced.
+      program.championshipDeadline = profile.championshipDeadline;
       activeProgramId = program.id;
       reply({ type: "READY", requestId: request.requestId, state: activeState, playerProgramId: program.id, events: [] });
       return;

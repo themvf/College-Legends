@@ -5512,7 +5512,7 @@ function resolveBoardReview(state: GameState, events: GameEvent[]): void {
     const headCoach = Object.values(state.staff).find(
       (member) => member.programId === programId && member.role === "HEAD_COACH"
     );
-    const cause = (program.championshipDeadline !== null && program.championshipDeadline !== undefined && review.mandateSeasonsLeft !== null && review.mandateSeasonsLeft <= 0)
+    const cause = review.mandateExpired
       ? "MANDATE"
       : program.budget < 0 ? "INSOLVENCY" : "EXPECTATIONS";
     events.push({
@@ -5521,7 +5521,11 @@ function resolveBoardReview(state: GameState, events: GameEvent[]): void {
       programId,
       staffId: headCoach?.id ?? null,
       staffName: headCoach?.name ?? "Nobody",
-      tenure: program.coachTenure,
+      // The season just played counts. `coachTenure` is only incremented on
+      // survival, so at the moment of a dismissal it still holds the seasons
+      // *before* this one — reporting it raw put "1 season in the chair" beside
+      // a two-year 25-3 record on the career screen.
+      tenure: program.coachTenure + 1,
       cause
     });
     if (headCoach) delete state.staff[headCoach.id];

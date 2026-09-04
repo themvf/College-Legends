@@ -84,6 +84,27 @@ test("every reason the board gives sums to the movement it made", () => {
   }
 });
 
+test("mid-season the board is projected on pace, not on a half-finished record", () => {
+  // Found in the browser: an undefeated 4-0 power program was told it was on
+  // the hot seat, because four wins is six short of ten. True of the record and
+  // false of the season. Grading the pace fixes it without weakening the review,
+  // since once every game is played the pace is the record.
+  let state = activeLeague("tenure-pace", 12);
+  const programId = Object.keys(state.programs)[0];
+  for (let week = 0; week < 4; week += 1) state = advanceWeek(state).state;
+  const program = state.programs[programId];
+  const played = program.wins + program.losses;
+  assert.ok(played > 0 && state.phase === "REGULAR_SEASON", "still mid-season with games played");
+
+  const review = jobReview(state, programId);
+  const scheduled = state.schedule.filter(
+    (game) => game.homeProgramId === programId || game.awayProgramId === programId
+  ).length;
+  assert.equal(review.wins + review.losses, scheduled, "the projection covers a whole season");
+  assert.ok(review.wins >= program.wins, "and never projects fewer wins than are already banked");
+  assert.match(review.reasons[0].label, /on pace/i, "and says plainly that it is a projection");
+});
+
 test("a mid-season projection is the same verdict the board will reach", () => {
   // The whole point of the review being pure arithmetic: the player can read the
   // outcome off the dashboard in week 9 rather than being ambushed in the
@@ -124,6 +145,7 @@ test("a coach who runs out of security is dismissed and the chair empties", () =
   assert.ok(fired, "a coach this far under water must actually lose the job");
   assert.equal(fired.cause, "EXPECTATIONS");
   assert.equal(fired.staffId, headCoachBefore.id);
+  assert.equal(fired.tenure, 5, "the season just played counts toward the tenure being ended");
   assert.equal(reviewOf(result.events, programId).verdict, "FIRED");
   assert.equal(result.state.staff[headCoachBefore.id], undefined, "the chair is vacant");
 });
@@ -166,6 +188,40 @@ test("a championship mandate that expires ends the job", () => {
   assert.ok(fired, `hitting ${target} wins does not satisfy a job hired to win a title`);
   assert.equal(fired.cause, "MANDATE");
   assert.ok(MANDATE_FAILURE_PENALTY > 55 - target * 0, "the penalty is meant to be terminal from a normal number");
+});
+
+test("an expired mandate ends the job even for a coach who is winning big", () => {
+  // Found by playing three seasons of a Championship Mandate career in the
+  // browser rather than by a unit test: the mandate began life as a large
+  // penalty, and a coach going 12-2, 13-1, 14-1 banked about +31 a season and
+  // simply absorbed it. A mandate a winning coach survives is not a mandate.
+  const state = toBoardReview("tenure-mandate-winner");
+  const programId = Object.keys(state.programs)[0];
+  const target = expectedWins(state.programs[programId].tier);
+  scenario(state, programId, { wins: target + 4, security: 90, tenure: 3, mandate: 1 });
+
+  const result = advanceOffseasonStep(state);
+  const fired = result.events.find((event) => event.type === "COACH_FIRED" && event.programId === programId);
+  assert.ok(fired, "winning does not buy your way out of the job you were actually hired to do");
+  assert.equal(fired.cause, "MANDATE");
+  assert.equal(reviewOf(result.events, programId).verdict, "FIRED");
+});
+
+test("the mandate penalty is charged once, not every season afterwards", () => {
+  // The same browser run showed the clock counting to "-1 seasons left" and
+  // charging the penalty again each year. An expired mandate ends the tenure,
+  // so it can never be charged twice; the successor inherits no deadline.
+  const state = toBoardReview("tenure-mandate-once");
+  const programId = Object.keys(state.programs)[0];
+  const target = expectedWins(state.programs[programId].tier);
+  scenario(state, programId, { wins: target + 4, security: 90, tenure: 3, mandate: 1 });
+
+  const after = advanceOffseasonStep(state).state;
+  assert.equal(after.programs[programId].championshipDeadline, null, "the mandate does not outlive the coach it ended");
+  assert.ok(
+    (after.programs[programId].coachSecurity ?? 0) > DISMISSAL_THRESHOLD,
+    "and the next man is not already condemned by it"
+  );
 });
 
 test("a mandate with seasons left only counts down", () => {
