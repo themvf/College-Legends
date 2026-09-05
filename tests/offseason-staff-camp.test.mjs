@@ -9,6 +9,7 @@ import {
   playerInjuryRisk,
   staffBuyout,
   staffCandidatesFor,
+  arrivingStaffId,
   staffCard,
   installIfScheme,
   coachSchemeFit,
@@ -251,4 +252,42 @@ test("the scheme picker's install number is the same number the staff card posts
   });
   const median = [...spreads].sort((left, right) => left - right)[Math.floor(spreads.length / 2)];
   assert.ok(median >= 4, `which scheme a coordinator knows must be worth something (median spread ${median})`);
+});
+
+test("the coaching market does not offer the coach who already holds the post", () => {
+  // A hire keeps the market's candidate id inside the staff id it derives, so
+  // the man just appointed reappeared in his own replacement list the next time
+  // it was opened — with a signing cost beside him. The engine refuses it
+  // ("He already has the job."), but a market that offers somebody the engine
+  // would refuse is a screen contradicting itself before anybody clicks.
+  const state = createFictionalLeague("market-incumbent", 12);
+  const programId = "program-1";
+  const post = Object.values(state.staff)
+    .find((member) => member.programId === programId && member.role === "OFFENSIVE_COORDINATOR");
+  assert.ok(post);
+
+  const offered = staffCandidatesFor(state, programId, post.id);
+  assert.ok(offered.length > 1, "the market must offer somebody to begin with");
+
+  // Put the first candidate in the chair exactly as a hire does, then reopen
+  // the market for the post he now holds.
+  const target = offered[0];
+  const arriving = arrivingStaffId(programId, target.id);
+  const hired = { ...state, staff: { ...state.staff } };
+  delete hired.staff[post.id];
+  hired.staff[arriving] = { ...post, id: arriving, name: target.name, rating: target.rating };
+
+  const reopened = staffCandidatesFor(hired, programId, arriving);
+  assert.ok(
+    !reopened.some((candidate) => candidate.id === target.id),
+    "the man in the chair must not be offered his own job"
+  );
+  assert.equal(reopened.length, offered.length - 1, "and only he should be missing");
+
+  // The rest of the market is unchanged: it is keyed on the post so a player
+  // can go back to a coach they passed over, and filtering must not re-roll it.
+  assert.deepEqual(
+    reopened.map((candidate) => candidate.id).sort(),
+    offered.filter((candidate) => candidate.id !== target.id).map((candidate) => candidate.id).sort()
+  );
 });

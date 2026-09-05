@@ -372,6 +372,14 @@ export function staffBuyout(outgoing: Readonly<Pick<StaffMember, "salary">>): nu
  * Replacements available for a post. Drawn from the save seed so the market is
  * stable rather than re-rolled every time the screen is opened.
  */
+/**
+ * The staff id a candidate would be given on arrival. Shared with the hire so
+ * the market cannot offer somebody the engine would then refuse.
+ */
+export function arrivingStaffId(programId: string, candidateId: string): string {
+  return `${programId}-staff-${candidateId.replace(/[^A-Za-z0-9]/g, "-")}`;
+}
+
 export function staffCandidates(
   state: Readonly<GameState>,
   programId: string,
@@ -444,5 +452,15 @@ export function staffCandidates(
         ? `Won\u2019t return your calls — ${program.name} isn\u2019t a big enough job yet.`
         : null
     };
-  }).sort((left, right) => Number(Boolean(left.unavailableReason)) - Number(Boolean(right.unavailableReason)) || right.rating - left.rating);
+  })
+    // A hire keeps the market's own candidate id in the staff id it derives, so
+    // the man you just appointed reappears in his own replacement list the next
+    // time it is opened. The engine already refuses it — "He already has the
+    // job." — but a market that offers the incumbent as a signing, with a
+    // signing cost beside him, is a screen contradicting itself before anybody
+    // clicks. Filtered rather than re-rolled: re-rolling would move every other
+    // candidate too, and the market is deliberately stable so a player can go
+    // back to the coach he passed over.
+    .filter((candidate) => arrivingStaffId(programId, candidate.id) !== staffId)
+    .sort((left, right) => Number(Boolean(left.unavailableReason)) - Number(Boolean(right.unavailableReason)) || right.rating - left.rating);
 }

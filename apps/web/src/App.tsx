@@ -1226,7 +1226,11 @@ function ProgramDashboard({ game, roster, inFlightDecision, onNavigate }: {
           {replacement
             ? `${replacement.eligibility.rosterStatus === "WALK_ON" ? "Emergency walk-on " : ""}${replacement.name} takes his place.`
             : "The next healthy player moves into the rotation."}
-          {unitImpact ? ` ${unitImpact}${currentInjuryEvent.unitRatingChangePercent !== null ? ` · ${Math.abs(currentInjuryEvent.unitRatingChangePercent).toFixed(1)}% lower unit rating` : ""}.` : ""}
+          {/* Templating one sentence made a season-ending injury report as
+              "0.0% lower unit rating" whenever the next man was as good — which
+              reads as "this cost nothing" about the worst news of the season.
+              Branch on the magnitude and say what actually happened. */}
+          {unitImpact ? ` ${unitImpact}${absorbedNote(currentInjuryEvent.unitRatingChangePercent)}` : ""}
         </p>
         <button className="box-score-button" onClick={() => onNavigate("DEPTH_CHART")}>Adjust depth chart</button>
       </article>;
@@ -1663,7 +1667,7 @@ function weeklyStoryBody(story: WeeklyStory, game: GameView): string {
       : "the next player on the depth chart";
     const unit = story.affectedUnit ? unitLabel(story.affectedUnit).toLowerCase() : "the affected unit";
     const impact = story.unitRatingBefore !== null && story.unitRatingAfter !== null
-      ? ` ${unitLabel(story.affectedUnit!)} falls from ${story.unitRatingBefore.toFixed(1)} to ${story.unitRatingAfter.toFixed(1)}${story.unitRatingChangePercent !== null ? `, a ${Math.abs(story.unitRatingChangePercent).toFixed(1)}% drop in the unit rating` : ""}.`
+      ? ` ${unitLabel(story.affectedUnit!)} goes from ${story.unitRatingBefore.toFixed(1)} to ${story.unitRatingAfter.toFixed(1)}${absorbedNote(story.unitRatingChangePercent)}`
       : "";
     if (story.angle === "EMERGENCY_QB") {
       return `Every scholarship quarterback is unavailable. Emergency walk-on ${replacement} will start and remain active until a rostered quarterback returns.${impact}`;
@@ -2942,6 +2946,22 @@ function WeekReport({ game }: { game: GameView }): ReactElement {
 }
 
 /** 1st, 2nd, 3rd — for saying where an option ranks rather than what it scores. */
+/**
+ * What an injury actually cost the unit, in words that match the size of it.
+ *
+ * One template produced "0.0% lower unit rating" for a season-ending injury
+ * whenever the replacement happened to be as good — a sentence that reads as
+ * "this cost nothing" attached to the worst news of a season. Below a twentieth
+ * of a point the honest statement is that the depth absorbed it, which is a real
+ * and interesting outcome rather than a rounding artefact.
+ */
+function absorbedNote(changePercent: number | null): string {
+  if (changePercent === null) return ".";
+  const size = Math.abs(changePercent);
+  if (size < 0.05) return " — the man behind him is just as good, so the unit does not miss a beat.";
+  return ` · ${size.toFixed(1)}% lower unit rating.`;
+}
+
 function ordinal(value: number): string {
   const tens = value % 100;
   if (tens >= 11 && tens <= 13) return `${value}th`;

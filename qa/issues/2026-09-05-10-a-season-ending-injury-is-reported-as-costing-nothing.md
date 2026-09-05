@@ -4,7 +4,7 @@
 |---|---|
 | **ID** | 2026-09-05-10 |
 | **Severity** | P3 |
-| **Status** | open |
+| **Status** | fixed |
 | **Area** | Injuries / health |
 | **Found by** | new-player-tester (cycle 2 cold read), measured by qa-lead |
 | **Found in** | `084652b`, still present at `02c3c52` |

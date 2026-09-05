@@ -38,7 +38,7 @@ import {
   WORTH_SCOUTING
 } from "./department.js";
 import { pricingPosture, RIVAL_PRICING_CEILING, RIVAL_PRICING_FLOOR, activeSponsorship, advertisingReach, createSponsorshipProgramState, DEFENSIVE_PRESETS, developmentCandidates, fairTicketPrice, matchingPreset, MAXIMUM_TICKET_PRICE, MAXIMUM_WEEKLY_ADVERTISING, MINIMUM_TICKET_PRICE, OFFENSIVE_PRESETS, pricingGoodwill, projectGate, projectSponsorshipOffer, sponsorshipMarketValue, sponsorshipPayment } from "./business.js";
-import { MAXIMUM_REPS_PER_SIDE, TRAINING_CAMP_CONDITIONING_RISK, TRAINING_CAMP_INSTALL_BONUS, TRAINING_CAMP_INSTALL_RISK, TRAINING_CAMP_WEEKS, planExecution, repsFatigue, staffBuyout, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
+import { arrivingStaffId, MAXIMUM_REPS_PER_SIDE, TRAINING_CAMP_CONDITIONING_RISK, TRAINING_CAMP_INSTALL_BONUS, TRAINING_CAMP_INSTALL_RISK, TRAINING_CAMP_WEEKS, planExecution, repsFatigue, staffBuyout, staffCandidates, staffModifiers, staffSalary } from "./installation.js";
 import { foldSeasonStats } from "./persistence.js";
 import { jobReview, startingSecurity } from "./tenure.js";
 import { mediaRights, operatingCost, OPENING_RESERVE } from "./economy.js";
@@ -199,7 +199,7 @@ export {
   ticketDemandMultiplier
 } from "./business.js";
 export type { GateProjection, SponsorshipPayment, SponsorshipProjection, StrategyPreset } from "./business.js";
-export { BUYOUT_SALARY_FRACTION, MAXIMUM_REPS_PER_SIDE, TRAINING_CAMP_CONDITIONING_RISK, TRAINING_CAMP_INSTALL_BONUS, TRAINING_CAMP_INSTALL_RISK, TRAINING_CAMP_WEEKS, planExecution, planInstaller, installIfScheme, repsFatigue, staffBuyout, staffCard, staffModifiers, staffSalary } from "./installation.js";
+export { arrivingStaffId, BUYOUT_SALARY_FRACTION, MAXIMUM_REPS_PER_SIDE, TRAINING_CAMP_CONDITIONING_RISK, TRAINING_CAMP_INSTALL_BONUS, TRAINING_CAMP_INSTALL_RISK, TRAINING_CAMP_WEEKS, planExecution, planInstaller, installIfScheme, repsFatigue, staffBuyout, staffCard, staffModifiers, staffSalary } from "./installation.js";
 export {
   filmGamesAvailable,
   preparationWeeklyPoints,
@@ -3102,7 +3102,7 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         });
         continue;
       }
-      const arrivingId = `${program.id}-staff-${candidate.id.replace(/[^A-Za-z0-9]/g, "-")}`;
+      const arrivingId = arrivingStaffId(program.id, candidate.id);
       if (arrivingId === command.staffId) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "He already has the job." });
         continue;

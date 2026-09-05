@@ -4,7 +4,7 @@
 |---|---|
 | **ID** | 2026-09-05-11 |
 | **Severity** | P3 |
-| **Status** | open |
+| **Status** | fixed |
 | **Area** | Staff hiring |
 | **Found by** | new-player-tester (cycle 2 cold read), confirmed in code by qa-lead |
 | **Found in** | `084652b`, still present at `02c3c52` |
