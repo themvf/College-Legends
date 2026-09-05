@@ -22,6 +22,7 @@ import type {
   SeasonAwardType,
   SchemeIdentity,
   StaffCandidate,
+  StaffModifier,
   StaffFocus,
   StaffMember,
   StaffSkill,
@@ -693,12 +694,15 @@ function coachRuns(preference: SchemeIdentity, side: "offense" | "defense" | nul
  * take it. Shared by the takeover screen and the in-season staff screen so a
  * hire is described the same way whenever you make it.
  */
-function coachOptions({ member, candidates, identity, budget, onHire }: {
+function coachOptions({ member, candidates, identity, budget, onHire, incumbentOutcomes }: {
   member: StaffMember;
   candidates: StaffCandidate[];
   identity: SchemeIdentity;
   budget: number;
   onHire: (candidateId: string) => void;
+  /** `staffCard`'s posted modifiers for the man in the chair, which carry his
+   *  scheme fit and the share of his week he actually spends preparing. */
+  incumbentOutcomes: StaffModifier[];
 }): CoachOptionView[] {
   const side = member.role === "OFFENSIVE_COORDINATOR" ? "offense"
     : member.role === "DEFENSIVE_COORDINATOR" ? "defense" : null;
@@ -712,7 +716,12 @@ function coachOptions({ member, candidates, identity, budget, onHire }: {
     traitBlurb: STAFF_TRAITS[member.trait].blurb,
     hours: strengthPost ? null : staffCapacity(member.rating, member.trait),
     skills: strengthPost ? [] : staffSkills(member),
-    outcomes: strengthPost ? staffModifiers(member) : [],
+    // Was `strengthPost ? … : []`, so every post except the strength coach
+    // showed nothing — including the coordinators, whose card exists to state
+    // the install percentage. These come from `staffCard`, which supplies the
+    // scheme fit and prepare share, so the posted number is the one the engine
+    // runs rather than a raw-rating guess.
+    outcomes: incumbentOutcomes,
     runs: coachRuns(member.schemePreference, side),
     fitNote: side ? schemeFitLabel(memberFit) : null,
     fitWarning: Boolean(side) && memberFit < 0.9,
@@ -736,7 +745,8 @@ function coachOptions({ member, candidates, identity, budget, onHire }: {
       traitBlurb: candidate.traitBlurb,
       hours: strengthPost ? null : candidate.hours,
       skills: strengthPost ? [] : candidate.skills,
-      outcomes: strengthPost ? staffModifiers(candidate) : [],
+      // The market already prices these against the post being filled.
+      outcomes: candidate.modifiers,
       runs: coachRuns(candidate.schemePreference, side),
       fitNote: side ? candidate.schemeFitNote : null,
       fitWarning: Boolean(side) && candidate.schemeFit < 0.9,
@@ -851,6 +861,7 @@ function SetUpProgram({ busy, game, onPrepare, onDone }: {
       const candidates = open ? staffCandidatesFor(game.state, programId, member.id) : [];
       const options = coachOptions({
         member, candidates, identity, budget: program.budget,
+        incumbentOutcomes: staffCard(game.state, programId, member.id),
         onHire: (candidateId) => onPrepare({ type: "REPLACE_STAFF", programId, staffId: member.id, candidateId })
       });
       return <article className={open ? "panel staff-card span-two" : "panel staff-card"} key={role}>
@@ -1692,6 +1703,7 @@ function Staff({ game, pending, onQueue }: { game: GameView; pending: GameComman
       const candidates = openMarket === member.id ? staffCandidatesFor(game.state, programId, member.id) : [];
       const options = coachOptions({
         member, candidates, identity: program.schemeIdentity, budget: program.budget,
+        incumbentOutcomes: staffCard(game.state, programId, member.id),
         onHire: (candidateId) => {
           onQueue({ type: "REPLACE_STAFF", programId, staffId: member.id, candidateId });
           setOpenMarket(undefined);
@@ -2088,7 +2100,11 @@ function EventList({ events, game }: { events: GameEvent[]; game: GameView }): R
     return eventRelevantToProgram(event, game);
   }).slice(-12).reverse();
   if (!visible.length) return <p className="muted">Quiet week. Nothing worth reporting.</p>;
-  return <div className="inbox-list">{visible.map((event, index) => <article key={`${event.type}-${"week" in event ? event.week : "season" in event ? event.season : 0}-${index}`}><span>{eventIcon(event)}</span><div><strong>{eventTitle(event)}</strong><p>{eventText(event, game)}</p></div></article>)}</div>;
+  return <div className="inbox-list">{visible.flatMap((event, index) => {
+    const text = eventText(event, game);
+    if (!text) return [];
+    return [<article key={`${event.type}-${"week" in event ? event.week : "season" in event ? event.season : 0}-${index}`}><span>{eventIcon(event)}</span><div><strong>{eventTitle(event)}</strong><p>{text}</p></div></article>];
+  })}</div>;
 }
 
 function eventRelevantToProgram(event: GameEvent, game: GameView): boolean {
@@ -2109,6 +2125,10 @@ function eventRelevantToProgram(event: GameEvent, game: GameView): boolean {
     || event.type === "RECRUITING_POINTS_ADDED" || event.type === "PROSPECT_ENROLLED"
     || event.type === "PROSPECT_OFFERED" || event.type === "RECRUITING_VISIT_SCHEDULED" || event.type === "PROSPECT_COMMITMENT_VOIDED"
     || event.type === "SPONSORSHIP_ACCEPTED" || event.type === "SPONSORSHIP_PAYMENT"
+    // Every program in the league meets somebody at the door on the same weeks,
+    // so an unscoped BOOSTER_OFFERED filled the inbox with seventy-one other
+    // programs' visitors. The player's own is a modal he has already answered.
+    || event.type === "BOOSTER_OFFERED" || event.type === "BOOSTER_RESOLVED"
     || event.type === "COMMAND_REJECTED") {
     return event.programId === programId;
   }
@@ -2142,7 +2162,7 @@ function eventTitle(event: GameEvent): string {
   return label(event.type);
 }
 
-function eventText(event: GameEvent, game: GameView): string {
+function eventText(event: GameEvent, game: GameView): string | null {
   if (event.type === "GAME_COMPLETED") return `${game.state.programs[event.homeProgramId]?.name} ${event.homeScore}, ${game.state.programs[event.awayProgramId]?.name} ${event.awayScore}`;
   if (event.type === "PLAYOFF_GAME_COMPLETED") return `${label(event.round)}: ${game.state.programs[event.homeProgramId]?.name} ${event.homeScore}, ${game.state.programs[event.awayProgramId]?.name} ${event.awayScore}.`;
   if (event.type === "NATIONAL_CHAMPION_CROWNED") return `${game.state.programs[event.championProgramId]?.name} won the national title over ${game.state.programs[event.runnerUpProgramId]?.name} · ${signedNumber(event.fanGain)} fans · +${event.prestigeGain} prestige · ${signedMoney(event.revenueGain)} postseason revenue.`;
@@ -2217,7 +2237,20 @@ function eventText(event: GameEvent, game: GameView): string {
   if (event.type === "COMMAND_REJECTED") return event.reason;
   if (event.type === "PLAYER_DEPARTED") return `${game.state.players[event.playerId]?.name ?? "Player"} left the program.`;
   if (event.type === "RECRUITING_CONTEST_RESOLVED") return `${game.state.prospects[event.prospectId]?.name ?? "Prospect"} chose ${game.state.programs[event.winnerProgramId]?.name}.`;
-  return "Weekly development report completed.";
+  if (event.type === "NIL_OFFER_RESOLVED") {
+    const prospect = game.state.prospects[event.prospectId]?.name ?? "A recruit";
+    const offer = `${money(event.weeklyAmount)} a week`;
+    if (event.result === "WON") return `${prospect} took your ${offer} offer.`;
+    if (event.result === "WITHDRAWN") return `Your ${offer} offer to ${prospect} came off the table — his board closed.`;
+    return `${prospect} turned down your ${offer} and chose ${game.state.programs[event.winnerProgramId ?? ""]?.name ?? "somewhere else"}.`;
+  }
+  // No renderer, no row. This used to fall through to "Weekly development
+  // report completed.", so every unhandled event borrowed a sentence about a
+  // different thing entirely — a cold player read twelve identical
+  // "Booster Offered / Weekly development report completed." rows and could not
+  // tell which part was the lie. An inbox that invents a plausible sentence is
+  // worse than one that stays quiet.
+  return null;
 }
 
 function SectionHeading({ eyebrow, title, detail }: { eyebrow: string; title: string; detail: string }): ReactElement {
@@ -3412,6 +3445,7 @@ function CoachingMarket({ game, busy, pending, onQueue }: {
       const candidates = open ? staffCandidatesFor(game.state, programId, member.id) : [];
       const options = coachOptions({
         member, candidates, identity: program.schemeIdentity, budget: program.budget,
+        incumbentOutcomes: staffCard(game.state, programId, member.id),
         onHire: (candidateId) => onQueue({ type: "REPLACE_STAFF", programId, staffId: member.id, candidateId })
       });
       return <article className={open ? "panel staff-card span-two" : "panel staff-card"} key={role}>
