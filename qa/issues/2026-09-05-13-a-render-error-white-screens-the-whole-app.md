@@ -4,7 +4,7 @@
 |---|---|
 | **ID** | 2026-09-05-13 |
 | **Severity** | P3 |
-| **Status** | open |
+| **Status** | fixed |
 | **Area** | Career loop / performance |
 | **Found by** | qa-lead, while triaging [2026-09-05-01](2026-09-05-01-recruiting-board-white-screens-on-any-unevaluated-prospect.md) |
 | **Found in** | `02c3c52` |

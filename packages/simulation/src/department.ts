@@ -410,9 +410,9 @@ export function opponentValue(
   const press = Math.round(4 + standing * 20);
   const value = Math.round(clamp(Math.pow(standing, 1.5) * 88 + upset * 12 + 4, 2, 100));
   const note = value >= MARQUEE_VALUE
-    ? `#${opponent.nationalRank}. Beat them and you pick up around ${followers.toLocaleString()} fans and ${press} points of national buzz. This is the one.`
+    ? `#${opponent.nationalRank}. Beat them and you pick up around ${followers.toLocaleString()} fans and ${press} national press. This is the one.`
     : value >= WORTH_SCOUTING
-      ? `#${opponent.nationalRank}. A win here is worth about ${followers.toLocaleString()} fans and ${press} points of national buzz.`
+      ? `#${opponent.nationalRank}. A win here is worth about ${followers.toLocaleString()} fans and ${press} national press.`
       : `#${opponent.nationalRank}. Maybe ${followers.toLocaleString()} fans. Nobody's going to remember this one — save your points.`;
   return { value, note };
 }

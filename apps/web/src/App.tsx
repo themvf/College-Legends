@@ -143,6 +143,7 @@ import {
 } from "@college-legends/simulation";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 import { Recruiting as WarRoomRecruiting } from "./Recruiting.js";
+import { ErrorBoundary } from "./ErrorBoundary.js";
 import { recruitingCommandKey } from "./recruiting-view-model.js";
 import { weeklyPriorityDecision } from "./weekly-priority-decision.js";
 
@@ -1067,6 +1068,12 @@ function Dashboard({ game, screen, busy, error, pendingCommands, inFlightDecisio
       <Metric label="Roster" value={`${roster.length}/${program.scholarshipLimit}`} />
     </section>
     <ProgramNav screen={screen} isReview={isReview} isOffseason={isOffseason} onNavigate={onNavigate} />
+    {/* Scoped to the routed screen, so a screen that cannot draw itself leaves
+        the header and the navigation intact and can be walked away from — the
+        recruiting-board crash took the whole document with it. `key` resets the
+        boundary on navigation, otherwise the first failure sticks to every
+        screen you visit afterwards. */}
+    <ErrorBoundary scope={screen} key={screen} onReset={() => onNavigate("DASHBOARD")}>
     {screen === "DASHBOARD" && (isOffseason
       ? <>
           {/* The week-14 game, and any playoff game after it, used to be played
@@ -1093,6 +1100,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, inFlightDecisio
     {screen === "FINANCES" && <Finances game={game} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "RECRUITING" && <WarRoomRecruiting game={game} locked={isReview} pending={pendingCommands} onQueue={onQueue} />}
     {screen === "INBOX" && <Inbox game={game} />}
+    </ErrorBoundary>
   </main>;
 }
 
@@ -1229,7 +1237,10 @@ function ProgramDashboard({ game, roster, inFlightDecision, onNavigate }: {
       <div className="snapshot-list">
         <p><span>In the bank</span><strong>{money(program.budget)}</strong></p>
         <p><span>Prestige</span><strong>{program.prestige}/100</strong></p>
-        <p><span>They're talking about you</span><strong>{program.nationalPress}/100</strong></p>
+        {/* Was "They're talking about you" here, "national buzz" on the marquee
+            card and "national press points" on the sponsor panel — one quantity
+            under three names, none of which pointed at the others. */}
+        <p><span>National press<small>how widely you're talked about</small></span><strong>{program.nationalPress}/100</strong></p>
         <p><span>Starters average</span><strong>{(() => {
           const starters = startingLineup(game.state, program.id);
           const source = starters.length > 0 ? starters : roster;
@@ -1625,7 +1636,7 @@ function weeklyStoryBody(story: WeeklyStory, game: GameView): string {
       ? ` ${featured.name} led the story: ${story.featuredPlayerSummary}.`
       : "";
     const press = story.nationalPressChange !== 0
-      ? `${signedNumber(story.nationalPressChange)} national press points`
+      ? `${signedNumber(story.nationalPressChange)} national press`
       : `${signedNumber(story.localPressChange)} local press points`;
     return `${story.scoreFor}–${story.scoreAgainst}.${performance} The result moved ${signedNumber(story.fanChange)} school fans, ${press}, and left ${signedMoney(story.weeklyNet)} after expenses.`;
   }
@@ -1859,7 +1870,7 @@ function Finances({ game, pending, onQueue }: { game: GameView; pending: GameCom
       </div>
       <p className="muted">Everything the program has built costs something to keep running. Facilities and the squad are charged every week whether you play or not.</p>
     </article>}
-    <article className="panel"><p className="eyebrow">Sponsor market</p><h2>{money(marketValue)} of weekly reach</h2><p className="muted">Sponsors value the audience and recognition the program has already built. These four inputs set this season's offers.</p><div className="snapshot-list"><p><span>{compactNumber(program.fanBase)} fans × $1.25</span><strong>{money(program.fanBase * 1.25)}</strong></p><p><span>{program.nationalPress} national press points × $900</span><strong>{money(program.nationalPress * 900)}</strong></p><p><span>{program.prestige} prestige points × $400</span><strong>{money(program.prestige * 400)}</strong></p><p><span>{program.championships} titles × $15,000</span><strong>{money(program.championships * 15_000)}</strong></p></div></article>
+    <article className="panel"><p className="eyebrow">Sponsor market</p><h2>{money(marketValue)} of weekly reach</h2><p className="muted">Sponsors value the audience and recognition the program has already built. These four inputs set this season's offers.</p><div className="snapshot-list"><p><span>{compactNumber(program.fanBase)} fans × $1.25</span><strong>{money(program.fanBase * 1.25)}</strong></p><p><span>{program.nationalPress} national press × $900</span><strong>{money(program.nationalPress * 900)}</strong></p><p><span>{program.prestige} prestige points × $400</span><strong>{money(program.prestige * 400)}</strong></p><p><span>{program.championships} titles × $15,000</span><strong>{money(program.championships * 15_000)}</strong></p></div></article>
     {activeSponsor ? <article className="panel sponsor-active span-two">
       <p className="eyebrow">Primary sponsor · signed through Season {game.state.season}</p>
       <h2>{activeSponsor.sponsorName}</h2>
