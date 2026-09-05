@@ -4,7 +4,7 @@
 |---|---|
 | **ID** | 2026-09-05-04 |
 | **Severity** | P2 |
-| **Status** | open |
+| **Status** | fixed |
 | **Area** | Depth chart / rotation |
 | **Found by** | new-player-tester (cycle 2 cold read), reproduced by qa-lead |
 | **Found in** | `084652b`, still present at `02c3c52` |

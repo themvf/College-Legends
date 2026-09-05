@@ -75,6 +75,7 @@ import {
   MAXIMUM_TICKET_PRICE,
   MINIMUM_TICKET_PRICE,
   personnelLabel,
+  spotsForRoom,
   planExecution,
   installIfScheme,
   staffModifiers,
@@ -181,7 +182,12 @@ const facilities: FacilityType[] = ["TRAINING", "STADIUM", "ACADEMICS", "RECRUIT
 const FACILITY_NAMES: Record<FacilityType, string> = {
   TRAINING: "Weight room", STADIUM: "Stadium", ACADEMICS: "Academics", RECRUITING: "Recruiting", SCOUTING: "Scouting"
 };
-const starterCounts: Record<Player["position"], number> = { QB: 1, RB: 1, WR: 3, TE: 1, OL: 5, DL: 4, LB: 3, DB: 4, K: 1, P: 1 };
+// The depth chart used to carry this table frozen — QB 1, RB 1, WR 3, TE 1 —
+// which matches exactly one of the ten scheme combinations the game can run. A
+// Power Run program was told "WR 3 starters" while the engine fielded two, and
+// an Air Raid dresses four receivers and no tight end. `spotsForRoom` is what
+// the rotation actually uses, so the screen reads it rather than repeating a
+// guess at it.
 const descriptions: Record<CareerPath, string> = {
   DYNASTY_BUILDER: "Take an overlooked program and build a dynasty. Average players, a small budget, low expectations, and the longest leash.",
   PROGRAM_RISER: "Turn a capable mid-tier program into a national contender. Stronger players and resources, with real pressure to progress.",
@@ -1003,7 +1009,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, inFlightDecisio
     </section>
     <ProgramNav screen={screen} isReview={isReview} onNavigate={onNavigate} />
     {screen === "DASHBOARD" && <ProgramDashboard game={game} roster={roster} inFlightDecision={inFlightDecision} onNavigate={onNavigate} />}
-    {screen === "THIS_WEEK" && <WeekHub game={game} busy={busy} inFlightDecision={inFlightDecision} pending={pendingCommands} onQueue={onQueue} initialTab={weekTab} />}
+    {screen === "THIS_WEEK" && <WeekHub game={game} busy={busy} inFlightDecision={inFlightDecision} pending={pendingCommands} onQueue={onQueue} initialTab={weekTab} onNavigate={onNavigate} />}
     {screen === "WEEKLY_RECAPS" && <WeeklyRecaps game={game} />}
     {screen === "ROSTER" && <Roster game={game} roster={roster} />}
     {screen === "DEPTH_CHART" && <DepthChart game={game} roster={roster} pending={pendingCommands} onQueue={onQueue} />}
@@ -1213,6 +1219,7 @@ function Roster({ game, roster }: { game: GameView; roster: Player[] }): ReactEl
 
 function DepthChart({ game, roster, pending, onQueue }: { game: GameView; roster: Player[]; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
   const programId = game.playerProgramId;
+  const program = game.state.programs[programId]!;
   const redshirtState = (player: Player): boolean => {
     const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_REDSHIRT" }> =>
       command.type === "SET_REDSHIRT" && command.playerId === player.id
@@ -1243,14 +1250,15 @@ function DepthChart({ game, roster, pending, onQueue }: { game: GameView; roster
     <div className="position-grid">{positionOrder.map((position) => {
       const players = orderedIds(position).map((playerId) => game.state.players[playerId]).filter((player): player is Player => Boolean(player));
       let activeIndex = 0;
-      return <article className="panel position-card" key={position}><div className="position-title"><h2>{position}</h2><span>{starterCounts[position]} starter{starterCounts[position] === 1 ? "" : "s"}</span></div>
+      const spots = spotsForRoom(program.schemeIdentity, position);
+      return <article className="panel position-card" key={position}><div className="position-title"><h2>{position}</h2><span>{spots === 0 ? "not used in this scheme" : `${spots} on the field`}</span></div>
         {players.map((player, index) => {
           const emergency = player.eligibility.rosterStatus === "WALK_ON";
           const redshirted = redshirtState(player);
           const injury = currentInjury(player);
           const injured = Boolean(injury);
           const availableSlot = !redshirted && !injured ? activeIndex++ : -1;
-          const role = emergency ? "EMERGENCY" : redshirted ? "RS" : injured ? "OUT" : availableSlot < starterCounts[position] ? "START" : `#${availableSlot + 1}`;
+          const role = emergency ? "EMERGENCY" : redshirted ? "RS" : injured ? "OUT" : availableSlot < spots ? "START" : `#${availableSlot + 1}`;
           const canRedshirt = player.eligibility.redshirtStatus === "AVAILABLE" || player.eligibility.redshirtStatus === "REDSHIRTING";
           return <div className={`depth-player ${redshirted || injured ? "inactive" : ""}`} key={player.id}>
             <span><b>{role}</b> {player.name}<small>{emergency ? "Replacement-level walk-on · active until a scholarship QB returns" : injury ? `${injury.name} · ${injuryAbsence(injury)}` : `${eligibilityClass(player)} · ${player.eligibility.gamesPlayedThisSeason} GP · ${playerInjuryRisk(game.state, player, 55).riskPercent}% normal-workload injury risk`}</small></span>
@@ -2266,9 +2274,10 @@ const gamePlanLabels: Record<keyof GamePlan, string> = {
  * other. They are one screen now, and the tab bar is the intermediate step —
  * pick the part of the week to work on, then see only its controls.
  */
-function WeekHub({ game, busy, inFlightDecision, pending, onQueue, initialTab }: {
+function WeekHub({ game, busy, inFlightDecision, pending, onQueue, initialTab, onNavigate }: {
   game: GameView; busy: boolean; inFlightDecision: WeeklyPlanningCommand | null;
   pending: GameCommand[]; onQueue: (command: GameCommand) => void; initialTab: WeekTab | undefined;
+  onNavigate: (screen: Screen, tab?: WeekTab) => void;
 }): ReactElement {
   const programId = game.playerProgramId;
   const [tab, setTab] = useState<WeekTab>(initialTab ?? "WEEK");
@@ -2328,7 +2337,7 @@ function WeekHub({ game, busy, inFlightDecision, pending, onQueue, initialTab }:
     </nav>
     {tab === "WEEK" && <WeekPriorities game={game} busy={busy} inFlightDecision={inFlightDecision} onQueue={onQueue} />}
     {tab === "SCOUTING" && <WeekScouting game={game} busy={busy} inFlightDecision={inFlightDecision} onQueue={onQueue} />}
-    {tab === "BUSINESS" && <WeekDecisions game={game} pending={pending} onQueue={onQueue} />}
+    {tab === "BUSINESS" && <WeekDecisions game={game} pending={pending} onQueue={onQueue} onNavigate={onNavigate} />}
     {tab === "REPORT" && <WeekReport game={game} />}
   </section>;
 }
@@ -2440,8 +2449,9 @@ function WeekPriorities({ game, busy, inFlightDecision, onQueue }: {
   </div>;
 }
 
-function WeekDecisions({ game, pending, onQueue }: {
+function WeekDecisions({ game, pending, onQueue, onNavigate }: {
   game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void;
+  onNavigate: (screen: Screen, tab?: WeekTab) => void;
 }): ReactElement {
   const programId = game.playerProgramId;
   const program = game.state.programs[programId]!;
@@ -2535,63 +2545,28 @@ function WeekDecisions({ game, pending, onQueue }: {
       <p className="muted">Marketing rarely pays for itself on the day. What you are buying is the fan base, which raises every gate after this one.</p>
     </article>
 
+    {/* This panel used to be a second, lesser development picker: three modes,
+        the whole roster, and every one of its buttons hard-coding
+        `focus: "TECHNIQUE"`. So the game silently made a four-way choice on the
+        player's behalf every week for a season — including a ±15% swing in
+        injury risk — while the screen that actually offers the choice sat under
+        `More ▾` and went unfound for a full season.
+
+        Two screens for one decision, one of which quietly picks a default, is
+        cycle 1's "development state reported two ways" in a different shape.
+        There is one screen now; this states what is happening and goes there. */}
     <article className="panel">
       <Header id="DEVELOPMENT" title="3 · Who gets the extra work" />
       <h2>{spotlightLabel}</h2>
       <p className="muted">
         One player gets your staff's full attention, or a whole position room splits it. Concentrated work
-        builds a star; a room lifts everybody a little. You can't do both.
+        builds a star; a room lifts everybody a little. You can't do both — and what you have them work on
+        (technique, strength or conditioning) moves different ratings and changes how likely they are to
+        get hurt.
       </p>
-      <div className="dev-modes">
-        {(["SUGGESTED", "ROOM", "ANYBODY"] as const).map((mode) =>
-          <button className={devMode === mode ? "dev-mode active" : "dev-mode"} key={mode} onClick={() => setDevMode(mode)}>
-            {mode === "SUGGESTED" ? "Three worth it" : mode === "ROOM" ? "A whole room" : "Anybody on the roster"}
-          </button>)}
-      </div>
-
-      {devMode === "SUGGESTED" && <div className="plan-options">{candidates.map((candidate) =>
-        <button className={spotlightPlayerId === candidate.playerId ? "plan-option active" : "plan-option"}
-          key={candidate.playerId}
-          onClick={() => onQueue({
-            type: "SET_DEVELOPMENT_SPOTLIGHT", programId,
-            target: { type: "PLAYER", playerId: candidate.playerId },
-            focus: candidate.reason === "AT_RISK" ? "CONDITIONING" : "TECHNIQUE"
-          })}>
-          <strong>{candidate.name} · {candidate.position} · {candidate.overall}</strong>
-          <span className="effect">{candidate.headline}</span>
-          <span className="tradeoff">{candidate.detail}</span>
-        </button>)}
-      </div>}
-
-      {devMode === "ROOM" && <div className="plan-options">{positionOrder.map((position) => {
-        const room = roster.filter((player) => player.position === position);
-        if (room.length === 0) return null;
-        const best = Math.max(...room.map((player) => player.overall));
-        const headroom = room.reduce((total, player) => total + (player.potential - player.overall), 0) / room.length;
-        return <button className={spotlightPosition === position ? "plan-option active" : "plan-option"} key={position}
-          onClick={() => onQueue({ type: "SET_DEVELOPMENT_SPOTLIGHT", programId, target: { type: "POSITION", position }, focus: "TECHNIQUE" })}>
-          <strong>{position} room · {room.length} players</strong>
-          <span className="effect">Best is {Math.round(best)}, average {headroom.toFixed(1)} points of headroom left</span>
-          <span className="tradeoff">Each gets a fraction of the work — nobody in here becomes a star this week</span>
-        </button>;
-      })}</div>}
-
-      {devMode === "ANYBODY" && <div className="dev-browser">
-        <input className="dev-search" type="search" placeholder="Search your roster…" value={devSearch}
-          onChange={(event) => setDevSearch(event.target.value)} />
-        <div className="dev-list">{roster
-          .filter((player) => player.name.toLowerCase().includes(devSearch.toLowerCase()) || player.position.toLowerCase() === devSearch.toLowerCase())
-          .sort((left, right) => (right.potential - right.overall) - (left.potential - left.overall))
-          .slice(0, 40)
-          .map((player) =>
-            <button className={spotlightPlayerId === player.id ? "dev-row active" : "dev-row"} key={player.id}
-              onClick={() => onQueue({ type: "SET_DEVELOPMENT_SPOTLIGHT", programId, target: { type: "PLAYER", playerId: player.id }, focus: "TECHNIQUE" })}>
-              <strong>{player.name}</strong>
-              <span>{player.position} · {Math.round(player.overall)} now</span>
-              <span className="dev-headroom">{Math.round(player.potential - player.overall)} left in him</span>
-            </button>)}
-        </div>
-      </div>}
+      <button className="box-score-button" onClick={() => onNavigate("DEVELOPMENT")}>
+        {spotlightPlayerId || spotlightPosition ? "Change who gets the work" : "Pick somebody"}
+      </button>
     </article>
 
     {/* The weekly offensive/defensive strategy presets used to live here. The

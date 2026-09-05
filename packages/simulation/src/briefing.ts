@@ -339,9 +339,12 @@ export function weeklyBriefing(
       id: "DEVELOPMENT",
       status: "OPTIONAL",
       headline: "Nobody is getting extra coaching this week",
-      detail: "One player gets your staff's attention every week. Skipping it is a week of growth you don't get back.",
+      detail: "One player gets your staff's attention every week, and what you have them work on is your choice — technique, strength or conditioning all move different ratings. Skipping it is a week of growth you don't get back.",
       action: "Pick somebody",
-      destination: "WEEK_DECISIONS"
+      // Was WEEK_DECISIONS, which is a second picker that silently chose
+      // technique on the player's behalf. This is the screen that actually
+      // offers the choice.
+      destination: "DEVELOPMENT"
     });
   }
 
