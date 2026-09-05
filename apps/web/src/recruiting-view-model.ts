@@ -6,7 +6,7 @@ import type {
   Prospect,
   RecruitingEvaluation
 } from "@college-legends/model";
-import type { ProspectScoutingReport } from "@college-legends/simulation";
+import type { ProspectOdds, ProspectScoutingReport } from "@college-legends/simulation";
 import {
   MAX_VISITS_PER_SEASON,
   ROSTER_COMPOSITION,
@@ -14,8 +14,10 @@ import {
   VISIT_COST,
   committedNilTotal,
   nilAskingPriceRange,
+  prospectOdds,
   prospectScoutingReport,
   projectedRecruitingOpenings,
+  recruitingOddsIndex,
   recruitingEvaluationCost,
   recruitingSearchCost,
   weeklyDonorCapacity
@@ -71,6 +73,8 @@ export interface ProspectBoardItem {
   currentNilOffer: number;
   effectiveNilOffer: number;
   ask: ReturnType<typeof nilAskingPriceRange> | null;
+  /** Null until he has been scouted at all — see the note where it is built. */
+  odds: ProspectOdds | null;
   isMine: boolean;
   flipTarget: boolean;
   resolved: boolean;
@@ -205,6 +209,11 @@ export function buildProspectBoard(
   ledger: RecruitingLedger
 ): ProspectBoardItem[] {
   const recruiting = state.recruiting[programId]!;
+  // One index for the whole board. `prospectOdds` builds its own if you do not
+  // hand it one, and a board of thirty rows rebuilding a league-wide scan
+  // thirty times is exactly the shape of every performance problem on this
+  // profile.
+  const oddsIndex = recruitingOddsIndex(state);
   return recruiting.discoveredProspectIds.flatMap((prospectId) => {
     const prospect = state.prospects[prospectId];
     if (!prospect || !(
@@ -243,6 +252,11 @@ export function buildProspectBoard(
       queuedVisit,
       currentNilOffer,
       effectiveNilOffer,
+      // Only once the player has scouted him at all. Unscouted, you do not
+      // know what he wants or who else is in it, so a percentage would be a
+      // number the program has not earned — and revealing what he costs is
+      // most of what scouting a recruit is for.
+      odds: evaluationCount > 0 ? prospectOdds(state, programId, prospect.id, oddsIndex) : null,
       ask: evaluationCount > 0 ? nilAskingPriceRange(prospect, evaluationCount, state.programs[programId]) : null,
       isMine,
       flipTarget,

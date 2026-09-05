@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactElement } from "react";
+import type { ProspectOdds } from "@college-legends/simulation";
 import type {
   GameCommand,
   GameEvent,
@@ -13,6 +14,8 @@ import {
   SIGNING_WEEK,
   VISIT_COST,
   recruitingEvaluationCost,
+  prospectOdds,
+  recruitingOddsIndex,
   recruitingSearchCost,
   rosterOutlook,
   visitScore
@@ -33,6 +36,16 @@ export type RecruitingGameView = { state: GameState; playerProgramId: ProgramId;
 
 const positions: Position[] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
 const evaluations: RecruitingEvaluation[] = ["BASIC", "ATHLETIC", "POSITION", "CHARACTER", "MEDICAL", "PROJECTION"];
+
+/** What each report actually tells you, so the price can be weighed against it. */
+const EVALUATION_REVEALS: Record<RecruitingEvaluation, string> = {
+  BASIC: "His overall range, what he's looking for in a program, and roughly what he'll want paying",
+  ATHLETIC: "Speed, agility and strength — narrows the overall range",
+  POSITION: "The position skills he'll actually play with, and how he fits your scheme",
+  CHARACTER: "Work ethic and how likely he is to develop once he's here",
+  MEDICAL: "Durability, and whether there's an injury history",
+  PROJECTION: "His ceiling rather than what he is today — the difference between a starter and a star"
+};
 
 export function Recruiting({ game, locked, pending, onQueue }: {
   game: RecruitingGameView;
@@ -261,9 +274,20 @@ function ProspectSummaryButton({ item, selected, setRef, onSelect, onKeyDown }: 
       <span><small>Overall</small><strong>{item.report.overall}</strong></span>
       <span><small>Program fit</small><strong>{item.report.fitScore ?? "Unknown"}</strong></span>
       <span><small>Ask / week</small><strong>{ask}</strong></span>
+      {/* The row was a range and a price with nothing to say whether any of it
+          was working. This is the third number the redesign asked for. */}
+      <span><small>{oddsLabel(item.odds)}</small><strong>{item.odds ? `${item.odds.percent}%` : "Unknown"}</strong></span>
     </span>
-    <span className="prospect-summary-footer"><span>{item.report.competition.filter((entry) => entry.programId !== item.prospect.signedProgramId).length} known pursuits</span><span>{selected ? "Selected ✓" : "View report"}</span></span>
+    <span className="prospect-summary-footer"><span>{item.odds?.note ?? "Scout him to learn what he wants and who else is in it."}</span><span>{selected ? "Selected ✓" : "View report"}</span></span>
   </button>;
+}
+
+/** What the percentage on a row is the chance of. */
+function oddsLabel(odds: ProspectOdds | null): string {
+  if (!odds) return "Chance";
+  if (odds.outcome === "HOLD") return "Stays yours";
+  if (odds.outcome === "NOT_PURSUING") return "Not in it";
+  return "He commits";
 }
 
 function IntelGauge({ value }: { value: number }): ReactElement {
@@ -373,13 +397,20 @@ function RecruitingActions({ game, item, ledger, pending, onQueue }: {
       <button aria-describedby="scholarship-action-reason" disabled={offerDisabled} onClick={() => onQueue({ type: "OFFER_PROSPECT", programId, prospectId: item.prospect.id, extend: !item.offered })}>{item.queuedOffer ? "Offer change queued" : item.offered ? "Rescind offer" : "Offer scholarship"}</button>
     </ActionGroup>
 
-    <ActionGroup title="Evaluations" reason="Each report unlocks only the information named on the button." id="evaluation-action-reason">
+    {/* "Each report unlocks only the information named on the button" — and the
+        information named on the button was the word "Basic". A cold player
+        bought Basic to find out what Basic was. Each button says what it tells
+        you now, so a report can be chosen rather than discovered. */}
+    <ActionGroup title="Evaluations" reason="Scouting is what reveals what he wants and what he'll cost — until you've run one, you can't make him a sensible offer." id="evaluation-action-reason">
       <div className="evaluation-actions">{evaluations.map((evaluation) => {
         const complete = scouting.evaluations.includes(evaluation);
         const queued = item.pendingEvaluations.includes(evaluation);
         const cost = recruitingEvaluationCost(evaluation);
         const disabled = complete || queued || ledger.pointsAvailable < cost;
-        return <button aria-describedby="evaluation-action-reason" disabled={disabled} key={evaluation} onClick={() => onQueue({ type: "EVALUATE_PROSPECT", programId, prospectId: item.prospect.id, evaluation })}>{complete ? `${title(evaluation)} ✓` : queued ? `${title(evaluation)} queued` : `${title(evaluation)} · ${cost} RP`}</button>;
+        return <button aria-describedby="evaluation-action-reason" disabled={disabled} key={evaluation} onClick={() => onQueue({ type: "EVALUATE_PROSPECT", programId, prospectId: item.prospect.id, evaluation })} title={EVALUATION_REVEALS[evaluation]}>
+          <strong>{complete ? `${title(evaluation)} ✓` : queued ? `${title(evaluation)} queued` : `${title(evaluation)} · ${cost} RP`}</strong>
+          <small>{EVALUATION_REVEALS[evaluation]}</small>
+        </button>;
       })}</div>
     </ActionGroup>
 
@@ -419,12 +450,29 @@ function NilOfferControl({ game, item, ledger, pending, onQueue, disabled }: {
   const askMidpoint = (ask.low + ask.high) / 2;
   const askCoverage = amount > 0 ? Math.round(amount / Math.max(1, askMidpoint) * 100) : 0;
   const changed = amount !== item.effectiveNilOffer;
+  // The slider used to end on "This is not a signing probability", because
+  // there wasn't one to show. Now the number moves as the money moves, which is
+  // the only reason a slider is more interesting than a text box — and it
+  // saturates, because money is a tiebreaker by design and never buys a recruit
+  // who does not want the program.
+  // Memoised on the state, not rebuilt per frame: without this every drag of
+  // the slider rebuilds a league-wide scan of 6,120 players.
+  const oddsIndex = useMemo(() => recruitingOddsIndex(game.state), [game.state]);
+  const priced = prospectOdds(game.state, programId, item.prospect.id, oddsIndex, { nilOffer: amount });
+  const standing = item.odds;
   return <section className="action-group nil-action">
     <div><h4>Weekly NIL</h4><p>Wants {ask.exact ? `${formatMoney(ask.low)} per week` : `${formatMoney(ask.low)}–${formatMoney(ask.high)} per week; one more evaluation reveals the exact ask.`}</p></div>
     <div className="nil-offer-control">
       <label htmlFor={`nil-${item.prospect.id}`}>Offer amount <strong>{formatMoney(amount)} / week</strong></label>
       <input id={`nil-${item.prospect.id}`} type="range" min={0} max={Math.max(maximum, item.effectiveNilOffer)} step={50} value={Math.min(amount, Math.max(maximum, item.effectiveNilOffer))} disabled={disabled || maximum <= 0} onChange={(event) => setAmount(Number(event.target.value))} />
-      <p>{amount > 0 ? `${askCoverage}% of the estimated weekly ask. This is not a signing probability.` : maximum <= 0 ? "Donor capacity is fully committed or reserved." : "No NIL offer is active."}</p>
+      <p>{amount > 0 ? `${askCoverage}% of the estimated weekly ask.` : maximum <= 0 ? "Donor capacity is fully committed or reserved." : "No NIL offer is active."}</p>
+      {priced && priced.outcome !== "NOT_PURSUING" && <p className="nil-odds" aria-live="polite">
+        <strong>{priced.percent}%</strong> {priced.outcome === "HOLD" ? "he stays yours" : "he commits to you"}
+        {standing && standing.percent !== priced.percent
+          ? ` — ${priced.percent > standing.percent ? "up" : "down"} from ${standing.percent}% on what's on the table now.`
+          : "."}
+        {priced.contested ? " Others can still improve their offers before the week resolves." : ""}
+      </p>}
       {changed && <button disabled={disabled} onClick={() => onQueue({ type: "SET_NIL_OFFER", programId, prospectId: item.prospect.id, weeklyAmount: amount })}>{amount === 0 ? "Withdraw NIL offer" : `Queue ${formatMoney(amount)} / week`}</button>}
       {queued && <strong aria-live="polite">{formatMoney(queued.weeklyAmount)} / week queued</strong>}
       {!queued && item.currentNilOffer > 0 && <strong>{formatMoney(item.currentNilOffer)} / week on the table</strong>}

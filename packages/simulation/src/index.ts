@@ -3401,7 +3401,13 @@ export function prospectOdds(
   state: Readonly<GameState>,
   programId: string,
   prospectId: string,
-  index?: RecruitingOddsIndex
+  index?: RecruitingOddsIndex,
+  /**
+   * Price an offer the player is considering rather than the one on the table.
+   * This is what lets the money slider move the percentage as it moves, which
+   * is the whole reason a number is worth putting next to it.
+   */
+  options?: { nilOffer?: number }
 ): ProspectOdds | null {
   const prospect = state.prospects[prospectId];
   if (!prospect) return null;
@@ -3410,9 +3416,11 @@ export function prospectOdds(
   // a screen with thirty prospects on it must not pay for thirty rebuilds.
   const shared = index ?? recruitingOddsIndex(state);
   const contenders = contendingPrograms(state, prospect, shared);
+  const withPlayer = contenders.includes(programId) ? contenders : [...contenders, programId].sort();
   const committedHere = prospect.status === "COMMITTED" && prospect.signedProgramId === programId;
 
-  if (!contenders.includes(programId)) {
+  const considering = options?.nilOffer !== undefined && options.nilOffer > 0;
+  if (!contenders.includes(programId) && !considering) {
     return {
       outcome: "NOT_PURSUING",
       percent: 0,
@@ -3425,30 +3433,33 @@ export function prospectOdds(
     };
   }
 
-  const scores = new Map(contenders.map((id) => [id, recruitingBaseScore(state, prospect, id, shared.fit)]));
+  const scores = new Map(withPlayer.map((id) => [
+    id,
+    recruitingBaseScore(state, prospect, id, shared.fit, id === programId ? options?.nilOffer : undefined)
+  ]));
   const threshold = commitmentThresholdFor(state.week);
   const lead = requiredLeadFor(state.week);
   const mine = scores.get(programId)!;
-  const best = Math.max(...contenders.filter((id) => id !== programId).map((id) => scores.get(id)!), -Infinity);
+  const best = Math.max(...withPlayer.filter((id) => id !== programId).map((id) => scores.get(id)!), -Infinity);
   const margin = Number.isFinite(best) ? Number((mine - best).toFixed(1)) : mine;
 
   const chance = (candidateId: string): number =>
-    winProbability(scores.get(candidateId)!, contenders.filter((id) => id !== candidateId).map((id) => scores.get(id)!), threshold, lead);
+    winProbability(scores.get(candidateId)!, withPlayer.filter((id) => id !== candidateId).map((id) => scores.get(id)!), threshold, lead);
 
   if (committedHere) {
     // He is already yours, so the question is not whether you win — the engine
     // skips a contest the incumbent re-wins — but whether anybody takes him.
-    const lost = contenders
+    const lost = withPlayer
       .filter((id) => id !== programId)
       .reduce((total, id) => total + chance(id), 0);
     const hold = Math.round(clamp(1 - lost, 0, 1) * 100);
     return {
       outcome: "HOLD",
       percent: hold,
-      contenders: contenders.length,
+      contenders: withPlayer.length,
       lead: margin,
-      contested: contenders.length > 1,
-      note: contenders.length <= 1
+      contested: withPlayer.length > 1,
+      note: withPlayer.length <= 1
         ? "Committed to you, and nobody else is chasing him."
         : hold >= 90
           ? `Committed to you. ${contenders.length - 1} still chasing, none of them close.`
@@ -3749,7 +3760,14 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
  * number in the same units as nothing else on the screen, and the player has no
  * use for it. What they need is what it implies about Saturday's commitment.
  */
-function recruitingBaseScore(state: GameState, prospect: Readonly<Prospect>, programId: string, fitIndex?: ProspectFitIndex): number {
+function recruitingBaseScore(
+  state: GameState,
+  prospect: Readonly<Prospect>,
+  programId: string,
+  fitIndex?: ProspectFitIndex,
+  /** A hypothetical weekly offer, for pricing a slider the player has not committed to. */
+  nilOverride?: number
+): number {
   const program = state.programs[programId]!;
   const scouting = state.recruiting[programId]?.scoutingByProspect[prospect.id];
   const pursuitPoints = scouting?.pursuitPoints ?? 0;
@@ -3763,7 +3781,8 @@ function recruitingBaseScore(state: GameState, prospect: Readonly<Prospect>, pro
   // never overcomes a prospect who does not want the program. A live offer is
   // read first; once he is committed here the same dollars live in
   // `commitmentsByPlayer` instead, and must still count toward keeping him.
-  const nilOffer = state.nil?.[programId]?.offersByProspect[prospect.id]
+  const nilOffer = nilOverride
+    ?? state.nil?.[programId]?.offersByProspect[prospect.id]
     ?? state.nil?.[programId]?.commitmentsByPlayer[prospect.id]
     ?? 0;
   const nilBonus = nilScore(nilOffer, nilAskingPrice(prospect, program), prospect);
