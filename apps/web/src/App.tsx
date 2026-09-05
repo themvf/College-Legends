@@ -164,6 +164,8 @@ const weekTabs: { id: WeekTab; label: string; detail: string }[] = [
 
 const careerOrder: CareerPath[] = ["DYNASTY_BUILDER", "PROGRAM_RISER", "CHAMPIONSHIP_MANDATE"];
 const positionOrder: Player["position"][] = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "K", "P"];
+/** Screens that are about a week in progress, and so have nothing to offer between seasons. */
+const OFFSEASON_CLOSED: ReadonlySet<Screen> = new Set(["THIS_WEEK", "WEEKLY_RECAPS", "SCHEDULE"]);
 const screens: Screen[] = ["DASHBOARD", "THIS_WEEK", "WEEKLY_RECAPS", "ROSTER", "DEPTH_CHART", "PLAYER_STATS", "HONORS", "DEVELOPMENT", "PLAYER_MEDIA", "SCHEDULE", "DIVISIONS", "STAFF", "FINANCES", "RECRUITING", "INBOX"];
 /**
  * Fifteen buttons in one strip was more than a player could hold in their
@@ -446,10 +448,12 @@ export function App(): ReactElement {
     return <CareerOver game={game} dismissal={dismissal} busy={busy}
       onStartOver={() => { abandon(); setGame(undefined); setOffers(undefined); }} />;
   }
-  if (game && game.state.phase === "OFFSEASON") {
-    return <Offseason game={game} busy={busy} error={error} pending={pendingCommands} onQueue={queue}
-      onContinue={advanceOffseason} />;
-  }
+  // The offseason used to return here, before the shell that carries the
+  // navigation — so its five steps were made blind, with no way to open the
+  // roster you are cutting from or the budget you are spending. It renders
+  // inside the shell now: the stepper is the home screen and every read-only
+  // screen stays reachable. The engine already refuses an out-of-step command
+  // with a stated reason, so opening a screen cannot desynchronise the step.
   if (offers) return <ChooseJob busy={busy} careerPath={offers.careerPath} previews={offers.previews}
     onTake={takeJob} onReroll={() => startGame(offers.careerPath, Math.floor(Math.random() * 100_000))}
     onBack={() => setOffers(undefined)} />;
@@ -458,7 +462,8 @@ export function App(): ReactElement {
     <Dashboard game={game} screen={screen} busy={busy} error={error} pendingCommands={pendingCommands}
       inFlightDecision={inFlightDecision?.command ?? null}
       onNavigate={(next, tab) => { setWeekTab(tab); setScreen(next); }}
-      weekTab={weekTab} onQueue={queue} onBegin={begin} onAdvance={advance} />
+      weekTab={weekTab} onQueue={queue} onBegin={begin} onAdvance={advance}
+      onContinueOffseason={advanceOffseason} />
     <BoosterPopup game={game} busy={busy} onChoose={(optionId) =>
       prepare({ type: "CHOOSE_BOOSTER", programId: game.playerProgramId, optionId })} />
   </>;
@@ -934,8 +939,8 @@ function NewGame({ busy, onStart, resumable, saved, onResume, onAbandon }: {
  * screen's own name instead of the word "More" — losing your place behind an
  * unlabeled button is exactly the confusion this nav exists to avoid.
  */
-function ProgramNav({ screen, isReview, onNavigate }: {
-  screen: Screen; isReview: boolean; onNavigate: (screen: Screen) => void;
+function ProgramNav({ screen, isReview, isOffseason, onNavigate }: {
+  screen: Screen; isReview: boolean; isOffseason?: boolean; onNavigate: (screen: Screen) => void;
 }): ReactElement {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -955,12 +960,22 @@ function ProgramNav({ screen, isReview, onNavigate }: {
     };
   }, [open]);
 
-  const screenLabel = (item: Screen): string => item === "RECRUITING" && isReview ? "Recruiting · Locked" : label(item);
-  const go = (item: Screen): void => { onNavigate(item); setOpen(false); };
+  // What "home" means depends on the phase: in the offseason the first nav
+  // entry is the stepper itself, so a player who has wandered off to look at
+  // the roster has an obvious way back to the decision.
+  const screenLabel = (item: Screen): string =>
+    item === "DASHBOARD" && isOffseason ? "Offseason"
+      : item === "RECRUITING" && isReview ? "Recruiting · Locked"
+        : isOffseason && OFFSEASON_CLOSED.has(item) ? `${label(item)} · Closed`
+          : label(item);
+  // These screens are about a week that is not being played. Left live they
+  // offer controls the engine will refuse.
+  const closed = (item: Screen): boolean => Boolean(isOffseason) && OFFSEASON_CLOSED.has(item);
+  const go = (item: Screen): void => { if (closed(item)) return; onNavigate(item); setOpen(false); };
 
   return <div className="nav-row">
     <nav className="game-nav" aria-label="Program sections">{PRIMARY_SCREENS.map((item) =>
-      <button className={screen === item ? "active" : ""} key={item} onClick={() => go(item)}>
+      <button className={screen === item ? "active" : ""} key={item} disabled={closed(item)} onClick={() => go(item)}>
         {screenLabel(item)}
       </button>)}</nav>
     <div className="nav-more" ref={wrapRef}>
@@ -971,30 +986,34 @@ function ProgramNav({ screen, isReview, onNavigate }: {
         {activeOverflow ? screenLabel(screen) : "More"} <span aria-hidden="true">{open ? "▴" : "▾"}</span>
       </button>
       {open && <div className="nav-more-menu" role="menu">{OVERFLOW_SCREENS.map((item) =>
-        <button role="menuitem" className={screen === item ? "active" : ""} key={item} onClick={() => go(item)}>
+        <button role="menuitem" className={screen === item ? "active" : ""} key={item} disabled={closed(item)} onClick={() => go(item)}>
           {screenLabel(item)}
         </button>)}</div>}
     </div>
   </div>;
 }
 
-function Dashboard({ game, screen, busy, error, pendingCommands, inFlightDecision, onNavigate, weekTab, onQueue, onBegin, onAdvance }: {
+function Dashboard({ game, screen, busy, error, pendingCommands, inFlightDecision, onNavigate, weekTab, onQueue, onBegin, onAdvance, onContinueOffseason }: {
   game: GameView; screen: Screen; busy: boolean; error: string | undefined; pendingCommands: GameCommand[];
   inFlightDecision: WeeklyPlanningCommand | null;
   onNavigate: (screen: Screen, tab?: WeekTab) => void; weekTab: WeekTab | undefined;
   onQueue: (command: GameCommand) => void; onBegin: () => void; onAdvance: () => void;
+  onContinueOffseason: () => void;
 }): ReactElement {
   const program = game.state.programs[game.playerProgramId]!;
   const roster = useMemo(() => Object.values(game.state.players)
     .filter((player) => player.programId === program.id && player.eligibility.rosterStatus === "SCHOLARSHIP")
     .sort((a, b) => positionOrder.indexOf(a.position) - positionOrder.indexOf(b.position) || b.overall - a.overall), [game.state.players, program.id]);
   const isReview = game.state.phase === "ROSTER_REVIEW";
+  const isOffseason = game.state.phase === "OFFSEASON";
 
   return <main className="app-shell">
     <header className="dashboard-header">
-      <div><p className="eyebrow">{program.tier} TIER · {DIVISION_NAMES[program.divisionId]}</p><h1>{program.name}</h1><p>{program.city}, {program.stateCode} · Season {game.state.season} · {isReview ? "Opening roster review" : `Week ${game.state.week}`}</p></div>
+      <div><p className="eyebrow">{program.tier} TIER · {DIVISION_NAMES[program.divisionId]}</p><h1>{program.name}</h1><p>{program.city}, {program.stateCode} · Season {game.state.season} · {isOffseason ? "Offseason" : isReview ? "Opening roster review" : `Week ${game.state.week}`}</p></div>
       <div className="week-action">
-        {isReview
+        {isOffseason
+          ? <span>Work through the offseason below. Everything else is open to look at.</span>
+          : isReview
           ? <><span>{pendingCommands.length
             ? `${pendingCommands.length} preseason decision${pendingCommands.length === 1 ? "" : "s"} queued`
             : marqueeGameOptions(game.state, program.id).length > 0
@@ -1018,8 +1037,10 @@ function Dashboard({ game, screen, busy, error, pendingCommands, inFlightDecisio
       <Metric label="National titles" value={`${program.championships}`} />
       <Metric label="Roster" value={`${roster.length}/${program.scholarshipLimit}`} />
     </section>
-    <ProgramNav screen={screen} isReview={isReview} onNavigate={onNavigate} />
-    {screen === "DASHBOARD" && <ProgramDashboard game={game} roster={roster} inFlightDecision={inFlightDecision} onNavigate={onNavigate} />}
+    <ProgramNav screen={screen} isReview={isReview} isOffseason={isOffseason} onNavigate={onNavigate} />
+    {screen === "DASHBOARD" && (isOffseason
+      ? <Offseason game={game} busy={busy} error={error} pending={pendingCommands} onQueue={onQueue} onContinue={onContinueOffseason} />
+      : <ProgramDashboard game={game} roster={roster} inFlightDecision={inFlightDecision} onNavigate={onNavigate} />)}
     {screen === "THIS_WEEK" && <WeekHub game={game} busy={busy} inFlightDecision={inFlightDecision} pending={pendingCommands} onQueue={onQueue} initialTab={weekTab} onNavigate={onNavigate} />}
     {screen === "WEEKLY_RECAPS" && <WeeklyRecaps game={game} />}
     {screen === "ROSTER" && <Roster game={game} roster={roster} />}
