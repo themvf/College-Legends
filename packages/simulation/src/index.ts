@@ -490,6 +490,13 @@ const RECRUIT_PRIORITIES: readonly RecruitPriority[] = [
  * ~18.75 at the cap, NIL up to 14, fit up to 35.
  */
 export const OFFER_SCORE_BONUS = 3;
+
+/**
+ * How far a week's luck can move one recruiting contest, either way. Every
+ * contender draws independently from this range, which is what makes the odds
+ * on the screen computable exactly rather than sampled.
+ */
+export const RECRUITING_NOISE = 2;
 /** A handful of visit weekends a year, shared across the whole board. */
 export const MAX_VISITS_PER_SEASON = 6;
 /** Priced above a single evaluation, below a full pursuit-points push. */
@@ -3343,6 +3350,218 @@ function resolveProspectSearch(
  * sorted by a prospect-specific seeded priority so command and program order
  * never become hidden recruiting rules.
  */
+export interface ProspectOdds {
+  /**
+   * What the number means. `SIGN` is the chance he commits to you this week;
+   * `HOLD` is the chance a recruit already committed to you is still yours
+   * after it. The board used to print "Committed to you · 0%", which is a
+   * sentence and a number that cannot both be true — they were answering two
+   * different questions in one column.
+   */
+  outcome: "SIGN" | "HOLD" | "NOT_PURSUING";
+  /** 0–100. */
+  percent: number;
+  /** Programs in the running, including yours. */
+  contenders: number;
+  /** Your standing before this week's luck, against the best of the rest. */
+  lead: number;
+  /**
+   * True when a rival could still improve its offer before the market resolves.
+   * The percentage describes the board as it stands now — nobody, the player
+   * included, can see what another program is about to spend, so a contested
+   * recruit's real chance is at or below what is posted. An uncontested one is
+   * exact.
+   */
+  contested: boolean;
+  /** Plain sentence for the row. */
+  note: string;
+}
+
+/**
+ * What your chances actually are with one recruit, this week.
+ *
+ * Recruiting asked the player to hold four search types, six evaluations,
+ * pursuit points and a hype-versus-potential distinction, and never once told
+ * them whether any of it was working. A cold player invested 20 points in a
+ * prospect showing "0%" and watched nothing move, then described recruiting as
+ * the system they never understood in a full season of play.
+ *
+ * The market is decided by a score per contender plus independent uniform noise
+ * in ±`RECRUITING_NOISE`, subject to a floor and a required lead. Because the
+ * noise is independent, the chance of winning factorises exactly:
+ *
+ *   P(win) = ∫ (1/2N) · 1[b+u ≥ threshold] · ∏ F_i(b+u−lead) du
+ *
+ * over your own noise u, where F_i is each rival's noise CDF. So this is a
+ * closed-form integral evaluated by quadrature rather than a simulation — it
+ * consumes no RNG, cannot shift a draw, and is not an estimate of the engine's
+ * behaviour but a statement of it.
+ */
+export function prospectOdds(
+  state: Readonly<GameState>,
+  programId: string,
+  prospectId: string,
+  index?: RecruitingOddsIndex
+): ProspectOdds | null {
+  const prospect = state.prospects[prospectId];
+  if (!prospect) return null;
+  // Built once for a whole board, not once per row. Every league-wide scan in
+  // this file that ended up inside a loop is on the profile as a headline cost;
+  // a screen with thirty prospects on it must not pay for thirty rebuilds.
+  const shared = index ?? recruitingOddsIndex(state);
+  const contenders = contendingPrograms(state, prospect, shared);
+  const committedHere = prospect.status === "COMMITTED" && prospect.signedProgramId === programId;
+
+  if (!contenders.includes(programId)) {
+    return {
+      outcome: "NOT_PURSUING",
+      percent: 0,
+      contenders: contenders.length,
+      lead: 0,
+      contested: contenders.length > 0,
+      note: contenders.length > 0
+        ? `${contenders.length} other ${contenders.length === 1 ? "program is" : "programs are"} after him. You aren't in it — offer him a scholarship or put points behind him.`
+        : "Nobody is chasing him yet, including you."
+    };
+  }
+
+  const scores = new Map(contenders.map((id) => [id, recruitingBaseScore(state, prospect, id, shared.fit)]));
+  const threshold = commitmentThresholdFor(state.week);
+  const lead = requiredLeadFor(state.week);
+  const mine = scores.get(programId)!;
+  const best = Math.max(...contenders.filter((id) => id !== programId).map((id) => scores.get(id)!), -Infinity);
+  const margin = Number.isFinite(best) ? Number((mine - best).toFixed(1)) : mine;
+
+  const chance = (candidateId: string): number =>
+    winProbability(scores.get(candidateId)!, contenders.filter((id) => id !== candidateId).map((id) => scores.get(id)!), threshold, lead);
+
+  if (committedHere) {
+    // He is already yours, so the question is not whether you win — the engine
+    // skips a contest the incumbent re-wins — but whether anybody takes him.
+    const lost = contenders
+      .filter((id) => id !== programId)
+      .reduce((total, id) => total + chance(id), 0);
+    const hold = Math.round(clamp(1 - lost, 0, 1) * 100);
+    return {
+      outcome: "HOLD",
+      percent: hold,
+      contenders: contenders.length,
+      lead: margin,
+      contested: contenders.length > 1,
+      note: contenders.length <= 1
+        ? "Committed to you, and nobody else is chasing him."
+        : hold >= 90
+          ? `Committed to you. ${contenders.length - 1} still chasing, none of them close.`
+          : `Committed to you, but ${contenders.length - 1} ${contenders.length === 2 ? "program is" : "programs are"} still chasing — ${hold}% he's still yours after this week.`
+    };
+  }
+
+  const percent = Math.round(chance(programId) * 100);
+  return {
+    outcome: "SIGN",
+    percent,
+    contenders: contenders.length,
+    lead: margin,
+    contested: contenders.length > 1,
+    note: percent >= 60
+      ? `${percent}% he commits to you${contenders.length > 1 ? `, against ${contenders.length - 1} other${contenders.length === 2 ? "" : "s"}` : " — you're the only one in it"}.`
+      : percent >= 15
+        ? `${percent}% against ${contenders.length - 1} other${contenders.length === 2 ? "" : "s"}. ${margin >= 0 ? `You lead by ${margin}.` : `You're ${Math.abs(margin)} behind.`}`
+        : mine < threshold
+          ? `${percent}%. Nobody has done enough to make him commit yet — he needs ${Math.ceil(threshold - mine)} more from somebody.`
+          : `${percent}%. You're ${Math.abs(margin)} behind the leader of ${contenders.length - 1}.`
+  };
+}
+
+/**
+ * Exact probability that one contender wins, given every rival's base score.
+ *
+ * Quadrature over the winner's own noise, at a step fine enough that the result
+ * is stable to well under the one percentage point the screen prints.
+ */
+function winProbability(mine: number, rivals: readonly number[], threshold: number, lead: number): number {
+  const steps = 400;
+  const width = RECRUITING_NOISE * 2;
+  const cdf = (rival: number, at: number): number =>
+    clamp((at - (rival - RECRUITING_NOISE)) / width, 0, 1);
+  let total = 0;
+  for (let step = 0; step < steps; step += 1) {
+    // Midpoint rule: the integrand has kinks at the clamp boundaries, and
+    // sampling cell centres keeps it from landing exactly on one.
+    const noise = -RECRUITING_NOISE + width * ((step + 0.5) / steps);
+    const score = mine + noise;
+    if (score < threshold) continue;
+    let joint = 1;
+    for (const rival of rivals) {
+      joint *= cdf(rival, score - lead);
+      if (joint === 0) break;
+    }
+    total += joint;
+  }
+  return clamp(total / steps, 0, 1);
+}
+
+/**
+ * Everything `prospectOdds` needs that does not depend on which prospect is
+ * being asked about. Build it once per screen and hand it to every row.
+ */
+export interface RecruitingOddsIndex {
+  readonly fit: ProspectFitIndex;
+  /** Programs that still have a scholarship to give, in id order. */
+  readonly withOpenings: readonly string[];
+}
+
+export function recruitingOddsIndex(state: Readonly<GameState>): RecruitingOddsIndex {
+  const fit = buildProspectFitIndex(state);
+  const committed = new Map<string, number>();
+  for (const prospect of Object.values(state.prospects)) {
+    if (prospect.status !== "COMMITTED" || !prospect.signedProgramId) continue;
+    committed.set(prospect.signedProgramId, (committed.get(prospect.signedProgramId) ?? 0) + 1);
+  }
+  const withOpenings: string[] = [];
+  for (const programId of Object.keys(state.programs).sort()) {
+    const roster = fit.rostersByProgram.get(programId) ?? [];
+    const departures = roster.filter((player) => player.eligibility.seasonsRemaining <= 1).length;
+    const openings = state.programs[programId]!.scholarshipLimit - roster.length + departures - (committed.get(programId) ?? 0);
+    if (openings > 0) withOpenings.push(programId);
+  }
+  return { fit, withOpenings };
+}
+
+/** Who is actually chasing him, by the same rules the market applies. */
+function contendingPrograms(
+  state: Readonly<GameState>,
+  prospect: Readonly<Prospect>,
+  index: RecruitingOddsIndex
+): string[] {
+  const contenders: string[] = [];
+  for (const programId of index.withOpenings) {
+    const recruiting = state.recruiting[programId];
+    const nil = state.nil?.[programId];
+    const chasing = Boolean(recruiting?.offeredProspectIds.includes(prospect.id))
+      || (recruiting?.scoutingByProspect[prospect.id]?.pursuitPoints ?? 0) > 0
+      || nil?.offersByProspect[prospect.id] !== undefined
+      || nil?.commitmentsByPlayer[prospect.id] !== undefined;
+    if (chasing) contenders.push(programId);
+  }
+  return contenders;
+}
+
+/**
+ * How good an offer has to look before a recruit will commit at all, and how
+ * far clear of the field it has to be. Both loosen as the season runs out — a
+ * prospect who is still unsigned in November is far less choosy than one in
+ * September — and both are shared with `prospectOdds`, so the percentage the
+ * screen posts is computed against the same gates the market applies.
+ */
+export function commitmentThresholdFor(week: number): number {
+  return Math.max(58, 82 - week * 2);
+}
+
+export function requiredLeadFor(week: number): number {
+  return week >= SIGNING_WEEK ? 0 : 4;
+}
+
 function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: GameEvent[]): void {
   const programIds = Object.keys(state.programs);
   const fitIndex = buildProspectFitIndex(state);
@@ -3400,8 +3619,8 @@ function resolveRecruitingMarket(state: GameState, rng: AddressableRng, events: 
     const score = contest.scores[winnerProgramId]!;
     const runnerUpProgramId = contest.ranked[1] ?? null;
     const runnerUpScore = runnerUpProgramId ? contest.scores[runnerUpProgramId]! : null;
-    const commitmentThreshold = Math.max(58, 82 - state.week * 2);
-    const requiredLead = state.week >= 12 ? 0 : 4;
+    const commitmentThreshold = commitmentThresholdFor(state.week);
+    const requiredLead = requiredLeadFor(state.week);
     if (score < commitmentThreshold || score - (runnerUpScore ?? 0) < requiredLead) continue;
 
     const previousProgramId = contest.prospect.signedProgramId;
@@ -3513,6 +3732,24 @@ function resolveSigningWeek(state: GameState, events: GameEvent[]): void {
 }
 
 function recruitingScore(state: GameState, prospect: Prospect, programId: string, rng: AddressableRng, fitIndex?: ProspectFitIndex): number {
+  // The noise is the only non-deterministic term, and splitting it out is what
+  // lets the screen post real odds: the base is computable without touching the
+  // RNG, so a projection can never shift a draw. Same key, same range, same
+  // call order as before — a byte-identical replay test guards that.
+  return Number((
+    recruitingBaseScore(state, prospect, programId, fitIndex)
+    + rng.between(`${prospect.id}:${programId}:decision-noise`, -RECRUITING_NOISE, RECRUITING_NOISE)
+  ).toFixed(3));
+}
+
+/**
+ * Everything in a recruiting score except the week's noise.
+ *
+ * Exported through `prospectOdds`, never on its own: a raw score is a hidden
+ * number in the same units as nothing else on the screen, and the player has no
+ * use for it. What they need is what it implies about Saturday's commitment.
+ */
+function recruitingBaseScore(state: GameState, prospect: Readonly<Prospect>, programId: string, fitIndex?: ProspectFitIndex): number {
   const program = state.programs[programId]!;
   const scouting = state.recruiting[programId]?.scoutingByProspect[prospect.id];
   const pursuitPoints = scouting?.pursuitPoints ?? 0;
@@ -3542,8 +3779,8 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
   const commitmentInertia = prospect.status === "COMMITTED" && prospect.signedProgramId === programId
     ? COMMITMENT_INERTIA_BONUS
     : 0;
-  return Number((
-    prospect.interestByProgram[programId]! * 0.3
+  return (
+    (prospect.interestByProgram[programId] ?? 0) * 0.3
     + fit * 0.35
     + pursuitPoints * 0.75
     + facilityBonus
@@ -3554,8 +3791,7 @@ function recruitingScore(state: GameState, prospect: Prospect, programId: string
     + offerBonus
     + visitBonus
     + commitmentInertia
-    + rng.between(`${prospect.id}:${programId}:decision-noise`, -2, 2)
-  ).toFixed(3));
+  );
 }
 
 function scoutingQuality(state: Readonly<GameState>, programId: string): number {

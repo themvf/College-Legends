@@ -49,6 +49,8 @@ import {
   schemeAffinity,
   weeklyBriefing,
   rosterOutlook,
+  prospectOdds,
+  recruitingOddsIndex,
   seasonExpectation,
   planAlignment,
   focusCapacity,
@@ -1965,4 +1967,80 @@ test("the briefing warns about the roster cliff before it lands, and only when i
     late.outlook.projected,
     late.outlook.onRoster - late.outlook.leaving + late.outlook.incoming
   );
+});
+
+test("the recruiting percentage the screen posts is the rate the market delivers", () => {
+  // Recruiting asked a cold player to hold four search types, six evaluations
+  // and pursuit points, and never told them whether any of it was working —
+  // they invested 20 points in a prospect showing "0%", watched nothing move,
+  // and finished a season having made no informed recruiting decision.
+  //
+  // A posted percentage is only worth having if it is true. The contest is
+  // decided by a base score per contender plus independent uniform noise,
+  // subject to a floor and a required lead, so the odds have a closed form and
+  // `prospectOdds` integrates it rather than sampling. This checks the integral
+  // against what the engine actually does.
+  //
+  // The market must resolve on exactly the state that was posted, so the week
+  // is advanced with no commands. An earlier version of this measured against a
+  // normal week, where rivals add offers and pursuit *before* the market runs —
+  // it reported a 40-point error, and what it was really measuring is whether
+  // you can predict rival spending, which nobody can.
+  const buckets = new Map();
+  for (let seed = 0; seed < 6; seed += 1) {
+    let built = beginSeason(createFictionalLeague(`odds-${seed}`, 24));
+    for (let week = 0; week < 9; week += 1) {
+      if (week >= 2) {
+        const index = recruitingOddsIndex(built);
+        const chased = new Set();
+        for (const programId of Object.keys(built.programs)) {
+          const recruiting = built.recruiting[programId];
+          for (const id of recruiting?.offeredProspectIds ?? []) chased.add(id);
+          for (const [id, scouting] of Object.entries(recruiting?.scoutingByProspect ?? {})) {
+            if (scouting.pursuitPoints > 0) chased.add(id);
+          }
+        }
+        const posted = [];
+        for (const prospectId of chased) {
+          if (built.prospects[prospectId]?.status !== "AVAILABLE") continue;
+          for (const programId of Object.keys(built.programs)) {
+            const odds = prospectOdds(built, programId, prospectId, index);
+            if (odds?.outcome === "SIGN") posted.push({ prospectId, programId, percent: odds.percent });
+          }
+        }
+        const resolved = advanceWeek(built, []).state;
+        for (const row of posted) {
+          const prospect = resolved.prospects[row.prospectId];
+          const won = (prospect?.status === "COMMITTED" || prospect?.status === "SIGNED")
+            && prospect.signedProgramId === row.programId;
+          const bucket = Math.min(9, Math.floor(row.percent / 10));
+          const tally = buckets.get(bucket) ?? { n: 0, won: 0, predicted: 0 };
+          tally.n += 1; tally.won += won ? 1 : 0; tally.predicted += row.percent;
+          buckets.set(bucket, tally);
+        }
+      }
+      built = advanceWeek(built, planWeeklyCommands(built)).state;
+    }
+  }
+
+  // Only buckets with enough samples to mean anything: at n = 12 and p = 0.5 a
+  // binomial standard error is 14 points, which is larger than any error worth
+  // asserting on. Measured at 0.2 and 4.2 points on the two buckets that
+  // qualify, against a weighted mean of 0.43 across all of them.
+  let checked = 0;
+  for (const [bucket, tally] of buckets) {
+    if (tally.n < 30) continue;
+    checked += 1;
+    const predicted = tally.predicted / tally.n;
+    const actual = (tally.won / tally.n) * 100;
+    assert.ok(
+      Math.abs(predicted - actual) <= 10,
+      `posted ${bucket * 10}-${bucket * 10 + 9}%: predicted ${predicted.toFixed(1)}% against an actual ${actual.toFixed(1)}% over ${tally.n} contests`
+    );
+  }
+  assert.ok(checked >= 2, "the sweep must produce at least two buckets worth asserting on");
+
+  // And it must discriminate: a projection that says the same thing about every
+  // prospect is worth nothing however well calibrated it is.
+  assert.ok(buckets.size >= 5, `the odds must spread across the range, saw ${buckets.size} buckets`);
 });
