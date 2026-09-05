@@ -272,11 +272,19 @@ export function App(): ReactElement {
       // sent them there.
       const enteringRosterReview = phaseRef.current !== "ROSTER_REVIEW"
         && response.state.phase === "ROSTER_REVIEW";
+      // Locking a nav entry stops you navigating to a screen; it does not stop
+      // one already open from rendering. Advancing the last week of the season
+      // leaves `screen` on This Week — the postgame flow puts it there — so
+      // without this the offseason opened on a week hub for a week that is not
+      // happening, and the stepper it should have shown was unreachable.
+      const enteringOffseason = phaseRef.current !== "OFFSEASON"
+        && response.state.phase === "OFFSEASON";
       phaseRef.current = response.state.phase;
       if (enteringRosterReview) {
         setSetupDone(false);
         setScreen("ROSTER");
       }
+      if (enteringOffseason) setScreen("DASHBOARD");
       if (response.type === "COMPLETE") {
         const responseAuditIds = new Set(response.events
           .filter((gameEvent): gameEvent is Extract<GameEvent, { type: "DECISION_AUDITED" }> =>
@@ -300,7 +308,11 @@ export function App(): ReactElement {
           && gameEvent.programId === playerProgramIdRef.current
           && gameEvent.result !== "BYE"
         );
-        if (playedGame) {
+        // Not when the season just ended: the last Saturday's postgame leads the
+        // offseason home screen instead, because This Week is about a week that
+        // is no longer happening. Setting it here anyway is what kept the
+        // stepper unreachable.
+        if (playedGame && response.state.phase !== "OFFSEASON") {
           setWeekTab("REPORT");
           setScreen("THIS_WEEK");
         }
@@ -1056,7 +1068,16 @@ function Dashboard({ game, screen, busy, error, pendingCommands, inFlightDecisio
     </section>
     <ProgramNav screen={screen} isReview={isReview} isOffseason={isOffseason} onNavigate={onNavigate} />
     {screen === "DASHBOARD" && (isOffseason
-      ? <Offseason game={game} busy={busy} error={error} pending={pendingCommands} onQueue={onQueue} onContinue={onContinueOffseason} />
+      ? <>
+          {/* The week-14 game, and any playoff game after it, used to be played
+              and reported nowhere: pressing Advance week went straight to the
+              board review, and a player who finished 10-2 next saw "10-3"
+              beside "Reached the playoff +10" with no account of the game that
+              made it. The season's last Saturday gets the same postgame every
+              other Saturday gets, ahead of the stepper that follows it. */}
+          <WeekReport game={game} />
+          <Offseason game={game} busy={busy} error={error} pending={pendingCommands} onQueue={onQueue} onContinue={onContinueOffseason} />
+        </>
       : <ProgramDashboard game={game} roster={roster} inFlightDecision={inFlightDecision} onNavigate={onNavigate} />)}
     {screen === "THIS_WEEK" && <WeekHub game={game} busy={busy} inFlightDecision={inFlightDecision} pending={pendingCommands} onQueue={onQueue} initialTab={weekTab} onNavigate={onNavigate} />}
     {screen === "WEEKLY_RECAPS" && <WeeklyRecaps game={game} />}
