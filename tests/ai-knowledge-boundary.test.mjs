@@ -173,11 +173,18 @@ test("the state adapter exposes only the declared weekly knowledge fields", () =
 
 test("coaching AI preserves the established deterministic replacement", () => {
   const state = coachingWindow("coaching-view-0");
+  // The candidate id gained its season when the incumbent filter turned out to
+  // be matching on a slot number rather than on a man: the draw behind the
+  // market has always forked on season, so slot 1 in 2029 is a different coach
+  // from slot 1 in 2027, and a staff id derived without the season collided
+  // across them. Re-baselined rather than loosened — the program, the post, the
+  // staff id and the slot are all unchanged, so the decision this test exists
+  // to pin is identical and only its spelling moved.
   assert.deepEqual(planOffseasonCommands(state), [{
     type: "REPLACE_STAFF",
     programId: "program-2",
     staffId: "program-2-staff-2",
-    candidateId: "program-2:OFFENSIVE_COORDINATOR:candidate:1"
+    candidateId: `program-2:OFFENSIVE_COORDINATOR:${state.season}:candidate:1`
   }]);
   const view = coachingPlanningKnowledgeView(state, "program-2");
   assert.deepEqual(selectCoachingChange(view), planOffseasonCommands(state, "program-1"));

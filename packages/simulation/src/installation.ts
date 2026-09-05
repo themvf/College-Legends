@@ -428,7 +428,14 @@ export function staffCandidates(
     const trait = pickStaffTrait(outgoing.role, rng.at(`${index}:trait`));
     const profile = STAFF_TRAITS[trait];
     return {
-      id: `${programId}:${outgoing.role}:candidate:${index}`,
+      // The season belongs in the id because the draw already forks on it:
+      // slot 0 in 2029 is a different man from slot 0 in 2027. Without it, a
+      // coach hired from slot k carried a staff id that matched slot k forever,
+      // so the incumbent filter removed a stranger from every later market —
+      // and slot 0 is the coverage guarantee that every market holds somebody
+      // who runs the program's scheme. That silently reintroduced issue
+      // 2026-09-04-04 in exactly the posts it was written to protect.
+      id: `${programId}:${outgoing.role}:${state.season}:candidate:${index}`,
       name: nameFor(Math.floor(rng.between(`${index}:name`, 0, 4_000))),
       role: outgoing.role,
       rating,

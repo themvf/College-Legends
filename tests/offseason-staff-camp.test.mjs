@@ -17,6 +17,7 @@ import {
   TRAINING_CAMP_INSTALL_BONUS,
   TRAINING_CAMP_WEEKS
 } from "../packages/simulation/dist/index.js";
+import { planWeeklyCommands, planOffseasonCommands } from "../packages/ai/dist/index.js";
 
 const activeLeague = (seed, programCount = 12) => beginSeason(createFictionalLeague(seed, programCount));
 
@@ -290,4 +291,47 @@ test("the coaching market does not offer the coach who already holds the post", 
     reopened.map((candidate) => candidate.id).sort(),
     offered.filter((candidate) => candidate.id !== target.id).map((candidate) => candidate.id).sort()
   );
+
+  // And it must remove the man himself, not a slot number. The candidate id
+  // must carry the season, because the draw behind it already does: slot 0 in
+  // 2029 is a different person from slot 0 in 2027.
+  assert.ok(
+    target.id.includes(String(state.season)),
+    `a candidate id must be season-scoped, saw ${target.id}`
+  );
+});
+
+test("hiring a coach does not close later seasons' markets against a stranger", () => {
+  // The incumbent filter matched on a staff id derived from the candidate id,
+  // and that id carried no season while the draw behind it did — so a coach
+  // hired from slot k filtered slot k out of that post's market in every later
+  // season, against a different man entirely. Slot 0 is the coverage guarantee
+  // from issue 2026-09-04-04, so this silently reinstated that defect in exactly
+  // the posts it was written to protect: 10 of 768 coordinator posts had nobody
+  // on-scheme to hire, and 22 of 1,824 preseason scheme switches left both
+  // branches of a REQUIRED item unavailable.
+  //
+  // The test that was supposed to guard issue 04 ran at `createFictionalLeague`
+  // — season zero, nobody has hired, the filter has nothing to remove. Wrong
+  // scale. This one plays seasons so the market has a history.
+  let checked = 0;
+  for (const seed of ["r1", "r2"]) {
+    let state = beginSeason(createFictionalLeague(seed, 24));
+    for (let season = 0; season < 3; season += 1) {
+      for (const member of Object.values(state.staff)) {
+        if (member.role !== "OFFENSIVE_COORDINATOR" && member.role !== "DEFENSIVE_COORDINATOR") continue;
+        const reachable = staffCandidatesFor(state, member.programId, member.id)
+          .filter((candidate) => !candidate.unavailableReason);
+        checked += 1;
+        assert.ok(
+          reachable.some((candidate) => candidate.schemeFit >= 0.78),
+          `${member.programId} ${member.role} in season ${state.season} has nobody on-scheme to hire`
+        );
+      }
+      while (state.phase === "REGULAR_SEASON") state = advanceWeek(state, planWeeklyCommands(state)).state;
+      while (state.phase === "OFFSEASON") state = advanceOffseasonStep(state, planOffseasonCommands(state)).state;
+      if (state.phase === "ROSTER_REVIEW") state = beginSeason(state);
+    }
+  }
+  assert.ok(checked > 200, `the sweep must cover real seasons, saw ${checked} posts`);
 });

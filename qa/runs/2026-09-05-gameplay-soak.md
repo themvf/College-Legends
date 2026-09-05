@@ -97,3 +97,23 @@ whether the scouting path is exercised by this scenario at all. It is (all 24
 programs build files and set the refund marker), which meant one engine change
 reported in issue 02 had been inert, and it had been — see the correction in
 that issue.
+
+### Superseded: `1dcc43de273f95ad`
+
+Season-scoping the staff-candidate id, which fixes the regression cycle 3's
+Brief E found, moves this hash. **Nothing about the simulation changed**, and
+that was established rather than assumed:
+
+| check | result |
+|---|---|
+| hires planned across the scenario | **58 on both builds, identical programs and posts, same order** |
+| league fingerprint at 24 programs / 2 seasons (record, rank, budget, fans, prestige, press, security) | **identical, zero differing fields** |
+| candidate-derived ids in `programs` and `players` | 0 |
+| candidate-derived ids in `seasonHistory` | **1** — `program-62-staff-program-62-HEAD-COACH-2027-candidate-0` |
+
+The whole delta is that single stored string: a coach hired out of the market
+later won an award, and the award record keeps his staff id, which now carries
+the season. It only appears at 72 programs over 3 seasons because that is the
+scale at which a hired coach wins one.
+
+**Current baseline: `1dcc43de273f95ad`**, same seed, size, seasons and method.
