@@ -804,12 +804,13 @@ function SetUpProgram({ busy, game, onPrepare, onDone }: {
           on every option now: how well the players suit it, and how much of it
           your coordinator would actually get installed. */}
       <p className="muted">
-        <strong>Roster fit</strong> is how well these players suit the scheme. <strong>Installed</strong> is
-        how much of it your coordinator gets across in a week — he coaches one scheme himself, and
+        <strong>Roster fit</strong> ranks the five against each other for these players — it is not a
+        score out of a hundred, and it moves every year as the roster turns over. <strong>Installed</strong>
+        is how much of the scheme your coordinator gets across in a week: he coaches one himself, and
         teaching somebody else's costs him. A great fit nobody can install is worse than a good one
         your coordinator knows.
       </p>
-      <div className="plan-options">{fits.map((fit) =>
+      <div className="plan-options">{fits.map((fit, index) =>
         <button className={chosen === fit.scheme ? "plan-option active" : "plan-option"} key={fit.scheme}
           disabled={busy}
           onClick={() => onPrepare({
@@ -819,10 +820,26 @@ function SetUpProgram({ busy, game, onPrepare, onDone }: {
           <strong>{fit.label} · {fit.verdict}</strong>
           <span className="effect">{personnelSummary(side, fit.scheme)}</span>
           <span className="effect fit-line">
-            Roster fit {fit.summary}
+            {/* The band alone read as an absolute score, so a roster whose fit
+                moved nine points between seasons looked like it had collapsed.
+                The rank says what the number actually is: a comparison between
+                these five options for these players, today. */}
+            Roster fit {fit.summary} &mdash; {ordinal(index + 1)} of {fits.length} for this roster
             {(() => {
               const install = installIfScheme(game.state, programId, side, fit.scheme);
-              return install === null ? "" : ` · your coordinator installs it to ${install}%`;
+              if (install === null) return "";
+              const now = installIfScheme(game.state, programId, side, chosen);
+              // The one number the switch actually costs, and the game already
+              // knew it: what your coordinator loses by being asked to teach a
+              // scheme that is not his.
+              const cost = now !== null && fit.scheme !== chosen ? now - install : 0;
+              // Stated in both directions. Suppressing the gain made switching
+              // look like it could only ever cost you something, which is the
+              // opposite error to the one this line exists to fix.
+              const note = cost > 0 ? `, ${cost} points less than what he runs now`
+                : cost < 0 ? `, ${Math.abs(cost)} points more than what he runs now`
+                  : "";
+              return ` · your coordinator installs it to ${install}%${note}`;
             })()}
           </span>
           <span className="effect">{fit.blurb}</span>
@@ -2890,6 +2907,14 @@ function WeekReport({ game }: { game: GameView }): ReactElement {
       <ul className="plan-notes">{lastReport.notes.map((note) => <li key={note}>{note}</li>)}</ul>
     </article>}
   </div>;
+}
+
+/** 1st, 2nd, 3rd — for saying where an option ranks rather than what it scores. */
+function ordinal(value: number): string {
+  const tens = value % 100;
+  if (tens >= 11 && tens <= 13) return `${value}th`;
+  const suffix = ["th", "st", "nd", "rd"][value % 10] ?? "th";
+  return `${value}${value % 10 <= 3 ? suffix : "th"}`;
 }
 
 function label(value: string): string { return value.toLowerCase().split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" "); }
