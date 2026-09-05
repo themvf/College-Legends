@@ -95,16 +95,31 @@ three design documents.
 ## The workflow
 
 ```
-qa-lead picks a target from qa/test-matrix.md
+qa-lead picks a target from qa/test-matrix.md and writes the plan
         │
         ├─► tester runs its procedure, writes qa/runs/<date>-<agent>.md
         │
-        ├─► candidate findings → qa-lead triage
+        ├─► candidate findings → qa-lead triage        ← never straight to the fixer
         │
         ├─► confirmed → qa/issues/<id>.md   (severity, seed, repro)
         │
-        └─► cycle summary → qa/reports/<date>-<cycle>.md
+        ├─► cycle summary → qa/reports/<date>-<cycle>.md
+        │
+        └─► the implementer receives the triaged issues, not the raw run log
 ```
+
+**The lead is the front door.** Raw tester output does not reach whoever is doing
+the fixing. Cycle 2 is why: the implementer had introduced one of the P1s in the
+report and had spent two passes asserting a claim the report contradicted, so
+they were both conflicted and the worst-placed reader of it. The cold reader is
+also kept cold on purpose and therefore cannot check its own findings against the
+previous cycle — somebody has to, and it is neither the tester nor the fixer.
+
+The lead cannot launch the tester agents itself (only the top-level session can
+spawn agents, and the lead reads the design documents, which disqualifies it from
+ever being the cold reader). So the top-level session dispatches on the lead's
+written plan, and everything the testers produce goes back to the lead. See
+[`../qa/qa-process.md`](../qa/qa-process.md) for the split.
 
 Process detail, severities and templates: [`../qa/qa-process.md`](../qa/qa-process.md).
 

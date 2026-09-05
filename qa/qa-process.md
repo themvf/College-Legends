@@ -25,6 +25,45 @@ decided.
 A cycle is a small number of areas tested properly. Testing everything shallowly
 produces a report nobody can act on.
 
+## The lead is the front door
+
+**Raw tester output does not go to whoever is doing the fixing.** It goes to the
+`qa-lead`, and what reaches the implementer is a triaged, de-duplicated issue
+list with severities already decided.
+
+This is not ceremony. Cycle 2 is the argument for it:
+
+- The implementer had **introduced one of the P1s** in the report. Deciding the
+  severity of a finding against your own work, on the same day you wrote it, is
+  not a judgement anybody should be asked to make about themselves.
+- The implementer had spent two passes asserting a claim the report partly
+  contradicted, and was therefore the worst-placed reader of it.
+- The cold reader is kept cold on purpose, so it **cannot** check its findings
+  against the previous cycle's. Somebody has to, and it is not the tester and
+  not the implementer.
+
+### Who dispatches
+
+The lead plans the cycle and owns every verdict in it, but it cannot launch the
+tester agents itself — only the top-level session can spawn agents, and the lead
+deliberately reads all three design documents, which disqualifies it from ever
+being the cold reader.
+
+So the split is:
+
+| step | who |
+|---|---|
+| plan the cycle | **lead** — written before any testing starts |
+| launch the testers the plan names | top-level session, acting on the plan |
+| receive run logs | **lead** |
+| decide every verdict and severity | **lead** |
+| file issues, write the report | **lead** |
+| receive the triaged issue list and fix | implementer |
+
+The implementer may read a run log, and should when fixing something. What they
+must not do is decide from it what is real and what it is worth — that verdict
+is already made, by somebody who did not write the code.
+
 ## What a finding must contain
 
 The engine is deterministic, so there is no excuse for an unreproducible report.
