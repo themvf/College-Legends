@@ -4,7 +4,7 @@
 |---|---|
 | **ID** | 2026-09-05-02 |
 | **Severity** | P1 |
-| **Status** | open |
+| **Status** | fixed |
 | **Area** | Weekly priorities / Scouting department |
 | **Found by** | new-player-tester (cycle 2 cold read), reproduced by qa-lead |
 | **Found in** | `084652b`, still present at `02c3c52` |
@@ -98,11 +98,69 @@ move the filing so the projection and the capture see the same file.
 
 ## Fix
 
-<!-- filled in when fixed -->
+**The filed diagnosis was wrong, and the measurement that found the real cause
+is worth more than the fix.**
+
+The hypothesis was that `refreshPreparation` files this week's output at the end
+of `advanceWeek`, so the hours the card sells land on the next fixture. Measured
+instead: `prepareWeek` files them, before the game, on the fixture the card
+names. The film does arrive in time.
+
+The actual cause is that a week **replaces** its own contribution rather than
+adding to it. `commitScoutingOutput` refunds whatever the department filed
+automatically, then re-files the week's output — that is what makes moving the
+film room move the work instead of duplicating it. The card added
+`projectedScouting` on top of a file that already contained exactly that, so it
+double-counted one week every week.
+
+The card now subtracts what this week has already filed against the named
+opponent before projecting, mirroring the engine's own arithmetic:
+
+```ts
+const alreadyFiled = preparation?.autoScoutedOpponentId === opponentId
+  ? preparation.autoScoutedPoints ?? 0 : 0;
+const filePoints = Math.max(0, rawFilePoints - alreadyFiled);
+```
+
+### A second, smaller defect found on the way
+
+The refund marker was written once and never cleared at a week boundary, so
+every week refunded the *previous* week's filing — un-filing tape that had
+already been watched and re-spending those hours on the new target. It is now
+cleared in `refreshPreparation` with the rest of the week. Measured A/B over
+eight weeks, this moves one week in eight (1.46 → 2.06 in the week after a bye,
+where the target does not move); it is real but small, and it is not the cause
+of the reported symptom.
+
+### What is *not* a defect, and was the bulk of the symptom
+
+The reporter saw `+1.5` unchanged from week 3 to week 8. With both fixes in,
+they still would. The film room re-targets to each week's opponent by default,
+so every game gets exactly one week of film — 13 points, readiness 1.46 — and
+holding the target on a future fixture is what accumulates it (measured: 13, 26,
+39, 52, 65 over five weeks). That is the department working as designed, and the
+decision it exists to pose.
+
+What made it *read* as broken is a separate, already-known finding: the target
+silently follows the schedule, so a player who never opens the scouting board
+never sees it accumulate. That is cycle-1 F15(b), still open.
 
 ## Verified fixed
 
-<!-- filled in by regression-tester -->
+| | card posts | week delivers |
+|---|---|---|
+| before | `+2.1` | `1.46` |
+| after | `+1.5` | `1.46` |
+| after, accumulated file | `+2.1` | `2.06` |
+
+And the branches now differ: `leave it alone +1.2` against `make it a priority
++1.5`, where both previously delivered 1.46 whatever was chosen.
+
+Guarded by a test in `tests/rng-distribution.test.mjs` that walks eight weeks
+asserting the posted figure is within 0.05 of the delivered one, and that the
+two branches differ in at least three of them — a card whose branches always
+agree is not pricing a decision. Confirmed red against the pre-fix build at
+"the card posted 2 and the week delivered 1.46".
 
 ---
 

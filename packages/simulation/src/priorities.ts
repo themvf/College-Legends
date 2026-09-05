@@ -480,7 +480,21 @@ export function weekPriorities(state: Readonly<GameState>, programId: string): W
   const on = withFocus("SCOUT");
   const off = withoutFocus("SCOUT");
   const files = state.dossiers?.[programId] ?? {};
-  const filePoints = opponentId ? files[opponentId] ?? 0 : 0;
+  const rawFilePoints = opponentId ? files[opponentId] ?? 0 : 0;
+  // What the file holds that this week's hours have NOT already put there.
+  //
+  // `commitScoutingOutput` refunds whatever the department filed automatically
+  // before re-filing the week's output, so a week REPLACES its own contribution
+  // rather than adding to it. The card added the projected output on top of a
+  // file that already contained it, which is why it posted 2.1 against a
+  // delivered 1.46 in every week of a season — and why "leave it alone" and
+  // "make it a priority" both landed on the same number, so the one thing the
+  // card exists to price had no visible effect at all.
+  const preparation = state.preparation?.[programId];
+  const alreadyFiled = opponentId && preparation?.autoScoutedOpponentId === opponentId
+    ? preparation.autoScoutedPoints ?? 0
+    : 0;
+  const filePoints = Math.max(0, rawFilePoints - alreadyFiled);
   const scoutingOn = projectedScouting(state, programId, on);
   const scoutingOff = projectedScouting(state, programId, off);
   const worth = opponent ? opponentValue(program, opponent, programCount) : null;

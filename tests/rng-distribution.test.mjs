@@ -2075,3 +2075,37 @@ test("the recruiting card posts the number the engine actually adds", () => {
     assert.ok(focused > posted, `${programId}: focusing the trail posted ${focused} against a baseline ${posted}`);
   }
 });
+
+test("the scouting card posts the readiness the week actually delivers", () => {
+  // The card posted +2.1 and the week delivered +1.5, every week of a season,
+  // and both branches of the card delivered the same 1.46 — so the marginal
+  // value the card exists to price had no visible effect on the game it names.
+  //
+  // `commitScoutingOutput` refunds what the department filed automatically
+  // before re-filing this week's output, so a week REPLACES its own
+  // contribution rather than adding to it. The card added the projection on top
+  // of a file that already held it.
+  const me = "program-4";
+  let state = beginSeason(createFictionalLeague("qa-cycle2-readiness", 24));
+  let compared = 0;
+  let differed = 0;
+  for (let week = 0; week < 8; week += 1) {
+    const card = weekPriorities(state, me).find((entry) => entry.focus === "SCOUT");
+    const posted = Number.parseFloat(card.focused.replace(/[^0-9.]/g, ""));
+    const baseline = Number.parseFloat(card.baseline.replace(/[^0-9.]/g, ""));
+    state = prepareWeek(state, [{ type: "SET_WEEK_FOCUS", programId: me, focuses: ["SCOUT"] }]).state;
+    const result = advanceWeek(state, planWeeklyCommands(state, me));
+    const payoff = result.events.find((event) => event.type === "WEEK_FOCUS_PAYOFF" && event.programId === me);
+    state = result.state;
+    if (!payoff || payoff.scoutingReadiness === 0) continue;
+    compared += 1;
+    assert.ok(
+      Math.abs(posted - payoff.scoutingReadiness) < 0.05,
+      `week ${week + 1}: the card posted ${posted} and the week delivered ${payoff.scoutingReadiness}`
+    );
+    if (baseline !== posted) differed += 1;
+  }
+  assert.ok(compared >= 5, "the sweep must actually play scouted games");
+  // A card whose two branches always agree is not pricing a decision.
+  assert.ok(differed >= 3, `making it a priority must beat leaving it alone (${differed} of ${compared} weeks differed)`);
+});
