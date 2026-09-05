@@ -2044,3 +2044,34 @@ test("the recruiting percentage the screen posts is the rate the market delivers
   // prospect is worth nothing however well calibrated it is.
   assert.ok(buckets.size >= 5, `the odds must spread across the range, saw ${buckets.size} buckets`);
 });
+
+test("the recruiting card posts the number the engine actually adds", () => {
+  // The card carried its own copy of the recruiting formula, and the copy was
+  // the one that existed before it was re-weighted: `32 + facilities * 4 +
+  // contribution / 20` against the engine's `14 + facilities * 3 +
+  // contribution / 4.2`. A cold player read "+41 recruiting points this week"
+  // and the week delivered 25 — a 39% miss on a number they are asked to make a
+  // decision against, and a direct breach of "the posted number must be the
+  // number the engine uses".
+  //
+  // Both now read one set of constants. This asserts they agree at the point
+  // where it is checkable: the gross addition in the first week, before any of
+  // it has been spent again.
+  const state = beginSeason(createFictionalLeague("card-matches-engine", 12));
+  for (const programId of ["program-1", "program-4", "program-9"]) {
+    const card = weekPriorities(state, programId).find((entry) => entry.focus === "RECRUIT");
+    assert.ok(card, "every program must be offered the recruiting card");
+    const posted = Number.parseInt(card.baseline.replace(/[^0-9-]/g, ""), 10);
+    const before = state.recruiting[programId].points;
+    const after = advanceWeek(state, []).state.recruiting[programId].points;
+    assert.equal(
+      after - before,
+      posted,
+      `${programId}: the card posted ${posted} and the week added ${after - before}`
+    );
+    // And making it a priority must be worth more than not, or the card is
+    // offering a choice that is not one.
+    const focused = Number.parseInt(card.focused.replace(/[^0-9-]/g, ""), 10);
+    assert.ok(focused > posted, `${programId}: focusing the trail posted ${focused} against a baseline ${posted}`);
+  }
+});

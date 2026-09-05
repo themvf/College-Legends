@@ -10,6 +10,9 @@ import { DEFENSIVE_SPOTS, MINIMUM_SNAP_SHARE, OFFENSIVE_SPOTS, personnelLabel, s
 import { DEFAULT_GAME_PLAN, IDENTITY_BASE_DEFENSE, IDENTITY_BASE_PLAN, OFFENSIVE_IDENTITY_LABELS, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";
 import { MAXIMUM_PRACTICE_HOURS, opponentScoutingReport, preparationWeeklyPoints, projectedGamePlan, scheduledOpponent, scoutingConfidence, filmGamesAvailable } from "./scouting.js";
 import {
+  RECRUITING_BASE_POINTS,
+  RECRUITING_PER_CONTRIBUTION,
+  RECRUITING_PER_FACILITY,
   allocatedTotal,
   defaultAllocation,
   dossierTiers,
@@ -572,7 +575,11 @@ export function recruitingWeeklyPoints(state: Readonly<GameState>, programId: st
   // moved the week by five points — so the recruiting card could not state a
   // real trade. The weekly average across the league is unchanged; what changed
   // is that it now responds to whether anybody is actually on the road.
-  return Math.round(14 + program.facilities.RECRUITING * 3 + staffContribution(state, programId, "RECRUIT") / 4.2);
+  return Math.round(
+    RECRUITING_BASE_POINTS
+    + program.facilities.RECRUITING * RECRUITING_PER_FACILITY
+    + staffContribution(state, programId, "RECRUIT") / RECRUITING_PER_CONTRIBUTION
+  );
 }
 
 export function projectedRecruitingOpenings(state: Readonly<GameState>, programId: string): number {

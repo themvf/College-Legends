@@ -275,7 +275,17 @@ export function App(): ReactElement {
           .map((gameEvent) => gameEvent.submissionId));
         const blockedDecision = response.state.decisionAudits?.find((audit) =>
           responseAuditIds.has(audit.submissionId) && audit.status === "BLOCKED");
+        // A refused command has to say so where the player is standing, not only
+        // in the inbox feed they may never open. Only the audited weekly-planning
+        // commands surfaced their reason before this; everything else — a ticket
+        // price set in the preseason, a camp focus sent to the wrong step — was
+        // refused by the engine with a perfectly good reason that the player
+        // never saw. `expected-behavior.md` §8: silently dropping a command is a
+        // defect, and dropping it into a feed is close enough to silent.
+        const refused = response.events.find((gameEvent): gameEvent is Extract<GameEvent, { type: "COMMAND_REJECTED" }> =>
+          gameEvent.type === "COMMAND_REJECTED" && gameEvent.programId === playerProgramIdRef.current);
         if (blockedDecision?.rejectionReason) setError(blockedDecision.rejectionReason);
+        else if (refused) setError(refused.reason);
         const playedGame = response.events.some((gameEvent) =>
           gameEvent.type === "WEEKLY_RECAP"
           && gameEvent.programId === playerProgramIdRef.current

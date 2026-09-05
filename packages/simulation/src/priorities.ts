@@ -10,6 +10,9 @@ import type {
   WeekPriority
 } from "@college-legends/model";
 import {
+  RECRUITING_BASE_POINTS,
+  RECRUITING_PER_CONTRIBUTION,
+  RECRUITING_PER_FACILITY,
   MARQUEE_VALUE,
   WORTH_SCOUTING,
   emptyAllocation,
@@ -587,13 +590,33 @@ function growthNote(state: Readonly<GameState>, programId: string, plan: WeekHou
 }
 
 /** Recruiting points the week's hours would put on the board. */
+/**
+ * What the trail would produce with a given week behind it.
+ *
+ * This used to carry its own copy of the recruiting formula, and the copy was
+ * the one that existed before it was re-weighted — `32 + facilities * 4 +
+ * contribution / 20` against the engine's `14 + facilities * 3 + contribution /
+ * 4.2`. So the card posted 41 points and the week delivered 25, a 39% miss on a
+ * number the player is asked to make a decision against. Two copies of one
+ * formula is how a posted payoff drifts away from what the engine does, which
+ * is the failure this codebase keeps finding; there is one copy now, and the
+ * plan is applied to it through the same contribution term the engine reads.
+ */
 function trailNote(state: Readonly<GameState>, programId: string, plan: WeekHourPlan): number {
   const program = state.programs[programId];
-  const contribution = programStaff(state, programId).reduce((total, member) => {
-    const capacity = staffCapacity(member.rating, member.trait);
-    return total + focusWeight(member, "RECRUIT") * clamp((plan.byStaff[member.id]?.RECRUIT ?? 0) / Math.max(1, capacity), 0, 1);
-  }, 0);
-  return Math.round(32 + (program?.facilities.RECRUITING ?? 1) * 4 + contribution / 20);
+  const contribution = programStaff(state, programId)
+    // The strength coach is a fixed health investment and contributes nothing to
+    // the trail, exactly as `staffContribution` has it.
+    .filter((member) => member.role !== "STRENGTH_COACH")
+    .reduce((total, member) => {
+      const capacity = staffCapacity(member.rating, member.trait);
+      const share = clamp((plan.byStaff[member.id]?.RECRUIT ?? 0) / Math.max(1, capacity), 0, 1);
+      // `focusWeight` is already rating x role fit x trait aptitude, so this is
+      // `staffContribution`'s term with the plan's share substituted for the
+      // allocation the program is currently running.
+      return total + focusWeight(member, "RECRUIT") * share;
+    }, 0);
+  return Math.round(RECRUITING_BASE_POINTS + (program?.facilities.RECRUITING ?? 1) * RECRUITING_PER_FACILITY + contribution / RECRUITING_PER_CONTRIBUTION);
 }
 
 /** What the department would produce with a given week behind it. */

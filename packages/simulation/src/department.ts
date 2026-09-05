@@ -190,6 +190,16 @@ export function rebalanceAllocation(
  * to filter staff by a single assignment reads this instead, so a coach who
  * gives a job a third of his week contributes a third of his worth to it.
  */
+/**
+ * The weekly recruiting formula, in one place. It lives here rather than beside
+ * `recruitingWeeklyPoints` because the weekly priority card has to price a week
+ * the player has not committed to yet, and the two must not drift: the card
+ * once carried a stale copy and posted 41 points against a delivered 25.
+ */
+export const RECRUITING_BASE_POINTS = 14;
+export const RECRUITING_PER_FACILITY = 3;
+export const RECRUITING_PER_CONTRIBUTION = 4.2;
+
 export function staffContribution(
   state: Readonly<GameState>,
   programId: string,
