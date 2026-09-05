@@ -86,3 +86,14 @@ the method recorded — cycle 1 recorded a hash and not how it was produced.
 | seed | `qa-baseline-2026-09`, 72 programs, 3 seasons |
 | method | sha256 of `JSON.stringify({programs, players, seasonHistory})`, first 16 hex |
 | hash | `55e8ac644f4875c2` |
+
+**Re-measured at `d022c4b`**, after the nineteen commits that closed thirteen
+cycle-2 issues: **`55e8ac644f4875c2`, unchanged**, and replay at 24 programs over
+one season is still byte-identical.
+
+That is a real result rather than a formality — five of those commits touched
+engine code. It also caught a false claim: an unchanged hash prompted checking
+whether the scouting path is exercised by this scenario at all. It is (all 24
+programs build files and set the refund marker), which meant one engine change
+reported in issue 02 had been inert, and it had been — see the correction in
+that issue.

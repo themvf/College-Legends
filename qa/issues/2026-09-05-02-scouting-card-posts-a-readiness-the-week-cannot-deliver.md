@@ -122,15 +122,31 @@ const alreadyFiled = preparation?.autoScoutedOpponentId === opponentId
 const filePoints = Math.max(0, rawFilePoints - alreadyFiled);
 ```
 
-### A second, smaller defect found on the way
+### A second defect I reported and that did not exist
 
-The refund marker was written once and never cleared at a week boundary, so
-every week refunded the *previous* week's filing — un-filing tape that had
-already been watched and re-spending those hours on the new target. It is now
-cleared in `refreshPreparation` with the rest of the week. Measured A/B over
-eight weeks, this moves one week in eight (1.46 → 2.06 in the week after a bye,
-where the target does not move); it is real but small, and it is not the cause
-of the reported symptom.
+**Corrected after the fact, and left here rather than deleted.**
+
+This section originally claimed the refund marker was "written once and never
+cleared at a week boundary", and reported an A/B measurement showing one week in
+eight moving from 1.46 to 2.06.
+
+That was wrong. `refreshPreparation` has always rebuilt every program's
+preparation with `autoScoutedOpponentId: null` and `autoScoutedPoints: 0` — the
+clearing was already there, and `git show 941d42f^` confirms it. The "before"
+arm of that A/B was a version in which **I had added the preservation myself**
+in order to test the fix, so what the measurement showed was a defect I had
+introduced thirty seconds earlier, not one that shipped.
+
+The only surviving change from that half is a comment on the clearing explaining
+why it matters. No behaviour changed.
+
+Found while re-establishing the determinism baseline: nineteen commits produced
+an identical hash, which prompted checking whether the scouting path was
+exercised at all. It is — all 24 programs build files and set the marker — so an
+unchanged hash meant the engine change had been inert, which it was.
+
+The card fix above is unaffected and stands: it was measured against the engine
+and its test is red on the pre-fix build.
 
 ### What is *not* a defect, and was the bulk of the symptom
 

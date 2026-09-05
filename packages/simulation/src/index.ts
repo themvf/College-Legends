@@ -1594,16 +1594,12 @@ function refreshPreparation(state: GameState, events: GameEvent[]): void {
       weeklyScoutingPoints: 0,
       offensiveReps: 0,
       defensiveReps: 0,
-      // Cleared with the rest of the week, which is the point of rebuilding it
-      // here. The refund exists so that moving the film room *within* a week
-      // moves the work rather than duplicating it — but the marker used to be
-      // written once and never reset, so every week refunded the previous
-      // week's filing, un-filing tape that had already been watched and
-      // re-spending those hours on the new target. A program that let the
-      // target follow its schedule therefore held a file of exactly one week's
-      // output for the whole season: readiness sat at 1.46 in week 1 and 1.46
-      // in week 8, and a cold player correctly reported that scouting did
-      // nothing. Last week's film is spent, not refundable.
+      // Cleared with the rest of the week, and load-bearing. The refund in
+      // `commitScoutingOutput` exists so that moving the film room *within* a
+      // week moves the work rather than duplicating it; if the marker survived
+      // the week boundary, each week would refund the previous week's filing
+      // and un-file tape that had already been watched. Last week's film is
+      // spent, not refundable.
       autoScoutedOpponentId: null,
       autoScoutedPoints: 0
     };
