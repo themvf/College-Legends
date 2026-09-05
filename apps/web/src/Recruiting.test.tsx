@@ -43,6 +43,44 @@ describe("Recruiting War Room", () => {
     expect(screen.getByRole("heading", { level: 2, name: selectors[1]!.querySelector("strong")!.textContent! })).toBeInTheDocument();
   });
 
+  it("survives selecting every prospect on the board, evaluated or not", async () => {
+    // A hook placed after an early return in the NIL panel meant selecting an
+    // unevaluated prospect rendered fewer hooks than the previous render, which
+    // React treats as fatal: the whole app unmounted with "Rendered fewer hooks
+    // than expected" and no error boundary. It shipped because every existing
+    // test here only ever exercised the first, auto-selected row.
+    const user = userEvent.setup();
+    const game = fixture("war-room-every-row");
+    // The crash needs a board where the hook count DIFFERS between rows: the
+    // NIL panel returns early for a prospect nobody has evaluated. A fresh
+    // league has none evaluated, so every row takes the same path and the bug
+    // stays hidden — which is exactly why the first version of this test passed
+    // against it. Evaluate one, so selecting between them crosses the branch.
+    const recruiting = game.state.recruiting[game.playerProgramId]!;
+    const evaluated = recruiting.discoveredProspectIds[0]!;
+    recruiting.scoutingByProspect[evaluated] = {
+      ...(recruiting.scoutingByProspect[evaluated] ?? { pursuitPoints: 0, visitsUsed: 0 }),
+      evaluations: ["BASIC"]
+    } as typeof recruiting.scoutingByProspect[string];
+    const errors: unknown[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args) => { errors.push(args[0]); });
+    try {
+      render(<Recruiting game={game} locked={false} pending={[]} onQueue={() => undefined} />);
+      const list = await screen.findByRole("list", { name: "Recruiting targets" });
+      const rows = within(list).getAllByRole("button");
+      expect(rows.length).toBeGreaterThan(2);
+      for (const row of rows) {
+        await user.click(row);
+        // The detail panel must still be mounted after every selection.
+        expect(screen.getByRole("heading", { level: 2, name: row.querySelector("strong")!.textContent! })).toBeInTheDocument();
+      }
+    } finally {
+      spy.mockRestore();
+    }
+    const hookErrors = errors.filter((error) => String(error).includes("hook"));
+    expect(hookErrors).toEqual([]);
+  });
+
   it("preserves the scholarship command payload in the selected detail", async () => {
     const user = userEvent.setup();
     const game = fixture("war-room-command");

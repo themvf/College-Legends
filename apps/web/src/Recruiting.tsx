@@ -442,6 +442,16 @@ function NilOfferControl({ game, item, ledger, pending, onQueue, disabled }: {
   const queued = pending.find((command): command is Extract<GameCommand, { type: "SET_NIL_OFFER" }> => command.type === "SET_NIL_OFFER" && command.prospectId === item.prospect.id);
   const [amount, setAmount] = useState(item.effectiveNilOffer);
   useEffect(() => setAmount(item.effectiveNilOffer), [item.prospect.id, item.effectiveNilOffer]);
+  // Every hook this component runs must run before the early return below.
+  // Placing this one after it meant selecting an unevaluated prospect rendered
+  // fewer hooks than the previous render, which React treats as fatal — it
+  // unmounted the whole app with "Rendered fewer hooks than expected" and no
+  // error boundary, on the screen the dashboard's most repeated REQUIRED item
+  // points at. A cold player concluded the game was broken.
+  //
+  // Memoised on the state rather than rebuilt per frame: without that, every
+  // drag of the slider rebuilds a league-wide scan of 6,120 players.
+  const oddsIndex = useMemo(() => recruitingOddsIndex(game.state), [game.state]);
   if (item.evaluationCount === 0) {
     return <section className="action-group nil-action"><div><h4>Weekly NIL</h4><p>Complete one evaluation to learn an asking range and unlock an offer.</p></div><strong>Ask unknown</strong></section>;
   }
@@ -455,9 +465,8 @@ function NilOfferControl({ game, item, ledger, pending, onQueue, disabled }: {
   // the only reason a slider is more interesting than a text box — and it
   // saturates, because money is a tiebreaker by design and never buys a recruit
   // who does not want the program.
-  // Memoised on the state, not rebuilt per frame: without this every drag of
-  // the slider rebuilds a league-wide scan of 6,120 players.
-  const oddsIndex = useMemo(() => recruitingOddsIndex(game.state), [game.state]);
+  // Memoised above on the state, not rebuilt per frame: without that, every drag
+  // of the slider rebuilds a league-wide scan of 6,120 players.
   const priced = prospectOdds(game.state, programId, item.prospect.id, oddsIndex, { nilOffer: amount });
   const standing = item.odds;
   return <section className="action-group nil-action">
