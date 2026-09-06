@@ -12,8 +12,8 @@
 import { readFileSync } from "node:fs";
 import {
   advanceWeek, advanceOffseasonStep, beginSeason,
-  opponentScoutingReport, scoutingReadiness, filmGamesAvailable, scheduledOpponent,
-  SIGNING_WEEK, READINESS_CAP
+  scoutingReport, scoutingBoard, scoutingReadiness, filmGamesAvailable, scheduledOpponent,
+  scoutingConfidence, SIGNING_WEEK, READINESS_CAP, SCOUTING_TIERS, FULL_FILE_READINESS
 } from "../../../packages/simulation/dist/index.js";
 import { planWeek, planOffseason } from "./lib.mjs";
 
@@ -30,11 +30,19 @@ const seed = process.argv[2] ?? "qa-c3-market-1";
   console.log(`   opponent=${opponent?.opponentProgramId} filmGames=${opponent ? filmGamesAvailable(state, opponent.opponentProgramId) : "n/a"}`);
   console.log(`   readiness curve: 0=${scoutingReadiness(0)} 1=${scoutingReadiness(1)} 20=${scoutingReadiness(20)} ${READINESS_CAP}=${scoutingReadiness(READINESS_CAP)} ${READINESS_CAP + 100}=${scoutingReadiness(READINESS_CAP + 100)}`);
   console.log(`   readiness at negative points: ${scoutingReadiness(-50)}  at NaN: ${scoutingReadiness(NaN)}  at Infinity: ${scoutingReadiness(Infinity)}`);
-  if (opponent) {
-    for (const points of [0, 1, 20, 45, 75, 500]) {
-      const report = opponentScoutingReport(state, me, opponent.opponentProgramId, points);
-      console.log(`   points=${String(points).padEnd(4)} tiers=${JSON.stringify(report.tiers)} confidence=${report.confidence} readiness=${report.readiness ?? "-"} notes=${JSON.stringify(report.notes?.slice(0, 1))}`);
-    }
+  console.log(`   SCOUTING_TIERS=${JSON.stringify(SCOUTING_TIERS)} FULL_FILE_READINESS=${FULL_FILE_READINESS}`);
+  const report = scoutingReport(state, me);
+  console.log(`   scoutingReport(week 1): ${JSON.stringify(report).slice(0, 700)}`);
+  const board = scoutingBoard(state, me);
+  console.log(`   scoutingBoard rows=${board.length}`);
+  for (const row of board.slice(0, 4)) {
+    console.log(`     wk${row.week} vs ${row.opponentProgramId} film=${filmGamesAvailable(state, row.opponentProgramId)} points=${row.points} tier=${row.tier ?? "-"} confidence=${row.confidence} readiness=${row.readiness ?? "-"} value=${row.value}`);
+  }
+  // The gate itself: confidence and tier at each threshold with zero film.
+  for (const points of [0, 1, 19, 20, 44, 45, 74, 75, 500]) {
+    const conf = scoutingConfidence(state, me, 0, points);
+    const confWithFilm = scoutingConfidence(state, me, 3, points);
+    console.log(`     points=${String(points).padEnd(4)} film0 -> ${JSON.stringify(conf)}   film3 -> ${JSON.stringify(confWithFilm)}   readiness=${scoutingReadiness(points)}`);
   }
   // lastWeeklyNet, the documented "reads last week" rule, at week 1.
   const nets = Object.values(state.programs).map((p) => p.lastWeeklyNet);

@@ -43,15 +43,63 @@ A mismatch is a correctness bug at any sample size.
 
 ## 2. Competitiveness
 
+**Re-baselined 2026-09-06.** The `sim` column below is measured, not quoted —
+see "Provenance" at the end of this section for what it replaced and why.
+
 | | sim | real | note |
 |---|---|---|---|
-| home win rate | 57–60% | 57–60% | `homeFieldAdvantage` 2.8 |
-| shutouts | ~0.2% | ~1% | |
-| one-score games | **21.4%** | ~35% | known deviation, §6 |
-| average margin | ~15 | ~17 | |
+| home win rate | 60–61% at 72 programs; 57–60% at 24 | 57–60% | `homeFieldAdvantage` 2.8; sits at or just over the top of the real range at league size |
+| shutouts | **~2.6%** | ~1% | part of the fat-tail deviation, §6 |
+| one-score games | **23–24%** | ~35% | known deviation, §6 |
+| average margin | **~21.5** | ~17 | part of the fat-tail deviation, §6 |
+| points / team-game | **26.5** | ~27 | in band |
 
 Pool **at least four leagues** for any of these. Six for one-score games, where
-per-league variance is ±3.5 points on 144 games.
+per-league variance is ±4.2 points on 144 games — measured, and larger than the
+±3.5 this document used to state. A single 24-program league in a six-league set
+reported anywhere from 16.0% to 28.5%.
+
+Sample behind the row above: **15 independent leagues, 4,752 regular-season
+games**, at both 24 and 72 programs. Twelve leagues by `balance-tester`
+(`qa/runs/2026-09-05-balance.md`, D1) and three by `qa-lead` on fresh seeds as
+an independent check. Per-league sd: margin 0.55, shutouts 0.42, home win 0.79,
+one-score 1.62 (at 72). **League size is not a factor** — the two sizes agree to
+within 0.9 of margin and 0.07 points of shutout rate.
+
+The committed distribution suite's own tolerances — `averageMargin` in 8–25,
+`shutoutRate < 5%`, unchanged since `f1a5f69` — accept these figures and are
+green.
+
+### Provenance — why two of these rows changed
+
+The rows previously read **average margin ~15** and **shutouts ~0.2%**. Cycle 3
+measured 21.5 and 2.6% and asked whether that was a regression. It is not. Those
+two figures were **stale, not breached**, and a band nobody can meet is worse
+than no band:
+
+- They appear verbatim and *only* in `CLAUDE.md`'s 2026-07 RNG-finalizer table,
+  which measured `simulateGameScore` — a function that no longer exists.
+  `CLAUDE.md` says so in that section's own words: *"the stat bands described
+  above no longer exist — the numbers in this section are the targets that work
+  was calibrated against."*
+- The unit-resolution work that replaced it re-baselined ten per-game rates and
+  **did not re-measure margin or shutouts**. Its only statement about the margin
+  distribution is *"margins stay fat-tailed"*, which is the deviation now in §6.
+- `game-balance.md` was written in one commit (`9c77444`) by transcribing those
+  tables, so the stale pair came across with the rest.
+- The distribution suite has asserted 8–25 and <5% since the same July commit and
+  was **never tightened** to the ~15 / ~0.2% the prose claimed. The document
+  contradicted the committed tolerance, not the engine.
+
+Nothing since cycle 2 has touched game resolution, and no earlier
+`balance-tester` run exists to compare against — cycle 3's was the first.
+
+**Still worth someone's attention, and not as a defect.** The engine is now
+further from real football on these two figures than the stale prose claimed:
++26% on margin and roughly 2.6× on shutouts. That is one distribution with the
+one-score deviation in §6, and it is the right thing for cycle 4's
+`simulation-accuracy-tester` to open against rather than a tuning task opened
+blind.
 
 ## 3. The economy
 
@@ -138,7 +186,7 @@ not their existence.
 | deviation | why |
 |---|---|
 | punts ~5.7/game vs real 4.2 | there is no game clock, so drives that would expire at the half become punts |
-| one-score games 21.4% vs 35% | unit ratings are deliberately sensitive so a game plan matters; the league also mixes tiers inside divisions in a way real conferences do not |
+| **the margin distribution is fat-tailed**: one-score games 23–24% vs 35%, average margin ~21.5 vs 17, shutouts ~2.6% vs ~1% | unit ratings are deliberately sensitive so a game plan matters; the league also mixes tiers inside divisions in a way real conferences do not. **These are three views of one distribution and this row owns all three** — measured 2026-09-06 over 15 leagues and 4,752 games. File a *change* in them, with a stated sample, not their existence |
 | scheme pass rate compressed to 41–49% | situational logic inside the drive loop pulls every program toward an even split; scheduled for the outcome-modifier work |
 | POWER budgets grow ~2.5x over four seasons | now *earned* by winning rather than automatic; depends on rivals spending on NIL, which is open |
 | LOW programs drift slowly negative | intended — a program run by nobody in particular should bleed, and it is where the coaching market gets its churn |
