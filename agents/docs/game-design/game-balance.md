@@ -115,15 +115,40 @@ Over one season at 24 programs:
 
 | | expected |
 |---|---|
-| a losing season (≥9 losses) | **−$0.6M to −$1.8M** |
+| a losing season (≥9 losses) | **−$0.6M to −$1.8M** — untrusted, see below |
 | a winning season (≥9 wins) | **+$1.3M to +$12.0M** |
-| insolvent by season 5, of 72 | **~3** |
+| insolvent by season 5, of 72 | **~3** — **measured 7–9 in cycle 3**, `qa/issues/2026-09-06-08` |
 
 **The direction is an invariant.** Winning must always be worth more than
 losing. An earlier build inverted this — mid-tier programs going 11-2 and 9-5
 lost $7.4M and $5.7M while nobody who went 3-9 lost more than $3.7M — and that
-is a worse defect than any runaway. If the worst winning season is beaten by the
-best losing one, that is a P1 regardless of sample size.
+is a worse defect than any runaway.
+
+**How to test it. Corrected 2026-09-06 — the previous criterion was wrong.**
+
+> **Within a tier**, mean budget change must rise with wins, and the relationship
+> across win counts must be monotone within noise. Pool at least four leagues.
+> A sign flip — any losing band out-earning any winning band **on means** — is a
+> P1 at any sample size.
+
+This section used to read *"if the worst winning season is beaten by the best
+losing one, that is a P1 regardless of sample size"*. That criterion was wrong
+twice over and produced a false failure in cycle 3: it does not control for tier
+(a POWER program going 3-9 out-earns a MID program going 9-5 because it opens on
+$20M of revenue against $6M, which is the premise of the game), and min-versus-max
+is a comparison of order statistics that will cross for any two overlapping
+distributions once the samples are large enough — so it gets *more* likely to fail
+the more evidence you gather. See `qa/issues/2026-09-06-09`.
+
+Measured on the corrected test, 384 program-seasons over eight seasons at 24
+programs: monotone across all sixteen win counts, +$0.93M at 0 wins to +$18.33M
+at 15, roughly **$1.2M a win**, and correct within all three tiers.
+
+**Losing is currently profitable in absolute terms** — every ≥9-loss band above
+is positive against this section's own −$0.6M to −$1.8M row. That row was
+measured over one season at league start and the figure above pools eight, so the
+two are not directly comparable and the row is untrusted until somebody measures
+it at a matched horizon. Tracked on `qa/issues/2026-09-06-08`.
 
 **Nothing may scale with an unbounded quantity.** `fanBase` has no ceiling
 (power programs reach 748,000 against an 88,000 stadium). Costs driven off it

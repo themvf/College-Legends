@@ -164,4 +164,35 @@ unconditionally.
 
 ## Fix
 
-<pending>
+`isFiniteNumber`, `isRecruitingSearchType` and `isRecruitingEvaluation` in
+`packages/simulation/src/index.ts`, applied at six sites — the five reported
+plus **F7**, which Brief B found after this issue was filed:
+`BID_PORTAL_PLAYER` with a non-finite field was accepted, charged nothing, and
+emitted `PORTAL_BID_SET` claiming the bid was set. A silent no-op wearing a
+success event is worse than a refusal, because nothing tells the caller.
+
+Every site now refuses with a reason in the existing voice rather than being
+coerced to a default, so a malformed command is indistinguishable from any other
+rejected one. `prospectOdds` treats a non-finite `nilOffer` as "no offer yet",
+which is the right reading for its only caller — a slider mid-drag — instead of
+posting *"NaN%. You're NaN behind the leader of 3."*
+
+Covered by `tests/recruiting.test.mjs` — *"malformed recruiting commands are
+refused instead of poisoning the pool"* — which drives eight malformed commands
+through `advanceWeek` and asserts each is refused with a reason and that the
+points pool stays finite, plus that a search which is not a search reveals
+nobody and charges nothing.
+
+Two notes on the test, both recorded because they are the failure mode this
+project keeps hitting. Its first draft compared the pool after the advance
+against the pool before, and read the **weekly refill as a charge**; it compares
+against a control week now. And because that correction changed the test after
+it had been seen red, it was **re-verified red against the unfixed engine a
+second time** — a test that has not been run against the defect in the form it
+finally ships is not a regression test.
+
+The market-integrity half is closed at the root rather than at the comparator:
+no `NaN` can now reach a score, so `Array.sort`'s treatment of a `NaN` return
+and the `<` gates on the winner are unreachable by this route. The comparator
+itself was left alone deliberately — hardening it as well would hide the next
+defect of this class rather than surface it.

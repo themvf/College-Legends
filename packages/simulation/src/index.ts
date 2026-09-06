@@ -569,6 +569,37 @@ export function recruitingEvaluationCost(evaluation: RecruitingEvaluation): numb
   return RECRUITING_EVALUATION_COSTS[evaluation];
 }
 
+/*
+ * Commands cross a public API boundary, so a handler that compares or looks up
+ * a field before validating it accepts exactly what it meant to refuse.
+ *
+ * `Math.trunc(NaN)` is `NaN` and every `<` and `>` against `NaN` is false, so a
+ * malformed number walked straight past guards that correctly refuse 0, -10, 26
+ * and Infinity. The damage did not stop at one command: `recruiting.points`
+ * became `NaN` permanently, because a weekly refill is `+=` and no week boundary
+ * heals it, after which every costed action gated on `points < cost` was free
+ * for the rest of the career. The poisoned score then reached the contested
+ * market, where `Array.sort` treats a `NaN` comparator return as 0 and both
+ * gates on the winner are `<` — so a `NaN` bidder cleared the commitment
+ * threshold and the required-lead check unconditionally, won prospects it should
+ * have lost, and in one measured case decided a contest between two *other*
+ * programs. That last part is what makes this a market-integrity matter and not
+ * merely bad input handling.
+ *
+ * An unknown enum missed three tables at once: the cost lookup was `undefined`
+ * so the affordability gate was skipped, the candidate filter fell through to
+ * the broadest default, and `slice(0, undefined)` returned everything — one
+ * command revealing 747 of 2,160 prospects for free.
+ */
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+const isRecruitingSearchType = (value: unknown): value is RecruitingSearchType =>
+  typeof value === "string" && Object.hasOwn(RECRUITING_SEARCH_COSTS, value);
+
+const isRecruitingEvaluation = (value: unknown): value is RecruitingEvaluation =>
+  typeof value === "string" && Object.hasOwn(RECRUITING_EVALUATION_COSTS, value);
+
 export function recruitingWeeklyPoints(state: Readonly<GameState>, programId: string): number {
   const program = state.programs[programId];
   if (!program) return 0;
@@ -2642,6 +2673,10 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Discover this available prospect before evaluating him." });
         continue;
       }
+      if (!isRecruitingEvaluation(command.evaluation)) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That is not an evaluation this program can run." });
+        continue;
+      }
       if (scouting.evaluations.includes(command.evaluation)) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "That evaluation is already complete." });
         continue;
@@ -2729,8 +2764,8 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "The projected incoming class is full." });
         continue;
       }
-      const points = Math.trunc(command.points);
-      if (points < 1 || points > 25 || recruiting.points < points) {
+      const points = isFiniteNumber(command.points) ? Math.trunc(command.points) : Number.NaN;
+      if (!isFiniteNumber(points) || points < 1 || points > 25 || recruiting.points < points) {
         events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Choose an investment of 1–25 available Recruiting Points." });
         continue;
       }
@@ -2794,6 +2829,10 @@ function resolveCommands(state: GameState, commands: readonly GameCommand[], rng
     if (command.type === "SET_NIL_OFFER") {
       const prospect = state.prospects[command.prospectId];
       const scouting = state.recruiting[program.id]?.scoutingByProspect[command.prospectId];
+      if (!isFiniteNumber(command.weeklyAmount)) {
+        events.push({ type: "COMMAND_REJECTED", programId: command.programId, command, reason: "Name a weekly NIL figure in dollars." });
+        continue;
+      }
       const amount = Math.max(0, Math.round(command.weeklyAmount));
       // A verbal commitment is still contestable — see SIGNING_WEEK — so a
       // recruit stays reachable up to that point, whoever he is currently
@@ -3320,6 +3359,10 @@ function resolveProspectSearch(
 ): void {
   const program = state.programs[command.programId]!;
   const recruiting = state.recruiting[program.id]!;
+  if (!isRecruitingSearchType(command.searchType)) {
+    events.push({ type: "COMMAND_REJECTED", programId: program.id, command, reason: "That is not a search this program can run." });
+    return;
+  }
   const cost = recruitingSearchCost(command.searchType);
   if (command.searchType === "POSITION" && !command.position) {
     events.push({ type: "COMMAND_REJECTED", programId: program.id, command, reason: "Choose a position for the position search." });
@@ -3434,7 +3477,11 @@ export function prospectOdds(
   const withPlayer = contenders.includes(programId) ? contenders : [...contenders, programId].sort();
   const committedHere = prospect.status === "COMMITTED" && prospect.signedProgramId === programId;
 
-  const considering = options?.nilOffer !== undefined && options.nilOffer > 0;
+  // A slider mid-drag is the caller here, so a malformed figure must read as
+  // "no offer yet" rather than propagate into a posted "NaN%. You're NaN behind
+  // the leader of 3."
+  const proposedNil = isFiniteNumber(options?.nilOffer) ? options.nilOffer : undefined;
+  const considering = proposedNil !== undefined && proposedNil > 0;
   if (!contenders.includes(programId) && !considering) {
     return {
       outcome: "NOT_PURSUING",
@@ -3450,7 +3497,7 @@ export function prospectOdds(
 
   const scores = new Map(withPlayer.map((id) => [
     id,
-    recruitingBaseScore(state, prospect, id, shared.fit, id === programId ? options?.nilOffer : undefined)
+    recruitingBaseScore(state, prospect, id, shared.fit, id === programId ? proposedNil : undefined)
   ]));
   const threshold = commitmentThresholdFor(state.week);
   const lead = requiredLeadFor(state.week);
@@ -6417,6 +6464,13 @@ function applyPortalBid(
   const program = state.programs[command.programId];
   if (!recruiting || !program) { reject("Program does not exist."); return; }
 
+  if (!isFiniteNumber(command.points) || !isFiniteNumber(command.weeklyNil)) {
+    // A non-finite field used to slip through every comparison below and emit a
+    // PORTAL_BID_SET saying the bid was set — a silent no-op wearing a success
+    // event, which is worse than a refusal because nothing tells the caller.
+    reject("Name a bid in Recruiting Points and a weekly NIL figure in dollars.");
+    return;
+  }
   const points = Math.trunc(command.points);
   const weeklyNil = Math.max(0, Math.round(command.weeklyNil));
   if (points === 0 && weeklyNil === 0) {

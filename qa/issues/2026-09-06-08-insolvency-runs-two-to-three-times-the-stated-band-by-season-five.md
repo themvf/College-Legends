@@ -39,15 +39,15 @@ instead of a third of the league quietly dying inside one career."*
 
 ## Actual
 
-qa-lead, two fresh seeds, 72 programs:
+qa-lead, two fresh seeds, 72 programs, five seasons each:
 
-| season | `lead-c1-a` | `lead-c1-b` | min budget (a) |
-|---|---|---|---|
-| 1 | 0/72 | 0/72 | $4.3M |
-| 2 | 0/72 | 0/72 | $1.2M |
-| 3 | 1/72 | 3/72 | −$0.7M |
-| 4 | 3/72 | — | −$1.2M |
-| **5** | **7/72** | — | **−$2.7M** |
+| season | insolvent (a) | min (a) | insolvent (b) | min (b) |
+|---|---|---|---|---|
+| 1 | 0/72 | $4.3M | 0/72 | $4.4M |
+| 2 | 0/72 | $1.2M | 0/72 | $2.3M |
+| 3 | 1/72 | −$0.7M | 3/72 | −$1.0M |
+| 4 | 3/72 | −$1.2M | 5/72 | −$3.8M |
+| **5** | **7/72** | **−$2.7M** | **7/72** | **−$6.8M** |
 
 The reporter measured **9 of 72** on `qa-c3-econ-a` with the same accelerating
 shape (0, 0, 1, 4, 7 by season) and re-ran on a second wide seed specifically to
@@ -84,12 +84,31 @@ per-finding detail sections were not written. So the **cause** is unattributed
 and everything below is open:
 
 - whether the accelerating shape continues or plateaus after season five;
-- whether it is concentrated in LOW programs, which are designed to bleed;
-- whether it interacts with `2026-09-06-09` (winning versus losing).
+- whether it is concentrated in LOW programs, which are designed to bleed.
 
 The count itself is reproduced and is the finding. Do not treat the reporter's
 C6/C7/C8 lines as attributions for it — they are separate observations awaiting
 their own evidence.
+
+## One measured thread worth pulling first
+
+While adjudicating C5 (see `2026-09-06-09`) I measured budget change by win
+count over 384 program-seasons, 24 programs, eight seasons:
+
+```
+ 0W  n=  5  mean +$0.93M      8W  n= 32  mean  +$6.83M
+ 1W  n= 14  mean +$0.46M      9W  n= 35  mean  +$6.82M
+ 2W  n= 20  mean +$1.85M     11W  n= 16  mean +$12.01M
+ 4W  n= 43  mean +$2.81M     14W  n=  7  mean +$17.62M
+```
+
+**Every losing band is profitable**, against §3's stated *"a losing season (≥9
+losses) −$0.6M to −$1.8M"*. Part of that is horizon — §3 measured one season at
+league start and this pools eight — but it sits oddly beside 7 of 72 going
+insolvent, which means the programs that fail are failing for a reason other
+than losing football games. That is the thread: **what distinguishes the seven
+from the sixty-five?** Facility upkeep and payroll are the obvious candidates and
+neither has been measured against the insolvent set.
 
 ## Fix
 

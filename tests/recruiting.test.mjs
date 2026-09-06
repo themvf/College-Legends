@@ -481,3 +481,74 @@ test("pipeline growth persists through save round-trips deterministically", () =
   };
   assert.deepEqual(run(), run());
 });
+
+test("malformed recruiting commands are refused instead of poisoning the pool", () => {
+  // Four handlers compared or looked up a command field before validating it,
+  // so a non-finite number or an unknown enum was accepted. `Math.trunc(NaN)`
+  // is `NaN` and every `<` / `>` against it is false, so the value walked past
+  // guards that correctly refuse 0, -10, 26 and Infinity.
+  //
+  // The damage did not stop at one command. `recruiting.points` became `NaN`
+  // permanently — a weekly refill is `+=`, so no week boundary heals it — after
+  // which every costed action gated on `points < cost` was free for the rest of
+  // the career. The poisoned score then reached the contested market, where a
+  // `NaN` bidder cleared both `<` gates on the winner unconditionally and, in
+  // one measured case, decided a contest between two *other* programs.
+  //
+  // Not reachable from the shipped UI, but the engine's command boundary has
+  // real consumers today: every QA harness drives `advanceWeek` directly, and
+  // one passing `undefined` gets a silently corrupted league that reads as a
+  // balance finding rather than an error.
+  const state = activeLeague("recruiting-malformed-input", 12);
+  const programId = Object.keys(state.programs)[0];
+
+  // A valid search first, so there is something discovered to evaluate.
+  const seeded = advanceWeek(state, [
+    { type: "SEARCH_PROSPECTS", programId, searchType: "LOCAL_REGION" }
+  ]).state;
+  const prospectId = seeded.recruiting[programId].discoveredProspectIds[0];
+  assert.ok(prospectId, "the valid search must discover somebody to evaluate");
+
+  const before = seeded.recruiting[programId].points;
+  const discoveredBefore = seeded.recruiting[programId].discoveredProspectIds.length;
+  assert.ok(Number.isFinite(before));
+
+  const malformed = [
+    { type: "SEARCH_PROSPECTS", programId, searchType: "OUIJA_BOARD" },
+    { type: "SEARCH_PROSPECTS", programId, searchType: null },
+    { type: "EVALUATE_PROSPECT", programId, prospectId, evaluation: "TELEPATHY" },
+    { type: "EVALUATE_PROSPECT", programId, prospectId, evaluation: 3 },
+    { type: "INVEST_RECRUITING_POINTS", programId, prospectId, points: Number.NaN },
+    { type: "INVEST_RECRUITING_POINTS", programId, prospectId, points: undefined },
+    { type: "SET_NIL_OFFER", programId, prospectId, weeklyAmount: Number.NaN },
+    { type: "SET_NIL_OFFER", programId, prospectId, weeklyAmount: undefined }
+  ];
+
+  for (const command of malformed) {
+    const result = advanceWeek(seeded, [command]);
+    const rejected = result.events.find((event) =>
+      event.type === "COMMAND_REJECTED" && event.programId === programId
+      && event.command.type === command.type);
+    assert.ok(rejected, `${command.type} must be refused, and with a reason`);
+    assert.ok(rejected.reason.length > 0, `${command.type} must say why`);
+
+    // The pool is the thing that never recovered, so it is the thing to assert.
+    const after = result.state.recruiting[programId].points;
+    assert.ok(Number.isFinite(after), `${command.type} left the points pool at ${after}`);
+  }
+
+  // And one command specifically must not have handed over the whole board:
+  // an unknown search type missed the cost lookup, the candidate filter and the
+  // yield cap at once, revealing 747 of 2,160 prospects for nothing.
+  //
+  // Compared against a control week rather than against the pool before the
+  // advance, because a week refills the pool — the first draft of this
+  // assertion read the refill as a charge.
+  const junkSearch = advanceWeek(seeded, [
+    { type: "SEARCH_PROSPECTS", programId, searchType: "OUIJA_BOARD" }
+  ]).state.recruiting[programId];
+  const control = advanceWeek(seeded, []).state.recruiting[programId];
+  assert.equal(junkSearch.discoveredProspectIds.length, control.discoveredProspectIds.length,
+    "a search that is not a search must reveal nobody");
+  assert.equal(junkSearch.points, control.points, "and must charge nothing");
+});
