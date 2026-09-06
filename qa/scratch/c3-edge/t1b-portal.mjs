@@ -54,9 +54,11 @@ for (const seed of ["qa-c3-market-1", "qa-c3-market-2", "qa-c3-market-3"]) {
   const rows = {};
   for (const [name, list] of Object.entries(orders)) {
     const { state: next, events } = advanceOffseasonStep(state, list);
-    rows[name] = { raw: portalFingerprint(next) };
-    const claimed = events.filter((e) => e.type === "PORTAL_PLAYER_SIGNED" || e.type === "PORTAL_TRANSFER_COMPLETED").length;
-    console.log(`${name.padEnd(18)} portal=${hash(rows[name].raw)} roster=${rosterFingerprint(next)} nil=${nilFp(next)} claimed=${claimed} rejected=${events.filter((e) => e.type === "COMMAND_REJECTED").length}`);
+    const signings = events.filter((e) => e.type === "PORTAL_PLAYER_SIGNED")
+      .map((e) => `${e.playerId}->${e.programId}`).sort().join(",");
+    const unclaimed = events.filter((e) => e.type === "PORTAL_PLAYER_UNCLAIMED").map((e) => e.playerId).sort().join(",");
+    rows[name] = { raw: `${signings}\n${unclaimed}\n${portalFingerprint(next)}` };
+    console.log(`${name.padEnd(18)} signings=${hash(signings)} unclaimed=${hash(unclaimed)} roster=${rosterFingerprint(next)} nil=${nilFp(next)} signed=${events.filter((e) => e.type === "PORTAL_PLAYER_SIGNED").length} unclaimedN=${events.filter((e) => e.type === "PORTAL_PLAYER_UNCLAIMED").length} rejected=${events.filter((e) => e.type === "COMMAND_REJECTED").length}`);
   }
   const base = rows.A_forward.raw.split("\n");
   for (const [name, row] of Object.entries(rows)) {
