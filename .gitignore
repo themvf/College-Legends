@@ -4,3 +4,10 @@ dist/
 # qa/reports/ and silently swallowed every QA cycle report.
 /reports/
 *.tsbuildinfo
+
+# QA measurement scratch. The scripts under qa/scratch/ are the method and are
+# tracked, because a figure in a run log is only reproducible if the harness
+# that produced it is. The data they emit is not: constructed league snapshots
+# alone run to 800MB, and every byte of it is regenerable from a seed.
+qa/scratch/**/*.json
+qa/scratch/**/*.log
