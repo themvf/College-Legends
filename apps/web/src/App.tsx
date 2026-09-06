@@ -48,6 +48,8 @@ import {
   latestBoosterOffer,
   BOOSTER_KIND_LABELS,
   weekPriorities,
+  focusesAfterChoosing,
+  focusesAfterDropping,
   WEEK_FOCUS_LABELS,
   focusCapacity,
   activeFocuses,
@@ -2480,11 +2482,11 @@ function WeekPriorities({ game, busy, inFlightDecision, onQueue }: {
   const isChosen = (focus: WeekFocus) => chosen.includes(focus);
 
   const toggle = (focus: WeekFocus): void => {
+    // The same rule the cards price the week against, so the number above the
+    // button is the week the button produces.
     const next = isChosen(focus)
-      ? chosen.filter((entry) => entry !== focus)
-      // Picking past capacity drops the oldest choice, so the control never
-      // silently refuses. A card that does nothing when tapped reads as broken.
-      : [...chosen, focus].slice(-capacity.capacity);
+      ? focusesAfterDropping(chosen, focus)
+      : focusesAfterChoosing(chosen, focus, capacity.capacity);
     onQueue({ type: "SET_WEEK_FOCUS", programId, focuses: next });
   };
 

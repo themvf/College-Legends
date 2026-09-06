@@ -54,6 +54,7 @@ import {
   seasonExpectation,
   planAlignment,
   focusCapacity,
+  focusesAfterChoosing,
   planWeekHours,
   weekPriorities,
   activeFocuses,
@@ -2074,6 +2075,49 @@ test("the recruiting card posts the number the engine actually adds", () => {
     const focused = Number.parseInt(card.focused.replace(/[^0-9-]/g, ""), 10);
     assert.ok(focused > posted, `${programId}: focusing the trail posted ${focused} against a baseline ${posted}`);
   }
+});
+
+test("the recruiting card prices the week the button actually produces", () => {
+  // `weekPriorities` projected "make it a priority" by dropping the LAST
+  // standing priority, unconditionally. The button appends and drops the
+  // oldest only once it is over capacity. So with a free slot the card priced
+  // a week with one fewer priority sharing the hours, and posted a recruiting
+  // number 13% high — measured at −6.95 points of 53.8 on 237 of 237 rows
+  // across four leagues, in the same direction every time.
+  //
+  // A free slot is not an edge case a player has to go looking for: the
+  // dashboard raises it as a REQUIRED briefing item, "a priority nobody has
+  // claimed". It is the exact state the game directs the player into, and the
+  // number it showed them while they fixed it was the wrong week's.
+  //
+  // One rule, implemented twice, in the engine's projection and in the UI's
+  // toggle. `focusesAfterChoosing` is now the single source and both call it.
+  const state = beginSeason(createFictionalLeague("card-prices-the-button", 24));
+  let checked = 0;
+  for (const programId of Object.keys(state.programs)) {
+    const capacity = focusCapacity(state, programId).capacity;
+    if (capacity < 2) continue;
+    // One slot deliberately left free, and RECRUIT deliberately not standing.
+    const standing = ["INSTALL_OFFENSE", "INSTALL_DEFENSE"].slice(0, capacity - 1);
+    const chosen = focusesAfterChoosing(standing, "RECRUIT", capacity);
+    assert.deepEqual(chosen, [...standing, "RECRUIT"],
+      "a free slot must be filled, not traded against a standing priority");
+
+    // Both arms prepare once off the same base week: one to read the card, one
+    // to play the week the click produces.
+    const posting = prepareWeek(state, [{ type: "SET_WEEK_FOCUS", programId, focuses: standing }]).state;
+    const card = weekPriorities(posting, programId).find((entry) => entry.focus === "RECRUIT");
+    assert.ok(card, "every program must be offered the recruiting card");
+    const posted = Number.parseInt(card.focused.replace(/[^0-9-]/g, ""), 10);
+
+    const clicked = prepareWeek(state, [{ type: "SET_WEEK_FOCUS", programId, focuses: chosen }]).state;
+    const before = clicked.recruiting[programId].points;
+    const after = advanceWeek(clicked, []).state.recruiting[programId].points;
+    assert.equal(after - before, posted,
+      `${programId}: the card posted ${posted} and the week the button produces delivered ${after - before}`);
+    checked += 1;
+  }
+  assert.ok(checked >= 8, `expected a real sample of programs with a spare slot, saw ${checked}`);
 });
 
 test("the scouting card posts the readiness the week actually delivers", () => {

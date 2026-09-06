@@ -135,6 +135,37 @@ export function activeFocuses(state: Readonly<GameState>, programId: string): We
   return kept;
 }
 
+/**
+ * The priority list a click on an unchosen card produces.
+ *
+ * Exported because two places need it and used to hold it separately: the card
+ * that prices "make it a priority", and the button that fulfils the click. The
+ * projection dropped the *last* standing priority unconditionally while the
+ * button appended and dropped the *oldest* only once it was over capacity — so
+ * with a free slot the card priced a week one priority smaller than the one the
+ * button produced, and posted a recruiting number 13% above what the week
+ * delivered. A card that prices a week the button cannot produce breaks
+ * payoffs-are-visible, which is an invariant rather than a nicety.
+ */
+export function focusesAfterChoosing(
+  chosen: readonly WeekFocus[],
+  focus: WeekFocus,
+  capacity: number,
+): WeekFocus[] {
+  if (chosen.includes(focus)) return [...chosen];
+  // Picking past capacity drops the oldest choice, so the control never
+  // silently refuses. A card that does nothing when tapped reads as broken.
+  return [...chosen, focus].slice(-capacity);
+}
+
+/** The priority list a click on an already-chosen card produces. */
+export function focusesAfterDropping(
+  chosen: readonly WeekFocus[],
+  focus: WeekFocus,
+): WeekFocus[] {
+  return chosen.filter((entry) => entry !== focus);
+}
+
 /** What a program chases when the player has never touched the screen. */
 export function defaultFocuses(state: Readonly<GameState>, programId: string): WeekFocus[] {
   const capacity = focusCapacity(state, programId).capacity;
@@ -417,10 +448,11 @@ export function weekPriorities(state: Readonly<GameState>, programId: string): W
   const chosenSet = new Set(chosen);
   const programCount = Object.keys(state.programs).length;
 
+  const capacity = focusCapacity(state, programId).capacity;
   const withFocus = (focus: WeekFocus): WeekHourPlan =>
-    planWeekHours(state, programId, chosenSet.has(focus) ? chosen : [...chosen.slice(0, Math.max(0, chosen.length - 1)), focus]);
+    planWeekHours(state, programId, focusesAfterChoosing(chosen, focus, capacity));
   const withoutFocus = (focus: WeekFocus): WeekHourPlan =>
-    planWeekHours(state, programId, chosen.filter((entry) => entry !== focus));
+    planWeekHours(state, programId, focusesAfterDropping(chosen, focus));
 
   const opponentId = scoutingTargetFor(state, programId);
   const opponent = opponentId ? state.programs[opponentId] : null;

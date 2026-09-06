@@ -162,6 +162,8 @@ export {
   focusOwner,
   FOCUS_CAPACITY_THRESHOLDS,
   isWeekFocus,
+  focusesAfterChoosing,
+  focusesAfterDropping,
   MAXIMUM_FOCUSES,
   planWeekHours,
   repsSplit,
