@@ -2135,7 +2135,7 @@ function Inbox({ game }: { game: GameView }): ReactElement {
  * nine consecutive "Prep Points Added" entries, which is not news — it is the
  * simulation talking to itself in front of the player.
  */
-const INBOX_NOISE: ReadonlySet<GameEvent["type"]> = new Set([
+export const INBOX_NOISE: ReadonlySet<GameEvent["type"]> = new Set([
   "PLAYER_DEVELOPED", "PREP_POINTS_ADDED", "RECRUITING_POINTS_ADDED", "STAFF_ALLOCATION_SET",
   "SCOUTING_ALLOCATED", "PRACTICE_REPS_SET", "TICKET_PRICE_SET", "ADVERTISING_SET",
   "SPONSORSHIP_PAYMENT",
@@ -2183,6 +2183,55 @@ function EventList({ events, game }: { events: GameEvent[]; game: GameView }): R
   })}</div>;
 }
 
+/**
+ * Events that name one program but are genuinely news to the whole league.
+ *
+ * This list exists so that scoping is a decision somebody made rather than an
+ * omission. `inbox-scope.test.ts` enumerates every event type the engine
+ * actually emits carrying a `programId` and fails unless each one is filtered
+ * as noise, scoped below, or named here — so a new event type cannot quietly
+ * inherit "show it to everybody", which is exactly how this defect recurred.
+ */
+export const INBOX_LEAGUE_NEWS: ReadonlySet<GameEvent["type"]> = new Set([
+  "DIVISION_TITLE_WON", "SEASON_AWARD_FINALIZED", "NATIONAL_CHAMPION_CROWNED",
+  // A rival's board verdict, coaching change or portal signing is the league
+  // moving around the player, which is the kind of thing the inbox is for.
+  "BOARD_REVIEW_COMPLETED", "STAFF_REPLACED", "PORTAL_PLAYER_SIGNED",
+  "MARQUEE_GAME_SCHEDULED"
+] as GameEvent["type"][]);
+
+/**
+ * Events scoped by a rule of their own rather than by a plain programId match —
+ * a prospect the player has discovered is his business even when another
+ * program signs him, and a contest belongs to everybody who bid in it.
+ */
+export const INBOX_SCOPED_BY_RULE: ReadonlySet<GameEvent["type"]> = new Set([
+  "PLAYER_INJURED", "PLAYER_RECOVERED", "INJURY_RECOVERY_ACCELERATED",
+  "RECRUITING_CONTEST_RESOLVED",
+  "PROSPECT_COMMITTED", "NIL_DEAL_SIGNED", "PROSPECT_SIGNED", "PROSPECT_FLIPPED"
+] as GameEvent["type"][]);
+
+/** Events that belong to the program they name, and to nobody else. */
+export const INBOX_OWN_PROGRAM: ReadonlySet<GameEvent["type"]> = new Set([
+  "PROSPECTS_DISCOVERED", "PROSPECT_EVALUATED", "RECRUITING_INVESTMENT",
+  "RECRUITING_POINTS_ADDED", "PROSPECT_ENROLLED", "PROSPECT_OFFERED",
+  "RECRUITING_VISIT_SCHEDULED", "PROSPECT_COMMITMENT_VOIDED",
+  "SPONSORSHIP_ACCEPTED", "SPONSORSHIP_PAYMENT",
+  // Every program in the league meets somebody at the door on the same weeks,
+  // so an unscoped BOOSTER_OFFERED filled the inbox with seventy-one other
+  // programs' visitors. The player's own is a modal he has already answered.
+  "BOOSTER_OFFERED", "BOOSTER_RESOLVED",
+  // The same defect, found again in the NIL pair. NIL_OFFER_RESOLVED renders
+  // "<name> took your $850 a week offer" — hard-coded second person — so an
+  // unscoped one does not merely add noise, it reports another program's
+  // business as the player's own. NIL_COMMITMENT_ENDED was scoped; its
+  // siblings were not.
+  "NIL_OFFER_RESOLVED", "NIL_OFFER_SET", "NIL_COMMITMENT_ENDED",
+  "PORTAL_BID_SET", "FACILITY_UPGRADED", "TRAINING_CAMP_SET",
+  "ROSTER_POSITION_CONVERTED",
+  "COMMAND_REJECTED"
+] as GameEvent["type"][]);
+
 function eventRelevantToProgram(event: GameEvent, game: GameView): boolean {
   const programId = game.playerProgramId;
   if (event.type === "PLAYER_INJURED" || event.type === "PLAYER_RECOVERED" || event.type === "INJURY_RECOVERY_ACCELERATED") {
@@ -2196,17 +2245,8 @@ function eventRelevantToProgram(event: GameEvent, game: GameView): boolean {
     return event.toProgramId === programId || event.fromProgramId === programId
       || game.state.recruiting[programId]?.discoveredProspectIds.includes(event.prospectId) === true;
   }
-  if (event.type === "NIL_COMMITMENT_ENDED") return event.programId === programId;
-  if (event.type === "PROSPECTS_DISCOVERED" || event.type === "PROSPECT_EVALUATED" || event.type === "RECRUITING_INVESTMENT"
-    || event.type === "RECRUITING_POINTS_ADDED" || event.type === "PROSPECT_ENROLLED"
-    || event.type === "PROSPECT_OFFERED" || event.type === "RECRUITING_VISIT_SCHEDULED" || event.type === "PROSPECT_COMMITMENT_VOIDED"
-    || event.type === "SPONSORSHIP_ACCEPTED" || event.type === "SPONSORSHIP_PAYMENT"
-    // Every program in the league meets somebody at the door on the same weeks,
-    // so an unscoped BOOSTER_OFFERED filled the inbox with seventy-one other
-    // programs' visitors. The player's own is a modal he has already answered.
-    || event.type === "BOOSTER_OFFERED" || event.type === "BOOSTER_RESOLVED"
-    || event.type === "COMMAND_REJECTED") {
-    return event.programId === programId;
+  if (INBOX_OWN_PROGRAM.has(event.type)) {
+    return "programId" in event && event.programId === programId;
   }
   return true;
 }

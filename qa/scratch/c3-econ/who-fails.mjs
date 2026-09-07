@@ -89,6 +89,36 @@ compare("last weekly net", (r) => r.lastWeeklyNet, money);
 compare("fan base", (r) => r.fanBase, (v) => Math.round(v).toLocaleString());
 compare("prestige", (r) => r.prestige);
 
+// Every insolvency in the first run was LOW, which makes the league-wide split
+// above mostly a restatement of "LOW builds less and pays less". The question
+// is what separates a failing LOW program from a surviving one.
+for (const tier of ["LOW", "MID", "POWER"]) {
+  const cohort = rows.filter((r) => r.tier === tier);
+  const bad = cohort.filter((r) => r.insolvent);
+  const good = cohort.filter((r) => !r.insolvent);
+  if (bad.length === 0 || good.length === 0) continue;
+  console.log(`\nwithin ${tier} — ${bad.length} insolvent vs ${good.length} solvent`);
+  console.log("                          insolvent      solvent");
+  const within = (label, pick, format = (v) => v.toFixed(2)) =>
+    console.log(`${label.padEnd(24)} ${format(mean(bad, pick)).padStart(12)} ${format(mean(good, pick)).padStart(12)}`);
+  within("facility levels built", (r) => r.built);
+  within("total facility levels", (r) => r.levels);
+  within("staff payroll (weekly)", (r) => r.payroll, money);
+  within("opening budget", (r) => r.openingBudget, money);
+  within("last weekly net", (r) => r.lastWeeklyNet, money);
+  within("fan base", (r) => r.fanBase, (v) => Math.round(v).toLocaleString());
+  within("prestige", (r) => r.prestige);
+  console.log(`  character rates within ${tier}:`);
+  for (const character of [...new Set(cohort.map((r) => r.character))].sort()) {
+    const all = cohort.filter((r) => r.character === character);
+    const failed = all.filter((r) => r.insolvent).length;
+    const share = all.length === 0 ? 0 : (100 * failed / all.length);
+    console.log(`    ${String(character).padEnd(14)} ${String(failed).padStart(2)}/${String(all.length).padStart(2)}`
+      + `  ${share.toFixed(0)}%  net ${money(mean(all, (r) => r.lastWeeklyNet))}`
+      + `  fans ${Math.round(mean(all, (r) => r.fanBase)).toLocaleString()}`);
+  }
+}
+
 console.log("\nby tier:");
 for (const tier of ["LOW", "MID", "POWER"]) {
   const all = rows.filter((r) => r.tier === tier);

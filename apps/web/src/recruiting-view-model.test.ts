@@ -43,6 +43,42 @@ describe("recruiting command projections", () => {
     expect(ledger.nilReserved).toBe(1250);
     expect(ledger.nilFree).toBe(Math.max(0, ledger.nilCapacity - ledger.nilCommitted - 1250));
   });
+
+  it("counts a committed recruit's money once, and admits it is being paid", () => {
+    // A recruit who commits has his winning offer moved by the engine out of
+    // `offersByProspect` and into `commitmentsByPlayer`. The screen read only
+    // the first, so his own card said "No NIL offer is active" while the HUD
+    // showed the program paying him — and the obvious next action, putting the
+    // offer back, booked the same money a second time against donor capacity.
+    // The engine charged $2K a week; the screen reserved $4K.
+    const { state, programId } = fixture("nil-committed-double-book");
+    const prospectId = state.recruiting[programId]!.discoveredProspectIds[0]!;
+    const committed = {
+      ...state,
+      nil: {
+        ...state.nil,
+        [programId]: {
+          offersByProspect: {},
+          commitmentsByPlayer: { [prospectId]: 2000 }
+        }
+      }
+    };
+
+    // The card must report the money that is actually being paid.
+    const board = buildProspectBoard(committed, programId, [],
+      buildRecruitingLedger(committed, programId, []));
+    const row = board.find((entry) => entry.prospect.id === prospectId)!;
+    expect(row.currentNilOffer).toBe(2000);
+    expect(row.effectiveNilOffer).toBe(2000);
+
+    // And re-entering the same offer must not reserve the money twice.
+    const ledger = buildRecruitingLedger(committed, programId, [
+      { type: "SET_NIL_OFFER", programId, prospectId, weeklyAmount: 2000 }
+    ]);
+    expect(ledger.nilCommitted).toBe(2000);
+    expect(ledger.nilReserved).toBe(0);
+    expect(ledger.nilFree).toBe(Math.max(0, ledger.nilCapacity - 2000));
+  });
 });
 
 describe("recruiting board view model", () => {

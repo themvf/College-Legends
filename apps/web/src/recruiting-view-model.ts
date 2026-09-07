@@ -104,6 +104,25 @@ export function queuedRecruitingCost(command: GameCommand): number {
   return 0;
 }
 
+/**
+ * What the program is actually paying this prospect a week, whether the money
+ * is still an offer or has already become a commitment.
+ *
+ * The engine moves the winning offer out of `offersByProspect` and into
+ * `commitmentsByPlayer` the moment a prospect commits, and `recruitingScore`
+ * reads both with exactly this fallback. The screen read only the first, so a
+ * recruit the program was already paying $2K a week for reported "No NIL offer
+ * is active" — and then let the player book the same money a second time.
+ */
+export function nilPaidFor(
+  state: Readonly<GameState>,
+  programId: ProgramId,
+  prospectId: string
+): number {
+  const nil = state.nil?.[programId];
+  return nil?.offersByProspect[prospectId] ?? nil?.commitmentsByPlayer[prospectId] ?? 0;
+}
+
 export function effectiveNilOffers(
   state: Readonly<GameState>,
   programId: ProgramId,
@@ -144,7 +163,13 @@ export function buildRecruitingLedger(
   const nilOffers = effectiveNilOffers(state, programId, relevant);
   const nilCapacity = weeklyDonorCapacity(program);
   const nilCommitted = committedNilTotal(state, programId);
-  const nilReserved = Object.values(nilOffers).reduce((total, amount) => total + amount, 0);
+  // Money already counted in `nilCommitted` must not be counted again here. A
+  // committed recruit whose offer the player re-entered was charged once by the
+  // engine and twice against donor capacity by this screen, so the recruiting
+  // budget silently lost room for somebody else.
+  const nilCommitments = state.nil?.[programId]?.commitmentsByPlayer ?? {};
+  const nilReserved = Object.entries(nilOffers)
+    .reduce((total, [prospectId, amount]) => total + (nilCommitments[prospectId] ? 0 : amount), 0);
   const scholarshipOffers = effectiveScholarshipOffers(state, programId, relevant);
   const activeOffers = [...scholarshipOffers].filter((prospectId) => {
     const status = state.prospects[prospectId]?.status;
@@ -231,8 +256,9 @@ export function buildProspectBoard(
       command.type === "INVEST_RECRUITING_POINTS" && command.prospectId === prospect.id
     )?.points ?? 0;
     const queuedVisit = pending.some((command) => command.type === "SCHEDULE_VISIT" && command.prospectId === prospect.id);
-    const currentNilOffer = state.nil?.[programId]?.offersByProspect[prospect.id] ?? 0;
-    const effectiveNilOffer = ledger.effectiveNilOffers[prospect.id] ?? 0;
+    const currentNilOffer = nilPaidFor(state, programId, prospect.id);
+    const effectiveNilOffer = ledger.effectiveNilOffers[prospect.id]
+      ?? state.nil?.[programId]?.commitmentsByPlayer[prospect.id] ?? 0;
     const isMine = prospect.signedProgramId === programId;
     const flipTarget = prospect.status === "COMMITTED" && !isMine;
     const resolved = prospect.status === "SIGNED" || prospect.status === "ENROLLED";
