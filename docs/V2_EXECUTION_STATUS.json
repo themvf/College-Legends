@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "program": "College Legends V2",
-  "updatedAt": "2026-08-20",
+  "updatedAt": "2026-09-07",
   "managerSkill": "$college-legends-v2-manager",
   "specification": "docs/V2_FIXES.md",
   "statusPolicy": {
@@ -42,6 +42,24 @@
           ],
           "blockedBy": [],
           "evidence": [
+            {
+              "type": "code",
+              "reference": "packages/simulation/src/sponsorship-decision.ts; packages/simulation/src/briefing.ts; apps/web/src/App.tsx",
+              "result": "Shared sponsorship lifecycle projection drives Dashboard and Finances. Valid queued choices are pending rather than unanswered; stale offers permit replacement; foreign-program queues are isolated. No settlement, RNG, or save-schema rule changed.",
+              "date": "2026-09-07"
+            },
+            {
+              "type": "test",
+              "reference": "docs/design/PROTOTYPE_REVIEW_2026_09.md; apps/web/src/sponsorship-briefing.test.ts; apps/web/src/Finances.test.tsx",
+              "result": "Independent focused 9/9, existing sponsorship/dashboard 4/4, full web 32/32 with one worker, typecheck and production build passed. Live local browser confirmed unanswered count 6 to 5 and active sponsor with $65K earned after advance. Parallel full-suite attempt had an unrelated inbox timeout; no assertions or timeouts weakened.",
+              "date": "2026-09-07"
+            },
+            {
+              "type": "review",
+              "reference": "Independent verify_slice review; docs/RECONCILIATION_2026_09.md; docs/design/PROTOTYPE_REVIEW_2026_09.md",
+              "result": "Bounded sponsor feedback and stale-choice recovery approved. ARCH-001 stays in progress: persistent rejection/audit presentation and system-wide lifecycle/knowledge coverage remain open. B02 is an isolated fixed-data graphics prototype, not production UX-001 completion or a dependency waiver.",
+              "date": "2026-09-07"
+            },
             {
               "type": "code",
               "reference": "packages/model/src/index.ts; packages/simulation/src/decisions.ts; packages/simulation/src/index.ts; apps/web/src/simulation.worker.ts",
@@ -543,6 +561,11 @@
   ],
   "deferredItems": [],
   "changeLog": [
+    {
+      "date": "2026-09-07",
+      "change": "Recorded verified ARCH-001 sponsor feedback and recovery slice and separate B00/B02 product/design evidence. Preserved all target and wave statuses; no gates bypassed.",
+      "actor": "$college-legends-v2-manager"
+    },
     {
       "date": "2026-08-20",
       "change": "Verified the ARCH-001 weekly business AI boundary for booster, sponsorship, and facility decisions with exact legacy parity, frozen program-scoped inputs, truthful worker and CLI attribution, pooled immutable knowledge, causal event links, and 24/72-program performance gates. Kept ARCH-001 in progress for development, media, recruiting, and system-wide lifecycle adoption.",

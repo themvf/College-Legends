@@ -1,5 +1,9 @@
 # Visual design exploration
 
+**Current direction:** [Graphics and interface specification](GRAPHICS_SPEC.md), September 7, 2026. It replaces the war-room/broadcast-heavy direction with clean management screens, persistent player identity, and visible business progression. The studies below remain historical references, not the current production brief.
+
+**Interactive first slice:** [Local preview](http://127.0.0.1:5190/College-Legends/design-preview/index.html) · [source](../../apps/web/public/design-preview/index.html) · [verification notes](PROTOTYPE_REVIEW_2026_09.md). Start the local web server as described in the notes. This preview contains illustrative data and leaves saved careers untouched.
+
 Standalone HTML mockups, none of them wired to the app. Each is a self-contained
 page — no build step, no external dependency, no font or script CDN — exploring a
 visual direction for a real screen using real content from `packages/content`, so
@@ -12,7 +16,7 @@ Open `index.html` for the contact sheet, or any file directly in a browser.
 | 01 | `program-marks.html` | Program identity — five shields | Reference |
 | 02 | `scoreboard-math.html` | Moneyball x Arcade | Reference |
 | 03 | `three-treatments.html` | Bloomberg x Moneyball / Bloomberg x Arcade / Palantir x Arcade | Reference |
-| 04 | `war-room-mockup.html` | Broadcast scorebug | Current direction |
+| 04 | `war-room-mockup.html` | Broadcast scorebug | Historical direction |
 
 They run in order — each answers something the one before it raised.
 

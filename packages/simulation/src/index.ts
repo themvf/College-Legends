@@ -5,6 +5,7 @@ import { AddressableRng } from "./rng.js";
 import { createDecisionAudit, createDecisionProjection, decisionCommandKey, internDecisionKnowledge, retainedDecisionAudits, retainedDecisionEventHistory, retainedDecisionKnowledge, submitDecisionProjection } from "./decisions.js";
 import { attributeByRole, attributesFor, computeOverall, ratingByRole, type AttributeDefinition } from "./attributes.js";
 import { weeklyBriefing as buildBriefing, type BriefingItem, type BriefingOptions } from "./briefing.js";
+export { sponsorshipDecision } from "./sponsorship-decision.js";
 import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES, bestSchemeFor, programRoster, coachSchemeFit, schemePersonnel } from "./scheme.js";
 import { DEFENSIVE_SPOTS, MINIMUM_SNAP_SHARE, OFFENSIVE_SPOTS, personnelLabel, schemeSpots, snapShares, spotsForRoom } from "./rotation.js";
 import { DEFAULT_GAME_PLAN, IDENTITY_BASE_DEFENSE, IDENTITY_BASE_PLAN, OFFENSIVE_IDENTITY_LABELS, overallStrength, projectUnitEdges, resolveGame, unitRatingsFromLineup, type GameResult, type TeamSide, type UnitEdge } from "./game.js";

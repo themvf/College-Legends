@@ -1,6 +1,14 @@
 # College Legends Design Documents
 
-These documents are the source of truth for the current plan:
+The current product direction and proposed build sequence are:
+
+- [Core Game Specification](CORE_GAME_SPEC.md) — player lifecycle, business model, scope, and acceptance gates
+- [Ordered Implementation Backlog](IMPLEMENTATION_BACKLOG.md) — reuse audit, dependencies, first playable, and later expansion
+- [Graphics and Interface Specification](design/GRAPHICS_SPEC.md) — screen compositions, art families, and production gates
+
+The V2 execution ledger remains the existing execution record. The new backlog starts by reconciling it; the design documents do not mark implementation complete.
+
+Earlier plans and continuing technical references follow. The current core specification takes precedence on product direction where they conflict:
 
 - [Product Vision](PRODUCT_VISION.md)
 - [Game Design](GAME_DESIGN.md)

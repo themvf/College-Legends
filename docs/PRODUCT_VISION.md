@@ -1,5 +1,7 @@
 # Product Vision
 
+> Historical vision. The September 7 [core specification](CORE_GAME_SPEC.md) now governs product priorities, phone-first interaction, and first-playable scope. Retain the institutional-business premise below; conflicting desktop-primary and complexity targets are superseded.
+
 ## Status
 
 College Legends is an original college-football business simulation in active early development. This document defines the committed product direction; individual mechanics remain subject to testing and balance changes.

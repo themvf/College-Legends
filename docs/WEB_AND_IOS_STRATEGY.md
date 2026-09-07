@@ -1,5 +1,7 @@
 # Web and iOS Strategy
 
+> Direction update, September 7: the [core specification](CORE_GAME_SPEC.md) replaces desktop-primary interaction with phone-first flows. Web-first delivery and platform-neutral simulation remain. Packaging, device validation, and storage safeguards below remain technical references; no iOS readiness is claimed.
+
 ## Decision
 
 Launch College Legends first as a private, desktop-primary responsive web game. Validate the loop and balance before packaging for iOS.

@@ -36,7 +36,7 @@ import {
   DEFENSIVE_IDENTITY_LABELS,
   OFFENSIVE_IDENTITY_LABELS,
   SCOUTING_TIERS,
-  activeSponsorship,
+  sponsorshipDecision,
   activeEmergencyQuarterback,
   developmentCandidates,
   projectGate,
@@ -1092,7 +1092,7 @@ function Dashboard({ game, screen, busy, error, pendingCommands, inFlightDecisio
           <WeekReport game={game} />
           <Offseason game={game} busy={busy} error={error} pending={pendingCommands} onQueue={onQueue} onContinue={onContinueOffseason} />
         </>
-      : <ProgramDashboard game={game} roster={roster} inFlightDecision={inFlightDecision} onNavigate={onNavigate} />)}
+      : <ProgramDashboard game={game} roster={roster} pending={pendingCommands} inFlightDecision={inFlightDecision} onNavigate={onNavigate} />)}
     {screen === "THIS_WEEK" && <WeekHub game={game} busy={busy} inFlightDecision={inFlightDecision} pending={pendingCommands} onQueue={onQueue} initialTab={weekTab} onNavigate={onNavigate} />}
     {screen === "WEEKLY_RECAPS" && <WeeklyRecaps game={game} />}
     {screen === "ROSTER" && <Roster game={game} roster={roster} />}
@@ -1120,14 +1120,16 @@ function Dashboard({ game, screen, busy, error, pendingCommands, inFlightDecisio
  * expectation, then a ranked list of what actually needs them this week, each
  * one a button that goes straight to the screen that fixes it.
  */
-function ProgramDashboard({ game, roster, inFlightDecision, onNavigate }: {
-  game: GameView; roster: Player[]; inFlightDecision: WeeklyPlanningCommand | null;
+function ProgramDashboard({ game, roster, pending, inFlightDecision, onNavigate }: {
+  game: GameView; roster: Player[]; pending: GameCommand[]; inFlightDecision: WeeklyPlanningCommand | null;
   onNavigate: (screen: Screen, tab?: WeekTab) => void;
 }): ReactElement {
   const program = game.state.programs[game.playerProgramId]!;
   const board = scoutingBoard(game.state, game.playerProgramId);
   const priorityDecision = weeklyPriorityDecision(game.state, game.playerProgramId, inFlightDecision);
-  const briefing = weeklyBriefing(game.state, game.playerProgramId, { excludeWeeklyPriorities: true });
+  const effectiveBriefing = weeklyBriefing(game.state, game.playerProgramId, { excludeWeeklyPriorities: true, pendingCommands: pending });
+  const briefing = effectiveBriefing.filter((item) => item.status !== "PENDING");
+  const queuedBriefing = effectiveBriefing.filter((item) => item.status === "PENDING");
   const expectation = seasonExpectation(game.state, game.playerProgramId);
   const nextGame = game.state.schedule.find((item) => !item.played && (item.homeProgramId === program.id || item.awayProgramId === program.id));
   const opponentId = nextGame ? (nextGame.homeProgramId === program.id ? nextGame.awayProgramId : nextGame.homeProgramId) : undefined;
@@ -1149,7 +1151,7 @@ function ProgramDashboard({ game, roster, inFlightDecision, onNavigate }: {
   );
   const priorityUnresolved = priorityDecision.attention || priorityDecision.status === "PENDING";
   const unresolvedCount = briefing.length + (priorityUnresolved ? 1 : 0);
-  const urgentCount = briefing.filter((item) => item.status === "REQUIRED").length
+  const urgentCount = briefing.filter((item) => item.status === "REQUIRED" || item.status === "BLOCKED").length
     + (priorityDecision.status === "REQUIRED" || priorityDecision.status === "BLOCKED" ? 1 : 0);
 
   const go = (destination: string): void => {
@@ -1205,7 +1207,7 @@ function ProgramDashboard({ game, roster, inFlightDecision, onNavigate }: {
             </button>}
             {briefing.map((item) =>
             <button className={`briefing-item ${item.status.toLowerCase()}`} key={item.id} onClick={() => go(item.destination)}>
-              <span className="briefing-flag">{item.status === "REQUIRED" ? "Required" : "Optional"}</span>
+              <span className="briefing-flag">{item.status === "REQUIRED" ? "Required" : item.status === "BLOCKED" ? "Blocked" : "Optional"}</span>
               <strong>{item.headline}</strong>
               <span className="briefing-detail">{item.detail}</span>
               <span className="briefing-action">{item.action} →</span>
@@ -1214,6 +1216,14 @@ function ProgramDashboard({ game, roster, inFlightDecision, onNavigate }: {
       {priorityDecision.status === "DONE" && <p className="decision-confirmation" aria-live="polite">
         <strong>Done ✓ · Weekly priorities</strong><span>{priorityDecision.summary}</span>
       </p>}
+      {queuedBriefing.length > 0 && <div className="briefing-list" aria-live="polite">
+        {queuedBriefing.map((item) => <button className="briefing-item pending" key={item.id} onClick={() => go(item.destination)}>
+          <span className="briefing-flag">Pending</span>
+          <strong>{item.headline}</strong>
+          <span className="briefing-detail">{item.detail}</span>
+          <span className="briefing-action">{item.action} →</span>
+        </button>)}
+      </div>}
     </article>
 
     {currentInjuryEvent && (() => {
@@ -1826,13 +1836,13 @@ function Staff({ game, pending, onQueue }: { game: GameView; pending: GameComman
   </section>;
 }
 
-function Finances({ game, pending, onQueue }: { game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
+export function Finances({ game, pending, onQueue }: { game: GameView; pending: GameCommand[]; onQueue: (command: GameCommand) => void }): ReactElement {
   const program = game.state.programs[game.playerProgramId]!;
   const staffPayroll = Object.values(game.state.staff).filter((staff) => staff.programId === program.id).reduce((sum, staff) => sum + staff.salary, 0);
   const sponsorship = game.state.sponsorships?.[program.id];
-  const activeSponsor = activeSponsorship(game.state, program.id);
-  const queuedSponsor = pending.find((command): command is Extract<GameCommand, { type: "ACCEPT_SPONSORSHIP" }> =>
-    command.type === "ACCEPT_SPONSORSHIP");
+  const sponsorDecision = sponsorshipDecision(game.state, program.id, pending);
+  const activeSponsor = sponsorDecision?.activeOffer;
+  const queuedSponsor = sponsorDecision?.queuedOffer;
   const sponsorshipRevenue = game.state.eventHistory
     .filter((event): event is Extract<GameEvent, { type: "SPONSORSHIP_PAYMENT" }> =>
       event.type === "SPONSORSHIP_PAYMENT"
@@ -1898,9 +1908,11 @@ function Finances({ game, pending, onQueue }: { game: GameView; pending: GameCom
         <h2>How much revenue do you want to put at risk?</h2>
         <p className="muted">Each contract lasts through Week 14. The guarantee is paid every week; bonuses are added only when the stated trigger happens.</p>
       </div>
-      <div className="sponsor-grid">{(sponsorship?.offers ?? []).map((offer) => {
+      {(sponsorDecision?.status === "BLOCKED" || sponsorDecision?.status === "PENDING") &&
+        <p role="status">{sponsorDecision.status === "BLOCKED" ? "Blocked · " : "Pending · "}{sponsorDecision.detail}</p>}
+      <div className="sponsor-grid">{(sponsorDecision?.offers ?? []).map((offer) => {
         const projection = projectSponsorshipOffer(game.state, program.id, offer);
-        const queued = queuedSponsor?.offerId === offer.id;
+        const queued = queuedSponsor?.id === offer.id;
         return <article className="panel business-decision sponsor-card" key={offer.id}>
           <p className="eyebrow">{strategyName(offer.strategy)}</p>
           <h2>{offer.sponsorName}</h2>

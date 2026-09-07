@@ -1,9 +1,10 @@
-import type { DecisionStatus, GameState, OpponentDossier } from "@college-legends/model";
+import type { DecisionStatus, GameCommand, GameState, OpponentDossier } from "@college-legends/model";
 import { fairTicketPrice } from "./business.js";
 import { DOSSIER_THRESHOLDS, MARQUEE_VALUE, WORTH_SCOUTING } from "./department.js";
 import { activeFocuses, focusCapacity, scoutingTargetFor, weekPriorities } from "./priorities.js";
 import { coachSchemeFit } from "./scheme.js";
 import { expectedWins } from "./tenure.js";
+import { sponsorshipDecision } from "./sponsorship-decision.js";
 
 /**
  * Where a briefing item sends the player. The UI maps these to screens; keeping
@@ -22,8 +23,8 @@ export type BriefingDestination =
 
 export interface BriefingItem {
   id: string;
-  /** Canonical unresolved lifecycle state shared with every decision surface. */
-  status: Extract<DecisionStatus, "REQUIRED" | "OPTIONAL">;
+  /** Canonical lifecycle state; pending choices are not unresolved attention. */
+  status: Extract<DecisionStatus, "REQUIRED" | "OPTIONAL" | "PENDING" | "BLOCKED">;
   headline: string;
   detail: string;
   action: string;
@@ -33,6 +34,8 @@ export interface BriefingItem {
 export interface BriefingOptions {
   /** A migrated lifecycle surface owns weekly priorities and must be removed before the display cap. */
   excludeWeeklyPriorities?: boolean;
+  /** Unsettled commands are projected only; they never commit simulation state. */
+  pendingCommands?: readonly GameCommand[];
 }
 
 export interface SeasonExpectation {
@@ -199,16 +202,15 @@ export function weeklyBriefing(
   const opponent = thisWeek ? state.programs[thisWeek.opponentProgramId] : null;
 
   // A week without a sponsor is revenue that cannot be recovered later.
-  const sponsorship = state.sponsorships?.[programId];
-  if (sponsorship && !sponsorship.activeContractId && sponsorship.offers.length > 0) {
-    const safest = sponsorship.offers.reduce((best, offer) =>
-      offer.weeklyPayment > best.weeklyPayment ? offer : best);
+  const sponsorship = sponsorshipDecision(state, programId, options.pendingCommands);
+  if (sponsorship && sponsorship.status !== "DONE") {
     items.push({
       id: "SPONSORSHIP",
-      status: "REQUIRED",
-      headline: "The program has no primary sponsor",
-      detail: `${safest.sponsorName} is offering $${safest.weeklyPayment.toLocaleString()} guaranteed every week. A week without a contract is money you cannot recover later.`,
-      action: "Choose a sponsor",
+      status: sponsorship.status,
+      headline: sponsorship.queuedOffer ? `Primary sponsor · ${sponsorship.queuedOffer.sponsorName}`
+        : sponsorship.status === "BLOCKED" ? "Sponsorship offer unavailable" : "The program has no primary sponsor",
+      detail: sponsorship.detail,
+      action: sponsorship.status === "REQUIRED" ? "Choose a sponsor" : "Review sponsor",
       destination: "FINANCES"
     });
   }
@@ -382,11 +384,16 @@ export function weeklyBriefing(
     });
   }
 
-  const order: Record<BriefingItem["status"], number> = { REQUIRED: 0, OPTIONAL: 1 };
+  const order: Record<BriefingItem["status"], number> = { REQUIRED: 0, BLOCKED: 0, OPTIONAL: 1, PENDING: 2 };
   const visible = options.excludeWeeklyPriorities
     ? items.filter((item) => item.id !== "WEEK_FOCUS" && !item.id.startsWith("WEEK_FOCUS:"))
     : items;
-  return visible.sort((left, right) => order[left.status] - order[right.status]).slice(0, 6);
+  // Queued confirmations must neither consume an attention slot nor disappear
+  // behind the attention cap when several other departments need a decision.
+  return [
+    ...visible.filter((item) => item.status !== "PENDING").sort((left, right) => order[left.status] - order[right.status]).slice(0, 6),
+    ...visible.filter((item) => item.status === "PENDING")
+  ];
 }
 
 /** Fixtures worth knowing about, for the "what's coming" strip. */

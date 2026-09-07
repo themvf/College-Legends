@@ -1,5 +1,7 @@
 # Game Design
 
+> Historical detailed design. The September 7 [core specification](CORE_GAME_SPEC.md) governs the redesigned experience and proposed rule changes. This document remains useful context for older systems; it does not override the new scope or establish current implementation status.
+
 ## Core experience
 
 The player runs a fictional college-football institution across weeks, seasons, and decades. Every major system competes for the same finite resources: cash, staff capacity, time, scholarships, attention, facilities, and reputation.

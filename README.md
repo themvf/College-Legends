@@ -1,5 +1,7 @@
 # College Legends
 
+**Current design direction (September 7, 2026):** [Core game specification](docs/CORE_GAME_SPEC.md), [ordered implementation backlog](docs/IMPLEMENTATION_BACKLOG.md), and [graphics specification](docs/design/GRAPHICS_SPEC.md). These define the phone-first, approachable business-management redesign. The longer vision below is historical context where it conflicts with those documents; it is not a shipped-feature list.
+
 > Build the program. Develop the talent. Grow the empire. Stay solvent.
 
 **College Legends** is an original college-football business simulation currently in active early development.

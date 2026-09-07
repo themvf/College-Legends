@@ -1,5 +1,7 @@
 # Development Roadmap
 
+> Historical roadmap. Use the September 7 [ordered implementation backlog](IMPLEMENTATION_BACKLOG.md) for the proposed redesign sequence and its required reconciliation with the existing V2 ledger. The foundation tasks below are not a current status report.
+
 ## Operating rule
 
 The next useful evidence is running code and distributions. Architecture changes should answer observed problems, not extend prose indefinitely.
