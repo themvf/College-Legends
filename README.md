@@ -2,6 +2,8 @@
 
 [Play College Football Agent Sim](https://themvf.github.io/College-Legends/)
 
+Client profiles now include division, conference, school year, eligibility, depth-chart role, playing time and health. Compare preseason school moves and choose another college/NIL season for eligible clients, within the existing demo loop.
+
 **Current playable (September 7, 2026):** The default app opens [College Football Agent Sim](docs/AGENT_SIM_FIRST_PLAYABLE.md): discover clients, compete with five rival agencies, invest in development, negotiate commercial deals, fund Pro Day preparation, and carry professional income into the next agency year. Weekly recaps, client box stats, standings, playoffs, awards and draft outcomes are included. Read the [new design intentions](docs/COLLEGE_FOOTBALL_AGENT_SIM_INTENTIONS.md).
 
 Previous prototypes remain at `?core=1`, `?enterprise=1`, `?prototype=1` and `?legacy=1`, with separate saves. The original College Legends school-management material below is historical context, not the scope of the new agency game.

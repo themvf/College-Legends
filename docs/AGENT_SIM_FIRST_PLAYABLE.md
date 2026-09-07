@@ -4,7 +4,13 @@ Built September 7, 2026. This is the new default web demo, based on [the intenti
 
 ## Playable scope
 
-Start Origin Sports Agency with $100,000 and four college-client places. Approach final-year prospects with a service promise and commercial commission offer. Pay for scouting reports, client meetings and onboarding. Compete against Summit, Crownline, Fieldhouse, Northstar and First Step, each with a persistent strategy, cash budget and capacity.
+Start Origin Sports Agency with $100,000 and four college-client places. Approach prospects with a service promise and commercial commission offer. Client cards now show fictional school division and conference, year in school, eligibility including this season, depth-chart role, expected snaps and health. Pay for scouting reports, client meetings and onboarding. Compete against Summit, Crownline, Fieldhouse, Northstar and First Step, each with a persistent strategy, cash budget and capacity.
+
+School reach affects recruiting difficulty, performance exposure and new sponsor guarantees. Role reflects ability against a school standard; actual snaps also account for health and competition among tracked players. Fatigue can limit participation, and occasional short injuries produce missed games with zero production. Signed campaign guarantees remain protected.
+
+The existing client file includes a preseason school comparison: projected role, healthy playing time and the current local endorsement quote. One move costs $2,500 per client each preseason; active campaigns and training block a move. This is a small transfer slice, not a portal auction or coach-negotiation system.
+
+After Week 12 and before Pro Days, clients with more than one eligible season can choose to return. A booked Pro Day package locks the draft path. Returning clients skip the draft, keep their client place and terms, advance a school year and consume one eligible season at annual rollover. New annual NIL campaigns become available; old recaps and payments remain archived. Existing saves migrate with their original final-season draft path; new prospects include Years 3–5. Eligibility is a simplified fictional demo value, not a model of NCAA waivers or current regulations.
 
 Choose training specialists, facilities, partners, duration and intensity. Fulfill development, visibility or financial-security promises. Fatigue, support and delivered service affect trust. Two client-service hires become available at 18 reputation, adding client and project capacity along with recurring payroll.
 
@@ -24,13 +30,14 @@ The browser save key is `football-agent-sim-v1`, separate from all prior demos. 
 
 ## Deliberate limits
 
-- All new college clients in this slice are draft-bound; recruiting earlier-year clients is future work.
+- The existing 18-phase season and professional transition remain. Returning to school is optional; the default remains the draft path for this draft-eligible prospect pool.
 - Football statistics cover the tracked QB, HB, WR, FS and EDGE players. Supporting roster production remains aggregate.
 - The wider professional draft has untracked prospects. This is not a complete professional league or contract simulation.
 - Professional follow-up is a simplified annual representation-income and retention model. There is no professional game schedule in this slice.
 - Rival financial decisions and client signings are simulated; sophisticated competing offer negotiations, shared specialist auctions and detailed rival expense reports remain future work.
 - Campaigns are licensed/contracted opportunities, not a merchandise manufacturing or inventory-management system.
-- Legal specialists, transfers, detailed health narratives, elaborate contract clauses and custom agency naming remain future work.
+- Legal specialists, transfer negotiations, detailed health narratives, elaborate contract clauses and custom agency naming remain future work.
+- The two fictional D-I FBS/FCS conferences share the existing demo schedule and invitational playoff; separate real-world division championships are not modeled.
 - All professional payouts are accelerated fictional game economics. They must not be read as actual agent compensation rules.
 - The calendar compresses the offseason into labeled career phases while using one operating-cost charge per advance. Economics require further balancing.
 - This is a browser playable, published on [GitHub Pages](https://themvf.github.io/College-Legends/), not a native iOS build.

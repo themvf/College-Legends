@@ -14,6 +14,7 @@ export const cash = (n: number) =>
   });
 export type Want = "Development" | "Visibility" | "Security";
 export type Box = {
+  snaps?: number;
   week: number;
   team: number;
   opponent: number;
@@ -29,6 +30,11 @@ export type Box = {
   points: number;
 };
 export type Athlete = {
+  schoolYear: number;
+  eligibility: number;
+  careerPlan: "Draft" | "Return";
+  transferredYear: number;
+  injury: { name: string; throughWeek: number } | null;
   representedByYou?: boolean;
   id: string;
   name: string;
@@ -125,6 +131,7 @@ export type Recap = {
   news: string[];
   boxes: { player: string; box: Box }[];
   careers?: {
+    returning?: boolean;
     player: string;
     status: Athlete["status"];
     pick: number | null;
@@ -257,6 +264,57 @@ export function roll(seed: number, key: string) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 const clamp = (n: number, lo = 0, hi = 100) => Math.min(hi, Math.max(lo, n));
+// Fictional school tiers within the demo's shared invitational schedule.
+export const schools = teams.map((name, id) => ({
+  name,
+  division: id < 8 ? "D-I FCS" : "D-I FBS",
+  conference: id < 8 ? "Founders Conference" : "National Conference",
+  prestige: id < 8 ? 48 + id * 3 : 76 + (id - 8) * 3,
+  competition: id < 8 ? 65 + id : 79 + (id - 8),
+}));
+export function depth(p: Athlete, school = p.school) {
+  const gap = p.ability - schools[school]!.competition;
+  const rank = gap >= 0 ? 1 : gap >= -6 ? 2 : 3;
+  return {
+    rank,
+    role: rank === 1 ? "Starter" : rank === 2 ? "Rotation" : "Backup",
+    snaps: rank === 1 ? 85 : rank === 2 ? 40 : 12,
+  };
+}
+export const schoolLabel = (p: Athlete) =>
+  `${schools[p.school]!.division} · ${schools[p.school]!.conference}`;
+export const yearLabel = (p: Athlete) =>
+  `Year ${p.schoolYear} · ${p.eligibility} season${p.eligibility === 1 ? "" : "s"} of eligibility incl. this year`;
+export function health(p: Athlete, week: number) {
+  if (p.injury && week <= p.injury.throughWeek)
+    return `Out · ${p.injury.name} · expected back Week ${p.injury.throughWeek + 1}`;
+  return p.fatigue > 55 ? "Limited · fatigue" : "Available";
+}
+export function playingShare(p: Athlete, week: number) {
+  if (p.injury && week <= p.injury.throughWeek) return 0;
+  return Math.round(depth(p).snaps * (p.fatigue > 55 ? 0.6 : 1));
+}
+export function dealValue(p: Athlete, kind: number, performance = false) {
+  const market = 0.8 + schools[p.school]!.prestige / 200;
+  const opportunity = 0.8 + depth(p).snaps / 425;
+  return Math.round(
+    brands[kind]!.base *
+      (0.8 + p.recognition / 100) *
+      market *
+      opportunity *
+      (performance ? 0.7 : 1),
+  );
+}
+function profile(index: number) {
+  const eligibility = (index % 3) + 1;
+  return {
+    schoolYear: 6 - eligibility,
+    eligibility,
+    careerPlan: "Draft" as const,
+    transferredYear: 0,
+    injury: null,
+  };
+}
 function population(seed: number, year: number): Athlete[] {
   const positions: Position[] = ["QB", "HB", "WR", "FS", "EDGE"];
   return teams.flatMap((_, school) =>
@@ -268,6 +326,7 @@ function population(seed: number, year: number): Athlete[] {
             ? 64 + index
             : 68 + Math.floor(roll(seed, id + "ability") * 24);
       return {
+        ...profile(index),
         id,
         name: `${["Miles", "Jalen", "Nico", "Theo", "Andre", "Caleb", "Isaiah", "Eli", "Dante", "Micah", "Zion", "Owen", "Malik", "Noah", "Julian", "Ty"][index % 16]} ${["Ellis", "Reed", "Cruz", "Banks", "Moss", "Carter", "King", "Price", "Brooks", "Hayes", "Grant", "Ford", "West", "Hill", "Cole", "Ward"][(index * 7 + Math.floor(index / 16) + (year - 2027) * 2) % 16]}`,
         position,
@@ -438,7 +497,8 @@ export function fit(s: State, p: Athlete, promise: Want, fee: number) {
       (promise === p.want ? 22 : 0) +
       (15 - fee) * 3 +
       (s.reputation - 10) * 0.4 -
-      Math.max(0, p.ability - 75) * 4,
+      Math.max(0, p.ability - 75) * 4 -
+      Math.max(0, schools[p.school]!.prestige - 70) * 0.3,
     8,
     96,
   );
@@ -467,6 +527,8 @@ function active(s: State) {
     throw Error("The agency has closed. Start a new career to try again.");
 }
 export type Action =
+  | { type: "career"; id: string; plan: Athlete["careerPlan"] }
+  | { type: "transfer"; id: string; school: number }
   | { type: "scout"; id: string }
   | { type: "pitch"; id: string; promise: Want; fee: number }
   | {
@@ -564,6 +626,50 @@ export function decideAgency(current: State, a: Action): State {
     return s;
   }
   owned(s, p.id);
+  if (a.type === "career") {
+    if (p.status !== "College" || s.week < 12 || s.week > 14)
+      throw Error(
+        "Choose a college return or draft path after Week 12, before Pro Days.",
+      );
+    if (a.plan !== "Draft" && a.plan !== "Return")
+      throw Error("Choose a career path.");
+    if (a.plan === "Return" && p.eligibility <= 1)
+      throw Error("This is the client's final eligible season.");
+    if (a.plan === "Return" && p.prep)
+      throw Error(
+        "A Pro Day package is already committed. This client is on the draft path.",
+      );
+    p.careerPlan = a.plan;
+    s.news.unshift(
+      `${p.name} plans to ${a.plan === "Return" ? "return for another college season, with new NIL opportunities next year" : "enter the draft"}.`,
+    );
+    return s;
+  }
+  if (a.type === "transfer") {
+    if (p.status !== "College" || s.week !== 0 || p.transferredYear === s.year)
+      throw Error("One school move per client is available in preseason.");
+    if (
+      !Number.isInteger(a.school) ||
+      !schools[a.school] ||
+      a.school === p.school
+    )
+      throw Error("Choose a different school.");
+    if (
+      s.deals.some((d) => d.player === p.id && d.status === "Active") ||
+      s.jobs.some((j) => j.player === p.id)
+    )
+      throw Error(
+        "Finish current campaign and development commitments before moving schools.",
+      );
+    const former = teams[p.school];
+    spend(s, `${p.name} · school transfer support`, 2500);
+    p.school = a.school;
+    p.transferredYear = s.year;
+    s.news.unshift(
+      `${p.name} moves from ${former} to ${teams[p.school]}. Expected role: ${depth(p).role}. New sponsor offers reflect the new school and role; paid deals stay earned.`,
+    );
+    return s;
+  }
   if (a.type === "support") {
     if (p.fatigue <= 0 && p.trust >= 95)
       throw Error("No additional support is needed right now.");
@@ -628,11 +734,9 @@ export function decideAgency(current: State, a: Action): State {
         "Finish the existing campaign before adding another obligation.",
       );
     spend(s, `${p.name} · ${b.name} activation`, b.cost);
-    const gross = Math.round(
-      b.base * (0.8 + p.recognition / 100) * (a.performance ? 0.7 : 1),
-    );
+    const gross = dealValue(p, a.kind, a.performance);
     s.deals.push({
-      id: `${p.id}-${a.kind}`,
+      id: `${p.id}-${s.year}-${a.kind}`,
       player: p.id,
       brand: b.name,
       kind: a.kind,
@@ -652,6 +756,10 @@ export function decideAgency(current: State, a: Action): State {
     return s;
   }
   if (a.type === "prep") {
+    if (p.careerPlan === "Return")
+      throw Error(
+        "This client is returning to school. Choose the draft path before booking preparation.",
+      );
     if (p.status !== "College" || s.week < 12 || s.week > 14)
       throw Error(
         "Pro Day bookings open after Week 12 and close before Pro Days.",
@@ -686,10 +794,24 @@ export function decideAgency(current: State, a: Action): State {
   return s;
 }
 function simulateFootball(s: State) {
-  const power = (team: number) =>
-    s.players
-      .filter((p) => p.school === team && p.season === s.year)
-      .reduce((a, p) => a + p.ability - p.fatigue * 0.07, 0) / 5;
+  const power = (team: number) => {
+    const roster = s.players.filter(
+      (p) => p.school === team && p.season === s.year && p.status === "College",
+    );
+    const baseline = schools[team]!.competition;
+    return (
+      baseline +
+      roster.reduce(
+        (sum, p) =>
+          sum +
+          ((p.ability - baseline - p.fatigue * 0.07) *
+            playingShare(p, s.week)) /
+            100,
+        0,
+      ) /
+        Math.max(5, roster.length)
+    );
+  };
   for (const m of s.matches.filter((m) => m.week === s.week)) {
     const rand = (key: string) =>
       roll(s.seed, `${s.year}:${s.week}:${m.home}:${key}`);
@@ -712,14 +834,32 @@ function simulateFootball(s: State) {
         totalTD = Math.floor(score / 7),
         passTD = Math.round(totalTD * 0.6);
       for (const p of s.players.filter(
-        (p) => p.school === team && p.season === s.year,
+        (p) =>
+          p.school === team && p.season === s.year && p.status === "College",
       )) {
         const form = 0.75 + rand(p.id) * 0.5;
-        const effective = p.ability * form * (1 - p.fatigue * 0.002);
+        const positionLoad = s.players
+          .filter(
+            (q) =>
+              q.school === team &&
+              q.season === s.year &&
+              q.status === "College" &&
+              q.position === p.position,
+          )
+          .reduce((sum, q) => sum + playingShare(q, s.week), 0);
+        const snaps = Math.round(
+            playingShare(p, s.week) / Math.max(1, positionLoad / 100),
+          ),
+          share = snaps / 100;
+        const effective = p.ability * form * (1 - p.fatigue * 0.002) * share;
         const attack = ["QB", "HB", "WR"].includes(p.position);
-        const td = p.position === "HB" ? totalTD - passTD : passTD;
+        const td = Math.round(
+          (p.position === "HB" ? totalTD - passTD : passTD) * share,
+        );
         const att =
-          p.position === "QB" ? 25 + Math.round(rand(p.id + "att") * 12) : 0;
+          p.position === "QB"
+            ? Math.round((25 + rand(p.id + "att") * 12) * share)
+            : 0;
         const comp = Math.round(att * clamp(0.45 + effective * 0.002, 0, 0.83));
         const yards = Math.round(
           p.position === "QB"
@@ -730,23 +870,24 @@ function simulateFootball(s: State) {
           ? 0
           : Math.round(effective / (p.position === "FS" ? 10 : 15));
         const sacks =
-          p.position === "EDGE" && rand(p.id + "sacks") > 0.45
+          p.position === "EDGE" && rand(p.id + "sacks") < 0.55 * share
             ? 1 + (effective > 95 ? 1 : 0)
             : 0;
         const interceptions = attack
-          ? p.position === "QB" && rand(p.id + "int") < 0.35
+          ? p.position === "QB" && rand(p.id + "int") < 0.35 * share
             ? 1
             : 0
-          : p.position === "FS" && rand(p.id + "int") > 0.8
+          : p.position === "FS" && rand(p.id + "int") < 0.2 * share
             ? 1
             : 0;
         const points = attack
-          ? yards / 15 + td * 5 + (score > against ? 4 : 0)
+          ? yards / 15 + td * 5 + (score > against && snaps > 0 ? 4 : 0)
           : tackles * 2 +
             sacks * 7 +
             interceptions * 8 +
-            (score > against ? 4 : 0);
+            (score > against && snaps > 0 ? 4 : 0);
         p.boxes.push({
+          snaps,
           week: s.week,
           team,
           opponent: team === m.home ? m.away : m.home,
@@ -761,7 +902,20 @@ function simulateFootball(s: State) {
           att,
           points,
         });
-        p.recognition = clamp(p.recognition + points * 0.12);
+        p.recognition = clamp(
+          p.recognition +
+            points * 0.12 * (0.75 + schools[p.school]!.prestige / 150),
+        );
+        if (snaps > 0 && rand(p.id + "injury") < 0.015 + p.fatigue / 2500) {
+          p.injury = {
+            name: "ankle sprain",
+            throughWeek: s.week + 1 + Number(rand(p.id + "severity") > 0.65),
+          };
+          if (p.owner === "you")
+            s.news.push(
+              `${p.name}: ankle sprain after the game. ${health(p, s.week)}. Missed games reduce exposure; signed campaign guarantees are protected.`,
+            );
+        }
         p.fatigue = clamp(p.fatigue - 3);
       }
     }
@@ -866,7 +1020,8 @@ function rivalsTurn(s: State) {
     }
     if (s.week === 14) {
       for (const p of s.players.filter(
-        (p) => p.owner === r.id && p.season === s.year,
+        (p) =>
+          p.owner === r.id && p.season === s.year && p.careerPlan !== "Return",
       )) {
         const level = r.cash > 130000 ? 2 : r.cash > 40000 ? 1 : 0;
         const cost = packages[level]!.cost;
@@ -1000,7 +1155,9 @@ export function advanceAgency(current: State): State {
     }
   }
   if (s.week === 15) {
-    for (const p of s.players.filter((p) => p.season === s.year)) {
+    for (const p of s.players.filter(
+      (p) => p.season === s.year && p.careerPlan !== "Return",
+    )) {
       if (p.prep) {
         const prep = p.prep,
           b = packages[prep.level]!.boost;
@@ -1019,7 +1176,13 @@ export function advanceAgency(current: State): State {
     }
   }
   if (s.week === 16) {
-    const eligible = s.players.filter((p) => p.season === s.year);
+    for (const p of collegeClients(s).filter((p) => p.careerPlan === "Return"))
+      s.news.push(
+        `${p.name} is returning to ${teams[p.school]} for Year ${p.schoolYear + 1}. Another season offers playing time and NIL opportunities, not guaranteed earnings.`,
+      );
+    const eligible = s.players.filter(
+      (p) => p.season === s.year && p.careerPlan !== "Return",
+    );
     const used = new Set<number>();
     for (const p of eligible.sort((a, b) => draftGrade(b) - draftGrade(a))) {
       const grade = draftGrade(p) + (roll(s.seed, p.id + "draft") - 0.5) * 7;
@@ -1135,6 +1298,7 @@ export function advanceAgency(current: State): State {
         ? clientList(s)
             .filter((p) => p.season === s.year)
             .map((p) => ({
+              returning: p.careerPlan === "Return",
               player: p.id,
               status: p.status,
               pick: p.pick,
@@ -1168,7 +1332,26 @@ function nextYear(s: State): State {
   s.week = 0;
   for (const p of clientList(s)) {
     p.representedByYou = true;
-    if (p.status === "Pro") {
+    if (
+      p.status === "College" &&
+      p.careerPlan === "Return" &&
+      p.eligibility > 1
+    ) {
+      p.schoolYear++;
+      p.eligibility--;
+      p.season = s.year;
+      p.careerPlan = "Draft";
+      p.boxes = [];
+      p.prep = null;
+      p.testing = 0;
+      p.interview = 0;
+      p.injury = null;
+      p.fatigue = 0;
+      p.delivered = false;
+      s.news.push(
+        `${p.name} returns to ${teams[p.school]}: ${yearLabel(p)}. Their client place and commission terms carry forward.`,
+      );
+    } else if (p.status === "Pro") {
       if (p.trust < 50) {
         p.owner = p.promise === "Visibility" ? "crown" : "field";
         p.status = "Departed";
@@ -1214,7 +1397,15 @@ function nextYear(s: State): State {
   }
   s.matches = schedule();
   s.jobs = [];
-  s.players.push(...population(s.seed, s.year));
+  const returning = collegeClients(s);
+  s.players.push(
+    ...population(s.seed, s.year).filter(
+      (p) =>
+        !returning.some(
+          (q) => q.school === p.school && q.position === p.position,
+        ),
+    ),
+  );
   s.news.unshift(
     "A new class is available. Your office, cash, reputation and professional relationships carry forward.",
   );
@@ -1264,6 +1455,27 @@ export function restore(raw: string | null): State | null {
       )
     )
       return null;
+    for (const p of s.players) {
+      // Preserve existing careers: old saves described all prospects as draft-bound.
+      if (p.schoolYear === undefined)
+        Object.assign(p, { ...profile(0), schoolYear: 4 });
+      if (
+        !schools[p.school] ||
+        !Number.isInteger(p.schoolYear) ||
+        p.schoolYear < 3 ||
+        p.schoolYear > 7 ||
+        !Number.isInteger(p.eligibility) ||
+        p.eligibility < 1 ||
+        p.eligibility > 3 ||
+        !["Draft", "Return"].includes(p.careerPlan) ||
+        !Number.isFinite(p.transferredYear) ||
+        (p.injury !== null &&
+          (!p.injury ||
+            typeof p.injury.name !== "string" ||
+            !Number.isInteger(p.injury.throughWeek)))
+      )
+        return null;
+    }
     return s;
   } catch {
     return null;

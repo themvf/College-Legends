@@ -1022,3 +1022,54 @@ input {
     animation: none;
   }
 }
+
+.as-football-profile {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--as-line, #ddd6c8);
+  margin-bottom: 16px;
+}
+.as-football-profile p {
+  margin: 4px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.as-football-profile .as-school-context {
+  font-weight: 700;
+}
+.as-football-profile dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin: 12px 0 0;
+}
+.as-football-profile dt {
+  font-size: 12px;
+  color: #64665e;
+}
+.as-football-profile dd {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.as-school-choices {
+  margin-bottom: 24px;
+}
+.as-school-choices summary {
+  cursor: pointer;
+  padding: 14px 0;
+  font-weight: 600;
+}
+.as-school-choices label {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+.as-school-choices select {
+  width: 100%;
+  min-width: 0;
+}
+.as-season-choice {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #ddd6c8;
+}

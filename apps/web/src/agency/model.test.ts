@@ -8,6 +8,10 @@ import {
   restore,
   roll,
   draftPayout,
+  depth,
+  schools,
+  dealValue,
+  playingShare,
   type State,
 } from "./model.js";
 const signed = (seed = 42) =>
@@ -22,6 +26,132 @@ function through(s: State, week: number) {
   return s;
 }
 describe("agency career", () => {
+  it("migrates existing saves without changing the saved draft path or money", () => {
+    const old = JSON.parse(JSON.stringify(signed()));
+    for (const p of old.players)
+      for (const key of [
+        "schoolYear",
+        "eligibility",
+        "careerPlan",
+        "transferredYear",
+        "injury",
+      ])
+        delete p[key];
+    const migrated = restore(JSON.stringify(old))!;
+    expect(migrated.money).toBe(old.money);
+    expect(clientList(migrated)[0]).toMatchObject({
+      schoolYear: 4,
+      eligibility: 1,
+      careerPlan: "Draft",
+    });
+    expect(restore(JSON.stringify(migrated))).toEqual(migrated);
+  });
+  it("links school, playing time and sponsor offers while protecting commitments", () => {
+    let s = signed();
+    const p = clientList(s)[0]!;
+    p.school = 15;
+    const before = dealValue(p, 0);
+    expect(depth(p).role).toBe("Backup");
+    s = decideAgency(s, { type: "transfer", id: p.id, school: 0 });
+    const moved = clientList(s)[0]!;
+    expect(depth(moved).role).toBe("Rotation");
+    expect(s.money).toBe(95500);
+    expect(dealValue(moved, 0)).not.toBe(before);
+    expect(() =>
+      decideAgency(s, { type: "transfer", id: p.id, school: 1 }),
+    ).toThrow(/One school move/);
+    const committed = decideAgency(signed(), {
+      type: "deal",
+      id: p.id,
+      kind: 0,
+      performance: false,
+    });
+    expect(() =>
+      decideAgency(committed, { type: "transfer", id: p.id, school: 15 }),
+    ).toThrow(/commitments/);
+    const star = { ...moved, ability: 99 };
+    expect(dealValue({ ...star, school: 15 }, 0)).toBeGreaterThan(
+      dealValue(star, 0),
+    );
+    expect(schools[15]!.division).toBe("D-I FBS");
+  });
+  it("makes an injured client miss production without cancelling a signed guarantee", () => {
+    let s = decideAgency(signed(), {
+      type: "deal",
+      id: "2027-0",
+      kind: 0,
+      performance: false,
+    });
+    clientList(s)[0]!.injury = { name: "ankle sprain", throughWeek: 2 };
+    const gross = s.deals[0]!.gross;
+    expect(playingShare(clientList(s)[0]!, 2)).toBe(0);
+    expect(playingShare(clientList(s)[0]!, 3)).toBeGreaterThan(0);
+    s = through(s, 2);
+    expect(clientList(s)[0]!.boxes[0]).toMatchObject({
+      snaps: 0,
+      yards: 0,
+      td: 0,
+      points: 0,
+      att: 0,
+    });
+    expect(
+      s.ledger.filter((l) => l.kind === "Commission").map((l) => l.amount),
+    ).toEqual([Math.round(gross * 0.15)]);
+  });
+  it("retains a returning client, eligibility, recap archive and annual NIL opportunities", () => {
+    let s = signed();
+    clientList(s)[0]!.eligibility = 2;
+    clientList(s)[0]!.schoolYear = 4;
+    s = decideAgency(s, {
+      type: "deal",
+      id: "2027-0",
+      kind: 0,
+      performance: false,
+    });
+    s = through(s, 12);
+    s = decideAgency(s, { type: "career", id: "2027-0", plan: "Return" });
+    expect(() =>
+      decideAgency(s, {
+        type: "prep",
+        id: "2027-0",
+        level: 0,
+        focus: "Testing",
+        travel: false,
+        recovery: false,
+      }),
+    ).toThrow(/returning/);
+    s = through(s, 18);
+    expect(clientList(s)[0]!.status).toBe("College");
+    expect(s.ledger.filter((l) => l.kind === "Pro income")).toHaveLength(0);
+    const oldRecap = structuredClone(s.recaps.find((r) => r.week === 1));
+    s = advanceAgency(restore(JSON.stringify(s))!);
+    expect(clientList(s)[0]).toMatchObject({
+      id: "2027-0",
+      eligibility: 1,
+      schoolYear: 5,
+      season: 2028,
+      careerPlan: "Draft",
+      owner: "you",
+    });
+    expect(s.recaps.find((r) => r.week === 1 && r.year === 2027)).toEqual(
+      oldRecap,
+    );
+    expect(s.players.filter((p) => p.season === 2028)).toHaveLength(80);
+    s = decideAgency(s, {
+      type: "deal",
+      id: "2027-0",
+      kind: 0,
+      performance: false,
+    });
+    expect(new Set(s.deals.map((d) => d.id)).size).toBe(2);
+    s = through(s, 12);
+    expect(() =>
+      decideAgency(s, { type: "career", id: "2027-0", plan: "Return" }),
+    ).toThrow(/final eligible/);
+    expect(advanceAgency(restore(JSON.stringify(s))!)).toEqual(
+      advanceAgency(s),
+    );
+  });
   it("starts with five distinct rivals and no clients; first matching overlooked pitch is accessible", () => {
     const s = startAgency(42);
     expect(s.rivals.map((r) => r.tier)).toEqual([

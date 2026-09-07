@@ -10,6 +10,13 @@ import {
   collegeClients,
   burn,
   teams,
+  schools,
+  depth,
+  schoolLabel,
+  yearLabel,
+  health,
+  playingShare,
+  dealValue,
   standings,
   seasonPoints,
   draftGrade,
@@ -102,12 +109,171 @@ function StatLine({ p, b }: { p: Athlete; b: Box }) {
           : `${b.tackles} TKL · ${p.position === "FS" ? `${b.int} INT` : `${b.sacks} SACK`}`}
       </strong>
       <small>
+        {b.snaps !== undefined && `${b.snaps}% snaps · `}
         {p.position === "QB"
           ? `${b.comp}/${b.att} passing · ${b.int} INT · `
           : ""}
         {teams[b.team]} {b.for}–{b.against} {teams[b.opponent]}
       </small>
     </>
+  );
+}
+function FootballProfile({ p, week }: { p: Athlete; week: number }) {
+  const role = depth(p);
+  return (
+    <div className="as-football-profile">
+      <p className="as-school-context">{schoolLabel(p)}</p>
+      <p>{yearLabel(p)}</p>
+      <dl>
+        <div>
+          <dt>Depth chart</dt>
+          <dd>
+            {role.role} · {p.position}
+            {role.rank}
+          </dd>
+        </div>
+        <div>
+          <dt>Expected snaps</dt>
+          <dd>{playingShare(p, week)}%</dd>
+        </div>
+        <div>
+          <dt>Health</dt>
+          <dd>{health(p, week)}</dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
+function SchoolChoices({
+  p,
+  s,
+  update,
+}: {
+  p: Athlete;
+  s: State;
+  update: (fn: (s: State) => State, msg?: string) => boolean;
+}) {
+  const [destination, setDestination] = useState(p.school);
+  if (p.status !== "College") return null;
+  const projected = { ...p, school: destination };
+  const locked =
+    s.week !== 0 ||
+    p.transferredYear === s.year ||
+    s.deals.some((d) => d.player === p.id && d.status === "Active") ||
+    s.jobs.some((j) => j.player === p.id);
+  return (
+    <section className="as-panel as-school-choices">
+      <h3>School & next season</h3>
+      <p>
+        {depth(p).rank > 1
+          ? `${p.name} is behind other players at ${teams[p.school]}. A move could open playing time at a smaller school.`
+          : `${p.name} has a starting role at ${teams[p.school]}. A bigger stage may mean more competition for snaps.`}
+      </p>
+      <p className="as-fine">
+        Depth reflects ability against the school's position standard and can
+        change with development. Health affects availability separately.
+      </p>
+      <details>
+        <summary>Compare a preseason school move</summary>
+        <label>
+          Destination school
+          <select
+            value={destination}
+            onChange={(e) => setDestination(Number(e.target.value))}
+          >
+            {schools.map((school, i) => (
+              <option key={i} value={i}>
+                {school.name} · {school.division} · {school.conference}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p>
+          {depth(projected).role} · {p.position}
+          {depth(projected).rank} · {depth(projected).snaps}% expected healthy
+          snaps
+        </p>
+        <p>
+          Local endorsement guarantee at current recognition:{" "}
+          {cash(dealValue(p, 0))} → {cash(dealValue(projected, 0))}.
+        </p>
+        <p className="as-fine">
+          School reach and playing time affect new sponsor offers. Future
+          performances change recognition. One preseason move costs the agency
+          $2,500. Active campaigns and training must be completed first; earned
+          payments stay earned.
+        </p>
+        <button
+          disabled={locked || destination === p.school}
+          onClick={() =>
+            update(
+              (x) =>
+                decideAgency(x, {
+                  type: "transfer",
+                  id: p.id,
+                  school: destination,
+                }),
+              "School move completed. Role and new sponsor offers updated.",
+            )
+          }
+        >
+          Move to {schools[destination]!.name} · $2,500
+        </button>
+        {locked && (
+          <p className="as-fine">
+            School moves open in preseason, before commitments, once per client
+            each year.
+          </p>
+        )}
+      </details>
+      <div className="as-season-choice">
+        <strong>
+          {p.careerPlan === "Return"
+            ? "Plan: return to school"
+            : "Plan: enter the draft"}
+        </strong>
+        <p>
+          {p.eligibility > 1
+            ? "Another college season keeps the relationship and opens new annual NIL deals. Earnings are not guaranteed; compare that opportunity with the current draft outlook."
+            : "This is the final eligible season. The professional path remains available."}
+        </p>
+        <p className="as-fine">
+          Choose after Week 12, before Pro Days. Returning uses one season of
+          eligibility and retains a client place. A booked Pro Day package
+          commits the draft path.
+        </p>
+        <div className="as-buttons">
+          <button
+            aria-pressed={p.careerPlan === "Return"}
+            disabled={
+              s.week < 12 || s.week > 14 || p.eligibility <= 1 || !!p.prep
+            }
+            onClick={() =>
+              update(
+                (x) =>
+                  decideAgency(x, { type: "career", id: p.id, plan: "Return" }),
+                "Client plans to return for another college season.",
+              )
+            }
+          >
+            Return for another season
+          </button>
+          <button
+            aria-pressed={p.careerPlan === "Draft"}
+            disabled={s.week < 12 || s.week > 14}
+            onClick={() =>
+              update(
+                (x) =>
+                  decideAgency(x, { type: "career", id: p.id, plan: "Draft" }),
+                "Client plans to enter the draft.",
+              )
+            }
+          >
+            Enter the draft
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 export function AgencyGame() {
@@ -185,7 +351,8 @@ export function AgencyGame() {
       >
         {clients.map((p) => (
           <option key={p.id} value={p.id}>
-            {p.name} · {p.position} · {p.status}
+            {p.name} · {p.position} ·{" "}
+            {p.status === "College" ? teams[p.school] : p.status}
           </option>
         ))}
       </select>
@@ -206,10 +373,11 @@ export function AgencyGame() {
           <h3>{p.name}</h3>
           <p>
             {prospect ? "Priority: " : ""}
-            {p.want} {prospect ? "" : `· ${p.status}`}
+            {p.want} {prospect || p.status === "College" ? "" : `· ${p.status}`}
           </p>
         </div>
       </div>
+      {p.status === "College" && <FootballProfile p={p} week={s.week} />}
       <div className="as-metrics">
         <div>
           <b>{Math.round(p.ability)}</b>
@@ -517,8 +685,8 @@ export function AgencyGame() {
                 <h2>Who deserves a chance?</h2>
                 <p>
                   Sign up to {4 + s.staff} college clients. Start with one. The
-                  first year follows draft-bound players through their final
-                  college season.
+                  prospects have different schools, roles and eligibility. A
+                  bigger stage offers exposure, but playing time matters.
                 </p>
               </div>
               <div className="as-panel as-offer">
@@ -609,7 +777,8 @@ export function AgencyGame() {
                       >
                         {p.name}
                         <small>
-                          {p.position} · {p.status}
+                          {p.position} ·{" "}
+                          {p.status === "College" ? depth(p).role : p.status}
                         </small>
                       </button>
                     ))}
@@ -618,7 +787,7 @@ export function AgencyGame() {
                     <Portrait p={chosen} />
                     <div>
                       <span className="as-eyebrow">
-                        {teams[chosen.school]} · {chosen.position} · CLASS OF{" "}
+                        {teams[chosen.school]} · {chosen.position} · SEASON{" "}
                         {chosen.season}
                       </span>
                       <h2>{chosen.name}</h2>
@@ -630,16 +799,29 @@ export function AgencyGame() {
                         <span>Trust {Math.round(chosen.trust)}</span>
                         <span>Fatigue {Math.round(chosen.fatigue)}</span>
                         <span>{chosen.fee}% commercial commission</span>
-                        <span>{chosen.status}</span>
+                        {chosen.status !== "College" && (
+                          <span>{chosen.status}</span>
+                        )}
                       </div>
                     </div>
                   </div>
+                  {chosen.status === "College" && (
+                    <FootballProfile p={chosen} week={s.week} />
+                  )}
+                  <SchoolChoices
+                    key={`${chosen.id}-${chosen.school}`}
+                    p={chosen}
+                    s={s}
+                    update={update}
+                  />
                   <div className="as-two">
                     <section className="as-panel">
                       <h3>The next step</h3>
                       <p>
                         {chosen.status === "College"
-                          ? `Current draft projection: ${projection(chosen)}. Your choices can help, but no preparation package guarantees a selection.`
+                          ? chosen.careerPlan === "Return"
+                            ? "Returning to school next year. New sponsor opportunities open in preseason; this client will skip Pro Days and the draft."
+                            : `Current draft projection: ${projection(chosen)}. Your choices can help, but no preparation package guarantees a selection.`
                           : chosen.status === "Pro"
                             ? "A professional relationship. Annual income continues at renewal, provided trust remains at least 50."
                             : chosen.status === "Undrafted"
@@ -703,7 +885,9 @@ export function AgencyGame() {
                       <p>
                         {chosen.pick
                           ? `Drafted: Round ${Math.ceil(chosen.pick / 32)} · Pick ${((chosen.pick - 1) % 32) + 1}`
-                          : `Professional status: ${chosen.status}`}
+                          : chosen.status === "College"
+                            ? `Next-season plan: ${chosen.careerPlan === "Return" ? "Return to school" : "Draft"}`
+                            : `Professional status: ${chosen.status}`}
                       </p>
                     </section>
                   </div>
@@ -924,11 +1108,7 @@ export function AgencyGame() {
                   </div>
                   <div className="as-grid">
                     {brands.map((b, i) => {
-                      const gross = Math.round(
-                          b.base *
-                            (0.8 + chosen.recognition / 100) *
-                            (performance ? 0.7 : 1),
-                        ),
+                      const gross = dealValue(chosen, i, performance),
                         commission = Math.round((gross * chosen.fee) / 100);
                       return (
                         <article className="as-deal" key={b.name}>
@@ -970,7 +1150,9 @@ export function AgencyGame() {
                           )}
                           <p className="as-fine">
                             Client keeps the contract payment less commission.
-                            Obligation adds {b.load} fatigue.
+                            Obligation adds {b.load} fatigue. Offers reflect
+                            school reach, role and recognition. Injury does not
+                            cancel a signed guarantee.
                           </p>
                           <button
                             className="as-primary"
@@ -1174,6 +1356,7 @@ export function AgencyGame() {
                           s.week < 12 ||
                           s.week > 14 ||
                           !!chosen.prep ||
+                          chosen.careerPlan === "Return" ||
                           chosen.status !== "College"
                         }
                         onClick={() =>
@@ -1191,9 +1374,11 @@ export function AgencyGame() {
                           )
                         }
                       >
-                        {chosen.prep
-                          ? "Package already booked"
-                          : "Book Pro Day package"}
+                        {chosen.careerPlan === "Return"
+                          ? "Returning to school"
+                          : chosen.prep
+                            ? "Package already booked"
+                            : "Book Pro Day package"}
                       </button>
                     </div>
                     <div>
@@ -1303,33 +1488,37 @@ export function AgencyGame() {
                                 <Portrait p={p} />
                                 <div>
                                   <span className="as-eyebrow">
-                                    {p.position} · CLASS OF {p.season}
+                                    {p.position} · SEASON {recap.year}
                                   </span>
                                   <h3>{p.name}</h3>
                                 </div>
                               </div>
                               <div className="as-box">
                                 <strong>
-                                  {recap.week === 15
-                                    ? c.outlook
-                                    : c.pick
-                                      ? `Round ${Math.ceil(c.pick / 32)} · Pick ${((c.pick - 1) % 32) + 1}`
-                                      : c.status}
+                                  {c.returning
+                                    ? "Returning to school"
+                                    : recap.week === 15
+                                      ? c.outlook
+                                      : c.pick
+                                        ? `Round ${Math.ceil(c.pick / 32)} · Pick ${((c.pick - 1) % 32) + 1}`
+                                        : c.status}
                                 </strong>
                                 <small>
-                                  {recap.week === 15
-                                    ? "Projected after Pro Day"
-                                    : c.status === "Pro"
-                                      ? "Professional roster secured"
-                                      : c.status === "Drafted"
-                                        ? "Drafted and signed"
-                                        : c.status === "Signed"
-                                          ? "Undrafted contract signed"
-                                          : c.status === "Tryout"
-                                            ? "A tryout opportunity"
-                                            : c.status === "Undrafted"
-                                              ? "The next call still matters"
-                                              : "No roster place secured"}
+                                  {c.returning
+                                    ? "Another season of eligibility and NIL opportunities"
+                                    : recap.week === 15
+                                      ? "Projected after Pro Day"
+                                      : c.status === "Pro"
+                                        ? "Professional roster secured"
+                                        : c.status === "Drafted"
+                                          ? "Drafted and signed"
+                                          : c.status === "Signed"
+                                            ? "Undrafted contract signed"
+                                            : c.status === "Tryout"
+                                              ? "A tryout opportunity"
+                                              : c.status === "Undrafted"
+                                                ? "The next call still matters"
+                                                : "No roster place secured"}
                                 </small>
                               </div>
                               <button
@@ -1427,6 +1616,8 @@ export function AgencyGame() {
                 <p>
                   16 fictional schools, 12 regular-season games, a four-team
                   playoff. You represent players; their schools run the teams.
+                  This demo uses a shared invitational across its fictional FBS
+                  and FCS conferences, not separate real-world championships.
                 </p>
               </div>
               <div className="as-subtabs">
@@ -1447,7 +1638,8 @@ export function AgencyGame() {
                       <b>
                         #{i + 1} {t.name}
                         <small>
-                          {t.id < 8 ? "Atlantic" : "Frontier"} Conference
+                          {schools[t.id]!.division} ·{" "}
+                          {schools[t.id]!.conference}
                         </small>
                       </b>
                       <span>
