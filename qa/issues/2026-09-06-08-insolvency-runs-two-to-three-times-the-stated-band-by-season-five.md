@@ -110,6 +110,89 @@ than losing football games. That is the thread: **what distinguishes the seven
 from the sixty-five?** Facility upkeep and payroll are the obvious candidates and
 neither has been measured against the insolvent set.
 
+## Attribution — 2026-09-07, by the implementer
+
+The thread above was pulled and **it does not lead where it was pointed**.
+Harnesses: `qa/scratch/c3-econ/who-fails.mjs` and `why-low-fails.mjs`.
+Three 72-program seeds, five seasons, 216 programs, 21 insolvent.
+
+**First, a confound I introduced and had to correct.** Splitting the whole
+league on solvency appeared to indict facilities and payroll exactly as
+predicted — insolvent programs had built 1.48 levels against 2.51 and carried
+$0.91M of payroll against $2.90M. That comparison is worthless. **Every one of
+the 21 insolvencies is LOW**, and LOW builds less and pays less whatever
+happens to it, so the split was measuring tier. Recorded because it is the same
+mistake the run log's own process note warns about, and because the numbers
+looked like a confirmation.
+
+**Within LOW — 21 insolvent against 69 solvent — not one candidate separates
+them:**
+
+| | insolvent | solvent |
+|---|---|---|
+| facility levels built | 1.48 | 1.59 |
+| total facility levels | 11.14 | 10.65 |
+| staff payroll, weekly | **$0.91M** | **$1.33M** |
+| opening budget | $6.50M | $6.50M |
+| prestige | 55.00 | 55.16 |
+| fan base | 29,408 | 32,924 |
+
+The insolvent build the same, open on the identical reserve, and carry *less*
+payroll. **Facility upkeep and payroll are both ruled out as written.**
+
+**What does separate them is program character**, and by a factor of thirteen:
+
+| character (within LOW) | insolvent | rate |
+|---|---|---|
+| DEVELOPER | 11/21 | **52%** |
+| FRONTRUNNER | 8/24 | **33%** |
+| TALENT_MAGNET | 1/21 | 5% |
+| DIEHARD | 1/24 | 4% |
+
+**The two failing characters fail for opposite reasons, and both are authored.**
+
+*DEVELOPER is the cost side, and here upkeep is implicated after all — through
+the levels a program is **born with**, not anything it builds.* Measured at
+creation, before a week is played:
+
+| character | facility levels | upkeep index (`Σ level^1.7`) | TRAIN | STADI | ACADE | RECRU | SCOUT |
+|---|---|---|---|---|---|---|---|
+| **DEVELOPER** | **11.0** | **22.3** | **4.0** | 2.0 | 3.0 | 1.0 | 1.0 |
+| DIEHARD | 9.0 | 15.0 | 2.0 | 3.0 | 1.0 | 2.0 | 1.0 |
+| TALENT_MAGNET | 9.0 | 15.0 | 1.0 | 2.0 | 2.0 | 3.0 | 1.0 |
+| FRONTRUNNER | 8.0 | 12.7 | 1.0 | 3.0 | 1.0 | 2.0 | 1.0 |
+
+A developer's weight room is authored at level 4, and upkeep is `level^1.7`, so
+it carries **49% more upkeep than a diehard and 76% more than a front-runner
+from the first week** — permanently, having chosen nothing. That is why "levels
+built" showed nothing: the cost was never a decision.
+
+*FRONTRUNNER is the revenue side, and this half is a hypothesis rather than a
+measurement.* It has the **lowest** upkeep of the four, so cost cannot be its
+cause. Ranking the four by the pricing posture recorded in `CLAUDE.md` orders
+them the way the failures fall — front-runner prices at **0.900** of fair, the
+lowest of the five cohorts, against diehard's 1.180, the highest — and a
+front-runner's gate is authored to collapse when it loses, which a LOW program
+does constantly. **Not verified.** It needs ticket price as a multiple of fair,
+and gate revenue, per character within LOW across the five seasons.
+
+## What this means for the band, which is the lead's call
+
+`CLAUDE.md` states the design intent for character plainly: *"Character changes
+**strategy**, not difficulty: a developer has a weight room and no recruiting
+office, a talent magnet the reverse."*
+
+Measured, at LOW tier, character changes difficulty by 52% against 4%. So the
+question this issue actually raises is not "which number is mistuned" but
+whether a LOW developer is meant to be a substantially harder game than a LOW
+diehard. If it is, the ~3 band is wrong and should be restated per character. If
+it is not, the authored facility spread needs a cost the character does not pay
+for having been generated.
+
+Both are design decisions rather than defects, which is why they are recorded
+here rather than fixed. **No engine change made.**
+
 ## Fix
 
-<pending>
+<pending — the attribution above needs a design ruling before there is
+anything to fix>
