@@ -4,7 +4,7 @@
 |---|---|
 | **ID** | 2026-09-06-03 |
 | **Severity** | P2 — argued down from the P1 the reporter suggested; see "Severity" |
-| **Status** | open |
+| **Status** | fixed in `59ab1e6` |
 | **Area** | Recruiting / command validation |
 | **Found by** | edge-case-tester (cycle 3, Brief B, F1–F4 and F6) |
 | **Found in** | `7963c0e` (engine identical to `f164d12`) |
