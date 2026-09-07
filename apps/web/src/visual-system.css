@@ -1,0 +1,103 @@
+/* College Legends editorial art system. Local responsive artwork is decorative and never carries game state. */
+:root {
+  --cl-ink:#091522;
+  --cl-surface:#102337;
+  --cl-line:#35495c;
+  --cl-gold:#e9bd70;
+  --cl-paper:#f4f1e8;
+  --cl-muted:#bcc9d5;
+  background:var(--cl-ink);
+  color:var(--cl-paper);
+  color-scheme:dark;
+}
+body { background:radial-gradient(ellipse at 80% 0%,#1c3042,transparent 50rem),var(--cl-ink); }
+button,select,input:not([type="checkbox"]):not([type="radio"]) { min-height:44px; }
+button { min-width:44px; touch-action:manipulation; }
+.depth-actions button { min-width:44px; min-height:44px; }
+.resume-actions button:not(.ghost) { background:var(--cl-gold); color:var(--cl-ink); }
+button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible { outline:3px solid var(--cl-gold); outline-offset:4px; }
+button:hover:not(:disabled) { filter:brightness(1.08); }
+.new-game,.app-shell { padding-top:max(1.5rem,env(safe-area-inset-top)); padding-bottom:max(2rem,env(safe-area-inset-bottom)); }
+.eyebrow,.tier { color:var(--cl-gold); }
+.panel,.career-card,.metrics article { border-color:var(--cl-line); background:var(--cl-surface); }
+.title-hero {
+  position:relative; isolation:isolate; overflow:hidden; max-width:none;
+  min-height:380px; display:flex; align-items:center; margin-bottom:2rem;
+  padding:3rem; border:1px solid var(--cl-line); border-radius:1rem;
+  background:linear-gradient(90deg,rgba(5,13,23,.78),rgba(5,13,23,.12) 80%),url('./art/stadium.webp') center 58%/cover,#0c1b2b;
+}
+.title-hero::after { content:""; position:absolute; inset:auto 0 0; height:4px; background:linear-gradient(90deg,var(--cl-gold),transparent 75%); }
+.title-hero h1 { font-family:Impact,'Arial Narrow',sans-serif; font-weight:900; font-size:clamp(3.4rem,7vw,6.2rem); text-transform:uppercase; letter-spacing:.005em; line-height:.92; margin:.8rem 0 1.1rem; }
+.title-hero h1 span { display:block; color:var(--cl-gold); }
+.title-hero-copy>p:last-child { font-size:1.08rem; line-height:1.5; color:var(--cl-paper); margin:0; }
+.hero-caption { position:absolute; right:1.5rem; bottom:1.4rem; font-size:.65rem; text-transform:uppercase; letter-spacing:.18em; color:#eee3ca; }
+.career-section-heading { margin-bottom:1.3rem; }
+.career-section-heading h2 { font-size:1.75rem; letter-spacing:-.03em; }
+.career-section-heading .eyebrow { margin-bottom:.45rem; }
+.career-section-heading p:last-child { margin-bottom:0; }
+.career-selection .career-card { position:relative; padding:1.4rem; border-radius:.65rem; background:linear-gradient(145deg,#172d40,#0d1e30); }
+.career-card-heading { display:flex; justify-content:space-between; align-items:center; margin-bottom:1.4rem; padding-bottom:1rem; border-bottom:1px solid var(--cl-line); }
+.career-card-heading span:first-child { font-size:2.2rem; font-weight:900; color:var(--cl-gold); letter-spacing:-.06em; }
+.career-card-heading span:last-child { font-size:.7rem; text-transform:uppercase; letter-spacing:.2em; color:var(--cl-muted); }
+.career-selection .career-card h2 { font-size:1.4rem; }
+.career-selection .career-card>p:not(.tier) { font-size:.9rem; }
+.career-selection .career-card.power { border-color:var(--cl-gold); }
+.career-selection button { border-radius:.4rem; background:var(--cl-gold); }
+.dashboard-header { border-bottom:1px solid var(--cl-line); padding-bottom:1.3rem; }
+.dashboard-header h1 { letter-spacing:-.045em; }
+.metrics article { border-radius:.5rem; border-top:2px solid #6b7a87; }
+.metrics strong { font-variant-numeric:tabular-nums; }
+.command-hero {
+  position:relative; min-height:205px; display:flex; flex-direction:column; justify-content:center;
+  border-left:4px solid var(--cl-gold);
+  background:linear-gradient(90deg,rgba(6,16,27,.97),rgba(6,16,27,.84) 58%,rgba(6,16,27,.25)),url('./art/stadium.webp') center 62%/cover,#102337;
+}
+.command-hero h2 { font-size:clamp(1.5rem,3vw,2.3rem); max-width:40rem; letter-spacing:-.03em; }
+.command-hero>p { max-width:39rem; }
+.command-hero>p:last-child { margin-bottom:0; }
+.program-art-banner { min-height:180px; display:flex; flex-direction:column; justify-content:center; border-left:4px solid var(--cl-gold); background:linear-gradient(90deg,rgba(6,16,27,.97),rgba(6,16,27,.8) 55%,rgba(6,16,27,.1)),url('./art/facility.webp') center/cover,#102337; }
+.program-art-banner h2 { font-size:clamp(1.4rem,3vw,2rem); }
+.program-art-banner p:last-child { margin-bottom:0; }
+.war-room {
+  --wr-ground:#091522; --wr-panel:#102337; --wr-raised:#172e43;
+  --wr-line:#506174; --wr-line-soft:#35495c; --wr-field:#8dd6b0;
+  --wr-field-deep:#33644f; --wr-leather:#e9bd70; --wr-gold:#e9bd70;
+  --wr-red:#ffa59b; --wr-text:#f4f1e8; --wr-muted:#bcc9d5;
+  background:var(--wr-ground);
+}
+.war-room .war-room-hud { background:linear-gradient(90deg,rgba(6,16,27,.97),rgba(6,16,27,.86) 60%,rgba(6,16,27,.65)),url('./art/recruiting.webp') center 40%/cover,#102337; border-color:var(--cl-line) !important; }
+.war-room-brand h1 span { color:var(--cl-gold); text-shadow:none; }
+.war-room-ledger .ledger-item { background:rgba(16,35,55,.94); }
+@media (max-width:800px) {
+  .title-hero { min-height:330px; padding:2rem; }
+  .command-hero>p { max-width:32rem; }
+}
+@media (max-width:560px) {
+  .new-game,.app-shell { width:auto; margin-left:max(1rem,env(safe-area-inset-left)); margin-right:max(1rem,env(safe-area-inset-right)); padding-top:max(1rem,env(safe-area-inset-top)); }
+  .title-hero { min-height:290px; padding:1.4rem; margin-bottom:1.5rem; background-image:linear-gradient(90deg,rgba(5,13,23,.86),rgba(5,13,23,.2)),url('./art/stadium-mobile.webp'); background-position:60% center; }
+  .title-hero h1 { font-size:3.5rem; }
+  .hero-caption { display:none; }
+  .career-selection .career-card { min-height:0; }
+  .career-card-heading { margin-bottom:1rem; padding-bottom:.7rem; }
+  .dashboard-header { gap:.8rem; margin-bottom:.8rem; padding-bottom:.8rem; }
+  .dashboard-header h1 { font-size:1.7rem; }
+  .dashboard-header p:not(.eyebrow) { font-size:.8rem; }
+  .week-action { width:100%; }
+  .metrics { gap:.4rem; margin-bottom:.65rem; }
+  .metrics article { padding:.65rem .5rem; }
+  .metrics p { font-size:.7rem; }
+  .metrics strong { font-size:1.05rem; }
+  .command-hero { min-height:0; background-image:linear-gradient(90deg,rgba(6,16,27,.97),rgba(6,16,27,.78)),url('./art/stadium-mobile.webp'); }
+  .command-hero h2 { font-size:1.4rem; }
+  .command-hero>p { font-size:.85rem; }
+  .program-art-banner { min-height:150px; background-image:linear-gradient(90deg,rgba(6,16,27,.96),rgba(6,16,27,.7)),url('./art/facility-mobile.webp'); }
+  .war-room .war-room-hud { background-image:linear-gradient(90deg,rgba(6,16,27,.94),rgba(6,16,27,.84)),url('./art/recruiting-mobile.webp'); }
+}
+@media (prefers-reduced-motion:reduce) {
+  *,*::before,*::after { scroll-behavior:auto !important; animation:none !important; transition:none !important; }
+}
+@media (forced-colors:active) {
+  .title-hero,.command-hero,.program-art-banner,.war-room .war-room-hud { background:Canvas; color:CanvasText; border:1px solid CanvasText; }
+  .title-hero h1 span,.title-hero-copy>p:last-child { color:CanvasText; }
+  button:focus-visible,a:focus-visible { outline-color:Highlight; }
+}

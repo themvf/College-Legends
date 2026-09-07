@@ -934,7 +934,10 @@ function NewGame({ busy, onStart, resumable, saved, onResume, onAbandon }: {
   onResume: () => void; onAbandon: () => void;
 }): ReactElement {
   return <main className="new-game">
-    <header className="masthead"><p className="eyebrow">College football management</p><h1>College Legends</h1><p>Choose the job that defines your career.</p></header>
+    <header className="masthead title-hero">
+      <div className="title-hero-copy"><p className="eyebrow">College football management</p><h1>College <span>Legends</span></h1><p>Build the program.<br />Leave a legacy.</p></div>
+      <span className="hero-caption" aria-hidden="true">Saturday starts here</span>
+    </header>
     {resumable && <section className="resume-card">
       <div>
         <p className="eyebrow">Saved on this device{saved ? ` · ${(saved.bytes / 1e6).toFixed(2)} MB` : ""}</p>
@@ -946,9 +949,11 @@ function NewGame({ busy, onStart, resumable, saved, onResume, onAbandon }: {
         <button className="ghost" disabled={busy} onClick={onAbandon}>Start over</button>
       </div>
     </section>}
-    <section className="career-grid">{careerOrder.map((path) => {
+    <div className="career-section-heading"><p className="eyebrow">Your career starts here</p><h2>Choose your challenge.</h2><p className="muted">Three paths. One program to make your own.</p></div>
+    <section className="career-grid career-selection">{careerOrder.map((path, index) => {
       const profile = CAREER_PATHS[path];
       return <article className={`career-card ${profile.tier.toLowerCase()}`} key={path}>
+        <div className="career-card-heading" aria-hidden="true"><span>0{index + 1}</span><span>{path === "DYNASTY_BUILDER" ? "Build" : path === "PROGRAM_RISER" ? "Rise" : "Win"}</span></div>
         <p className="tier">{profile.tier} TIER</p><h2>{profile.label}</h2><p>{descriptions[path]}</p>
         <dl>
           <div><dt>Opening budget</dt><dd>${(profile.budget / 1_000_000).toFixed(1)}M</dd></div>
@@ -1851,6 +1856,7 @@ function Finances({ game, pending, onQueue }: { game: GameView; pending: GameCom
     return "No conditions. The full amount is guaranteed, including bye weeks";
   };
   return <section className="finance-layout">
+    <header className="panel program-art-banner span-two"><p className="eyebrow">Program operations</p><h2>Build something that lasts.</h2><p className="muted">The resources behind every Saturday.</p></header>
     {/* Read back what the engine actually charged rather than recomputing it:
         the operating cost is a share of total revenue, and the UI does not know
         the gate until the week has resolved. A posted number that guesses at an

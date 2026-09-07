@@ -1,0 +1,23 @@
+{
+  "generator": "Built-in image_gen",
+  "assets": [
+    {
+      "key": "hero",
+      "name": "stadium",
+      "file": "exec-76c93856-ff66-4431-8cec-a40620c94df8.png",
+      "prompt": "Use case: stylized-concept. Create a premium original college football management game stadium hero illustration, wide 16:9 landscape. Fictional intimate collegiate stadium at blue-hour dusk, field seen from sideline tunnel, a small coach from behind holding a play sheet on the far right, illuminated grass, brick stands packed with indistinct crowd, restrained warm gold floodlights and dark ink navy shadows. Modern sports editorial photography with subtly illustrated realism and fine grain, authentic believable football field. Sophisticated aspirational mood. Left half and upper third dark and calm to support live white UI typography. No text, letters, logos, university trademarks, watermarks or recognizable real stadium. High production quality, restrained colors, realistic architecture. This is environment art, not a UI mockup."
+    },
+    {
+      "key": "recruit",
+      "name": "recruiting",
+      "file": "exec-56696500-e769-4df4-9985-be8217b12fec.png",
+      "prompt": "Use case: stylized-concept. Original College Legends game environment art. Wide 16:9 premium fictional college football recruiting editorial image: anonymous young adult football prospect on far right in plain navy training shirt holding unbranded helmet, chest-up three-quarter profile looking toward sunlit high-school practice field. No specific player identity. Quiet dark negative space on left half for live interface title. Gold late-afternoon rim light, deep ink navy shadows, subtle illustrated realism, fine film grain, restrained sports documentary aesthetic matching a dusk stadium illustration. Believable anatomy and equipment. No words, logos, numbers, real school marks, or watermarks. Not a UI mockup."
+    },
+    {
+      "key": "facility",
+      "name": "facility",
+      "file": "exec-105a31a5-ac57-4575-bee3-db09ad301d3b.png",
+      "prompt": "Use case: stylized-concept. Original College Legends game art, wide 16:9. Premium architectural sports editorial illustration of a believable fictional college football program facility. View from dark film-study room through floor-to-ceiling glass toward a weight room and indoor practice field; empty rooms, neat strength equipment, brick and steel details, restrained navy and warm gold accents. Dark calm left half for live interface headings, detailed architecture and field on right. Soft early morning warm light, deep ink navy shadows, fine grain, slightly illustrated realism, sophisticated college sports documentary mood consistent with dusk stadium and golden-hour recruiting art. No people, text, logos, branding, watermarks or futuristic equipment. This is an atmospheric generic facility, not a specific upgrade tier or UI mockup."
+    }
+  ]
+}
