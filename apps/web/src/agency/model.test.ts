@@ -12,6 +12,10 @@ import {
   schools,
   dealValue,
   playingShare,
+  scoutingLevel,
+  scoutingUpgradeCost,
+  researchedOutlook,
+  competitionReport,
   type State,
 } from "./model.js";
 const signed = (seed = 42) =>
@@ -26,6 +30,53 @@ function through(s: State, week: number) {
   return s;
 }
 describe("agency career", () => {
+  it("charges scouting upgrades once and preserves uncertainty and old reports", () => {
+    let s = startAgency(42);
+    const p = s.players[0]!;
+    expect(researchedOutlook(p)).toMatch(/not yet researched/);
+    s = decideAgency(s, { type: "scout", id: p.id, level: 1 });
+    expect(researchedOutlook(s.players[0]!)).toMatch(/not yet researched/);
+    expect(scoutingUpgradeCost(s.players[0]!, 2)).toBe(4000);
+    s = decideAgency(s, { type: "scout", id: p.id, level: 2 });
+    expect(researchedOutlook(s.players[0]!)).toMatch(/Development route/);
+    s = decideAgency(s, { type: "scout", id: p.id, level: 3 });
+    expect(s.money).toBe(75000);
+    expect(() =>
+      decideAgency(s, { type: "scout", id: p.id, level: 2 }),
+    ).toThrow(/already/);
+    expect(restore(JSON.stringify(s))).toEqual(s);
+    const old = { ...p, scouted: true };
+    expect(scoutingLevel(old)).toBe(1);
+  });
+  it("persists accepted and declined pitch results and reports actual rival priorities", () => {
+    const accepted = signed();
+    expect(accepted.lastPitch).toMatchObject({
+      accepted: true,
+      cost: 2000,
+      player: "2027-0",
+    });
+    const s = startAgency(42);
+    const target = s.players.find((p) =>
+      competitionReport(s, p).includes("currently prioritize"),
+    )!;
+    expect(target).toBeDefined();
+    expect(competitionReport(s, target)).toMatch(/Week 2/);
+    const declined = Array.from({ length: 40 }, (_, i) => i + 1)
+      .map((seed) =>
+        decideAgency(startAgency(seed), {
+          type: "pitch",
+          id: "2027-11",
+          promise: "Development",
+          fee: 20,
+        }),
+      )
+      .find((x) => !x.lastPitch!.accepted)!;
+    expect(declined.lastPitch).toMatchObject({ accepted: false, cost: 500 });
+    expect(declined.lastPitch!.message).toMatch(/Revisit next week/);
+    expect(restore(JSON.stringify(declined))!.lastPitch).toEqual(
+      declined.lastPitch,
+    );
+  });
   it("migrates existing saves without changing the saved draft path or money", () => {
     const old = JSON.parse(JSON.stringify(signed()));
     for (const p of old.players)

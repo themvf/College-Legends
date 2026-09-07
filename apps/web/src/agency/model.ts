@@ -51,6 +51,7 @@ export type Athlete = {
   promise: Want;
   delivered: boolean;
   scouted: boolean;
+  scoutingLevel?: number;
   fee: number;
   testing: number;
   interview: number;
@@ -141,6 +142,15 @@ export type Recap = {
   balance: number;
 };
 export type State = {
+  lastPitch?: {
+    player: string;
+    accepted: boolean;
+    message: string;
+    competition: string;
+    cost: number;
+    year: number;
+    week: number;
+  };
   version: 1;
   seed: number;
   year: number;
@@ -272,6 +282,110 @@ export const schools = teams.map((name, id) => ({
   prestige: id < 8 ? 48 + id * 3 : 76 + (id - 8) * 3,
   competition: id < 8 ? 65 + id : 79 + (id - 8),
 }));
+export const ratingStars = (score: number) =>
+  Math.max(1, Math.min(5, Math.ceil(score / 20)));
+export const conferenceStrength = (school: number) => {
+  const peers = schools.filter(
+    (s) => s.conference === schools[school]!.conference,
+  );
+  return peers.reduce((sum, s) => sum + s.prestige, 0) / peers.length;
+};
+export const priorities = {
+  Development: {
+    label: "Improve my game",
+    description:
+      "Arrange specialist training and support. Coaches do the coaching; you coordinate the help.",
+    service: "Complete a technique training session.",
+  },
+  Visibility: {
+    label: "Build my name",
+    description:
+      "Arrange media work and brand opportunities to grow public awareness.",
+    service:
+      "Start a commercial campaign or complete a media training session.",
+  },
+  Security: {
+    label: "Earn NIL income",
+    description:
+      "Find a paying commercial deal. This means income from delivered work, not a guaranteed football career.",
+    service: "Deliver a commercial campaign that pays the client.",
+  },
+};
+export const scoutingPackages = [
+  {
+    name: "Film review",
+    cost: 1000,
+    detail:
+      "A broad potential range, current role and a useful development focus.",
+  },
+  {
+    name: "Player & market assessment",
+    cost: 5000,
+    detail:
+      "A tighter potential range, career-route assessment, client priorities and sponsor economics.",
+  },
+  {
+    name: "Full due diligence",
+    cost: 25000,
+    detail:
+      "Our narrowest potential estimate, current draft evaluation, school alternatives and rival recruitment priorities. Future outcomes remain uncertain.",
+  },
+];
+export const scoutingLevel = (p: Athlete) =>
+  p.scoutingLevel ?? (p.scouted ? 1 : 0);
+export const scoutingUpgradeCost = (p: Athlete, level: number) =>
+  scoutingPackages[level - 1]!.cost -
+  (scoutingPackages[scoutingLevel(p) - 1]?.cost ?? 0);
+export function potentialRange(p: Athlete) {
+  const level = scoutingLevel(p);
+  if (!level) return "Not researched";
+  const spread = [0, 10, 6, 3][level]!;
+  return `${Math.max(Math.round(p.ability), p.ceiling - spread)}–${Math.min(99, p.ceiling + spread)}`;
+}
+export function researchedOutlook(p: Athlete) {
+  if (scoutingLevel(p) < 2 && !p.prep?.resolved)
+    return "Career assessment not yet researched";
+  if (scoutingLevel(p) < 3 && !p.prep?.resolved)
+    return draftGrade(p) < 78
+      ? "Development route · more evidence needed for a pro opportunity"
+      : "Professional potential · draft position remains uncertain";
+  return projection(p) === "Undrafted / fringe"
+    ? "No draft selection projected today · development and alternative routes remain open"
+    : `${projection(p)} today · an estimate, not a ceiling`;
+}
+function rivalProspects(s: State, r: Rival) {
+  return s.players
+    .filter(
+      (p) =>
+        p.season === s.year &&
+        p.status === "College" &&
+        !p.owner &&
+        p.ability < 68 + r.reputation * 0.3,
+    )
+    .sort(
+      (a, b) =>
+        b.ability +
+        (b.want === r.style ? 8 : 0) -
+        (a.ability + (a.want === r.style ? 8 : 0)),
+    );
+}
+export function competitionReport(s: State, p: Athlete) {
+  if (p.owner === "you")
+    return "Signed with your agency. Rivals cannot take this client during the current agreement.";
+  if (p.owner)
+    return `${s.rivals.find((r) => r.id === p.owner)?.name ?? "Another agency"} has signed this player.`;
+  const rivals = s.rivals.filter(
+    (r) =>
+      s.week < 6 &&
+      r.cash > 8000 &&
+      s.players.filter((q) => q.owner === r.id && q.season === s.year).length <
+        r.capacity &&
+      rivalProspects(s, r)[0]?.id === p.id,
+  );
+  return rivals.length
+    ? `${rivals.map((r) => r.name).join(" and ")} currently prioritize this player. Their next recruitment window is Week ${Math.floor(s.week / 2) * 2 + 2}; priorities can change.`
+    : "No rival currently has this player as its next signing priority. Interest can change as other prospects sign.";
+}
 export function depth(p: Athlete, school = p.school) {
   const gap = p.ability - schools[school]!.competition;
   const rank = gap >= 0 ? 1 : gap >= -6 ? 2 : 3;
@@ -529,7 +643,7 @@ function active(s: State) {
 export type Action =
   | { type: "career"; id: string; plan: Athlete["careerPlan"] }
   | { type: "transfer"; id: string; school: number }
-  | { type: "scout"; id: string }
+  | { type: "scout"; id: string; level?: number }
   | { type: "pitch"; id: string; promise: Want; fee: number }
   | {
       type: "job";
@@ -585,9 +699,17 @@ export function decideAgency(current: State, a: Action): State {
   const p = s.players.find((p) => p.id === a.id);
   if (!p) throw Error("Player not found.");
   if (a.type === "scout") {
-    if (p.scouted) throw Error("You already have this report.");
-    spend(s, `${p.name} · scouting report`, 1000);
+    const level = a.level ?? 1;
+    if (![1, 2, 3].includes(level)) throw Error("Choose a scouting package.");
+    if (scoutingLevel(p) >= level)
+      throw Error("You already have this report or a deeper assessment.");
+    spend(
+      s,
+      `${p.name} · ${scoutingPackages[level - 1]!.name}`,
+      scoutingUpgradeCost(p, level),
+    );
     p.scouted = true;
+    p.scoutingLevel = level;
     return s;
   }
   if (a.type === "pitch") {
@@ -604,6 +726,7 @@ export function decideAgency(current: State, a: Action): State {
     spend(s, `${p.name} · representation meeting`, 500);
     p.approached = s.week;
     const chance = fit(s, p, a.promise, a.fee);
+    const competition = competitionReport(s, p);
     const accepted =
       (collegeClients(s).length === 0 &&
         p.ability <= 72 &&
@@ -623,6 +746,17 @@ export function decideAgency(current: State, a: Action): State {
       s.news.unshift(
         `${p.name} declines: your current offer did not outweigh their other options. You can revisit next week.`,
       );
+    s.lastPitch = {
+      player: p.id,
+      accepted,
+      competition: accepted ? competitionReport(s, p) : competition,
+      cost: accepted ? 2000 : 500,
+      year: s.year,
+      week: s.week,
+      message: accepted
+        ? `${p.name} signed at ${a.fee}% commission. Their priority is: ${priorities[p.want].label.toLowerCase()}. ${priorities[a.promise].service}`
+        : `${p.name} has not signed. Their priority is: ${priorities[p.want].label.toLowerCase()}. ${a.promise !== p.want ? "Your proposed service did not match that priority." : "Your service matched, but the offer was not accepted at your current fee and reputation."} ${s.week < 6 ? "Revisit next week with a matching service or lower commission." : "The recruitment window has closed for further pitches."}`,
+    };
     return s;
   }
   owned(s, p.id);
@@ -996,19 +1130,7 @@ function rivalsTurn(s: State) {
       s.players.filter((p) => p.owner === r.id && p.season === s.year).length <
         r.capacity
     ) {
-      const prospects = s.players
-        .filter(
-          (p) =>
-            p.season === s.year &&
-            !p.owner &&
-            p.ability < 68 + r.reputation * 0.3,
-        )
-        .sort(
-          (a, b) =>
-            b.ability +
-            (b.want === r.style ? 8 : 0) -
-            (a.ability + (a.want === r.style ? 8 : 0)),
-        );
+      const prospects = rivalProspects(s, r);
       const p = prospects[0];
       if (p && r.cash > 8000) {
         p.owner = r.id;
@@ -1148,9 +1270,9 @@ export function advanceAgency(current: State): State {
     simulateFootball(s);
     for (const p of collegeClients(s)) {
       const old = previousOutlooks.get(p.id);
-      if (old !== projection(p))
+      if (old !== projection(p) && scoutingLevel(p) >= 2)
         s.news.push(
-          `${p.name}: draft outlook moves from ${old} to ${projection(p)} after updated performance and development evaluation.`,
+          `${p.name}: updated career assessment after performance and development: ${researchedOutlook(p)}.`,
         );
     }
   }
@@ -1469,6 +1591,8 @@ export function restore(raw: string | null): State | null {
         p.eligibility > 3 ||
         !["Draft", "Return"].includes(p.careerPlan) ||
         !Number.isFinite(p.transferredYear) ||
+        (p.scoutingLevel !== undefined &&
+          ![0, 1, 2, 3].includes(p.scoutingLevel)) ||
         (p.injury !== null &&
           (!p.injury ||
             typeof p.injury.name !== "string" ||

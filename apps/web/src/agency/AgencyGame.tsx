@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import type { ReactNode } from "react";
 import {
   startAgency,
   restore,
@@ -10,6 +11,15 @@ import {
   collegeClients,
   burn,
   teams,
+  ratingStars,
+  conferenceStrength,
+  priorities,
+  scoutingPackages,
+  scoutingLevel,
+  scoutingUpgradeCost,
+  potentialRange,
+  researchedOutlook,
+  competitionReport,
   schools,
   depth,
   schoolLabel,
@@ -20,7 +30,6 @@ import {
   standings,
   seasonPoints,
   draftGrade,
-  projection,
   fit,
   packages,
   coaches,
@@ -123,6 +132,13 @@ function FootballProfile({ p, week }: { p: Athlete; week: number }) {
   return (
     <div className="as-football-profile">
       <p className="as-school-context">{schoolLabel(p)}</p>
+      <div className="as-school-ratings">
+        <Stars
+          label="Conference"
+          value={ratingStars(conferenceStrength(p.school))}
+        />
+        <Stars label="Team" value={ratingStars(schools[p.school]!.prestige)} />
+      </div>
       <p>{yearLabel(p)}</p>
       <dl>
         <div>
@@ -141,6 +157,129 @@ function FootballProfile({ p, week }: { p: Athlete; week: number }) {
           <dd>{health(p, week)}</dd>
         </div>
       </dl>
+    </div>
+  );
+}
+function Stars({ label, value }: { label: string; value: number }) {
+  return (
+    <span
+      role="img"
+      className="as-star-rating"
+      aria-label={`${label}: ${value} out of 5 stars`}
+    >
+      <small>{label}</small>
+      <span aria-hidden="true">
+        <b>{"★".repeat(value)}</b>
+        <span>{"☆".repeat(5 - value)}</span>
+      </span>
+      <small>{value}/5</small>
+    </span>
+  );
+}
+function ResultDialog({
+  title,
+  children,
+  close,
+}: {
+  title: string;
+  children: ReactNode;
+  close: () => void;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = ref.current!;
+    const previous = document.activeElement as HTMLElement | null;
+    if (dialog.showModal) dialog.showModal();
+    else dialog.setAttribute("open", "");
+    dialog.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
+    dialog.scrollTop = 0;
+    return () => {
+      if (dialog.close) dialog.close();
+      if (previous?.isConnected) previous.focus();
+    };
+  }, []);
+  return (
+    <dialog
+      ref={ref}
+      className="as-result-dialog"
+      aria-labelledby="as-result-title"
+      onCancel={close}
+    >
+      <h2 id="as-result-title" tabIndex={-1}>
+        {title}
+      </h2>
+      {children}
+      <button className="as-primary" onClick={close}>
+        Continue
+      </button>
+    </dialog>
+  );
+}
+function ScoutingReport({ p, s }: { p: Athlete; s: State }) {
+  const level = scoutingLevel(p);
+  return (
+    <div className="as-research-report">
+      <p>
+        {scoutingPackages[level - 1]?.name ?? "Public profile"} ·{" "}
+        {level
+          ? "Assessment updates as the player develops."
+          : "Research to learn more."}
+      </p>
+      {level > 0 && (
+        <>
+          <p>
+            <strong>Potential range: {potentialRange(p)}</strong> · an estimate,
+            not a guaranteed outcome.
+          </p>
+          <p>
+            Current opportunity: {depth(p).role.toLowerCase()} at{" "}
+            {teams[p.school]}.{" "}
+            {p.fatigue > 40
+              ? "Manage workload before an intensive training block."
+              : "Technique work can improve ability; the school determines playing time."}
+          </p>
+        </>
+      )}
+      {level >= 2 && (
+        <>
+          <h3>Career & commercial assessment</h3>
+          <p>{researchedOutlook(p)}</p>
+          <p>
+            Client priority: {priorities[p.want].label}.{" "}
+            {priorities[p.want].description}
+          </p>
+          <p>
+            Local endorsement at today's school, role and public profile:{" "}
+            {cash(dealValue(p, 0))} gross; agency commission at {p.fee}%:{" "}
+            {cash(Math.round((dealValue(p, 0) * p.fee) / 100))}. Activation
+            costs $800. This is the current available quote, not promised annual
+            income.
+          </p>
+        </>
+      )}
+      {level >= 3 && (
+        <>
+          <h3>Competition & school alternatives</h3>
+          <p>{competitionReport(s, p)}</p>
+          {schools
+            .map((school, i) => ({ school, i, role: depth(p, i) }))
+            .filter((x) => x.i !== p.school)
+            .sort(
+              (a, b) =>
+                b.role.snaps - a.role.snaps ||
+                b.school.prestige - a.school.prestige,
+            )
+            .slice(0, 2)
+            .map((x) => (
+              <p key={x.i}>
+                {x.school.name}: {x.school.division}, {x.school.conference};{" "}
+                {x.role.role.toLowerCase()}, {x.role.snaps}% healthy snaps;
+                current local offer {cash(dealValue({ ...p, school: x.i }, 0))}.
+                A school move is a separate preseason decision.
+              </p>
+            ))}
+        </>
+      )}
     </div>
   );
 }
@@ -194,14 +333,14 @@ function SchoolChoices({
           snaps
         </p>
         <p>
-          Local endorsement guarantee at current recognition:{" "}
+          Local endorsement guarantee at current public profile:{" "}
           {cash(dealValue(p, 0))} → {cash(dealValue(projected, 0))}.
         </p>
         <p className="as-fine">
           School reach and playing time affect new sponsor offers. Future
-          performances change recognition. One preseason move costs the agency
-          $2,500. Active campaigns and training must be completed first; earned
-          payments stay earned.
+          performances change public profile. One preseason move costs the
+          agency $2,500. Active campaigns and training must be completed first;
+          earned payments stay earned.
         </p>
         <button
           disabled={locked || destination === p.school}
@@ -299,6 +438,11 @@ export function AgencyGame() {
     [recapIndex, setRecapIndex] = useState(0),
     [newConfirm, setNewConfirm] = useState(false),
     [expanded, setExpanded] = useState(false);
+  const [overlay, setOverlay] = useState<{
+    kind: "pitch" | "scout";
+    id: string;
+  } | null>(null);
+  const [researchTier, setResearchTier] = useState(1);
   const clients = clientList(s),
     college = collegeClients(s),
     chosen =
@@ -373,7 +517,8 @@ export function AgencyGame() {
           <h3>{p.name}</h3>
           <p>
             {prospect ? "Priority: " : ""}
-            {p.want} {prospect || p.status === "College" ? "" : `· ${p.status}`}
+            {priorities[p.want].label}{" "}
+            {prospect || p.status === "College" ? "" : `· ${p.status}`}
           </p>
         </div>
       </div>
@@ -384,27 +529,23 @@ export function AgencyGame() {
           <small>Ability</small>
         </div>
         <div>
-          <b>
-            {p.scouted
-              ? `${Math.max(Math.round(p.ability), p.ceiling - 5)}–${Math.min(99, p.ceiling + 3)}`
-              : "Unknown"}
-          </b>
+          <b>{potentialRange(p)}</b>
           <small>Potential estimate</small>
         </div>
         <div>
           <b>{Math.round(p.recognition)}</b>
-          <small>Recognition</small>
+          <small>Public profile</small>
         </div>
       </div>
       <div className="as-outlook">
         {p.status === "College"
-          ? projection(p)
+          ? researchedOutlook(p)
           : p.pick
             ? `Selected R${Math.ceil(p.pick / 32)} · P${((p.pick - 1) % 32) + 1}`
             : p.status}
         <small>
           {p.status === "College"
-            ? "Projected professional outlook"
+            ? "Scouting insight · not a limit on ambition"
             : "Career outcome"}
         </small>
       </div>
@@ -416,16 +557,28 @@ export function AgencyGame() {
           </p>
           <div className="as-buttons">
             <button
-              disabled={p.scouted}
+              disabled={scoutingLevel(p) >= researchTier}
               onClick={() =>
                 update(
-                  (x) => decideAgency(x, { type: "scout", id: p.id }),
-                  "Scouting report received. Potential remains uncertain.",
-                )
+                  (x) =>
+                    decideAgency(x, {
+                      type: "scout",
+                      id: p.id,
+                      level: researchTier,
+                    }),
+                  "Scouting report received.",
+                ) && setOverlay({ kind: "scout", id: p.id })
               }
             >
-              {p.scouted ? "Scouted" : "Scout · $1,000"}
+              {scoutingLevel(p) >= researchTier
+                ? "Report owned"
+                : `${scoutingLevel(p) ? "Upgrade" : "Scout"} · ${cash(scoutingUpgradeCost(p, researchTier))}`}
             </button>
+            {scoutingLevel(p) > 0 && (
+              <button onClick={() => setOverlay({ kind: "scout", id: p.id })}>
+                Read report
+              </button>
+            )}
             <button
               className="as-primary"
               aria-label={`Pitch ${p.name}`}
@@ -439,8 +592,10 @@ export function AgencyGame() {
                   update((x) =>
                     decideAgency(x, { type: "pitch", id: p.id, promise, fee }),
                   )
-                )
+                ) {
                   setSelected(p.id);
+                  setOverlay({ kind: "pitch", id: p.id });
+                }
               }}
             >
               Pitch {p.name.split(" ")[0]}
@@ -455,7 +610,7 @@ export function AgencyGame() {
             <span>Fatigue {Math.round(p.fatigue)}</span>
           </div>
           <p className="as-fine">
-            {p.promise} promised ·{" "}
+            {priorities[p.promise].label} promised ·{" "}
             {p.delivered ? "Service delivered" : "Still to deliver"} · {p.fee}%
             commercial fee
           </p>
@@ -478,6 +633,44 @@ export function AgencyGame() {
   );
   return (
     <div className="as-app">
+      {overlay &&
+        (() => {
+          const player = s.players.find((p) => p.id === overlay.id)!;
+          const result = s.lastPitch;
+          return (
+            <ResultDialog
+              title={
+                overlay.kind === "scout"
+                  ? `${player.name} · Scouting report`
+                  : result?.accepted
+                    ? `${player.name} signed`
+                    : `${player.name} · Pitch declined`
+              }
+              close={() => setOverlay(null)}
+            >
+              {overlay.kind === "scout" ? (
+                <ScoutingReport p={player} s={s} />
+              ) : (
+                <>
+                  <p>{result?.message}</p>
+                  <p>
+                    <strong>Agency spent {cash(result?.cost ?? 0)}</strong> ·{" "}
+                    {result?.accepted
+                      ? "$500 meeting + $1,500 setup"
+                      : "$500 meeting; no setup charged"}
+                  </p>
+                  <h3>Rival position</h3>
+                  <p>{result?.competition}</p>
+                  <p>
+                    {result?.accepted
+                      ? "Next: open the client file and arrange the promised service."
+                      : "Next: review the player's priority and your service offer before trying again."}
+                  </p>
+                </>
+              )}
+            </ResultDialog>
+          );
+        })()}
       <aside className="as-sidebar">
         <a
           className="as-logo"
@@ -696,9 +889,15 @@ export function AgencyGame() {
                     value={promise}
                     onChange={(e) => setPromise(e.target.value as Want)}
                   >
-                    <option>Development</option>
-                    <option>Visibility</option>
-                    <option>Security</option>
+                    <option value="Development">
+                      Improve my game · arrange training
+                    </option>
+                    <option value="Visibility">
+                      Build my name · media & brands
+                    </option>
+                    <option value="Security">
+                      Earn NIL income · deliver a paying deal
+                    </option>
                   </select>
                 </label>
                 <label>
@@ -711,10 +910,86 @@ export function AgencyGame() {
                 </label>
                 <p>
                   $500 meeting cost; $1,500 setup only if signed. No client
-                  advance. Promises affect trust. Security means delivering a
-                  paying commercial deal.
+                  advance. Promises affect trust.{" "}
+                  {priorities[promise].description}{" "}
+                  {priorities[promise].service}
                 </p>
               </div>
+              <details className="as-panel as-scouting-guide">
+                <summary>How to read a prospect</summary>
+                <p>
+                  Team and conference stars compare program stature and
+                  exposure: 1/5 is a small stage, 3/5 is established, 5/5 is
+                  elite. They do not guarantee wins or measure this player's
+                  talent.
+                </p>
+                <p>
+                  Ability measures current football skill. Potential is a
+                  researched range of possible development. Public profile
+                  (0–100) is awareness among fans and brands; it grows through
+                  performances and media work and affects sponsor opportunities.
+                </p>
+                <p>
+                  Your role: arrange support, negotiate commercial work and
+                  manage promises. Coaches control the football program. A
+                  client's priority tells you what they want from
+                  representation.
+                </p>
+              </details>
+              <div className="as-panel as-research-picker">
+                <label>
+                  Scouting depth
+                  <select
+                    value={researchTier}
+                    onChange={(e) => setResearchTier(Number(e.target.value))}
+                  >
+                    {scoutingPackages.map((pack, i) => (
+                      <option key={pack.name} value={i + 1}>
+                        {pack.name} · {cash(pack.cost)} total
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <p>{scoutingPackages[researchTier - 1]!.detail}</p>
+                <p className="as-fine">
+                  Earlier research is credited toward upgrades. The deepest
+                  report totals $25,000 per player, not $31,000. Better
+                  information cannot guarantee future results.
+                </p>
+              </div>
+              {s.lastPitch && s.lastPitch.year === s.year && (
+                <section className="as-panel">
+                  <h3>Last pitch</h3>
+                  <p>{s.lastPitch.message}</p>
+                  <p>
+                    {competitionReport(
+                      s,
+                      s.players.find((p) => p.id === s.lastPitch!.player)!,
+                    )}
+                  </p>
+                  <button
+                    onClick={() =>
+                      setOverlay({ kind: "pitch", id: s.lastPitch!.player })
+                    }
+                  >
+                    Review pitch result
+                  </button>
+                </section>
+              )}
+              {s.players
+                .filter(
+                  (p) =>
+                    p.season === s.year &&
+                    p.approached >= 0 &&
+                    p.owner &&
+                    p.owner !== "you",
+                )
+                .map((p) => (
+                  <p className="as-notice" key={p.id}>
+                    {p.name}: {competitionReport(s, p)} Your earlier pitch did
+                    not secure the client.
+                  </p>
+                ))}
               {s.news[0] && (
                 <p className="as-inline-news" role="status">
                   {s.news[0]}
@@ -792,8 +1067,9 @@ export function AgencyGame() {
                       </span>
                       <h2>{chosen.name}</h2>
                       <p>
-                        Values {chosen.want.toLowerCase()}. You promised{" "}
-                        {chosen.promise.toLowerCase()}.
+                        Wants: {priorities[chosen.want].label.toLowerCase()}.
+                        You promised:{" "}
+                        {priorities[chosen.promise].label.toLowerCase()}.
                       </p>
                       <div className="as-tags">
                         <span>Trust {Math.round(chosen.trust)}</span>
@@ -821,7 +1097,7 @@ export function AgencyGame() {
                         {chosen.status === "College"
                           ? chosen.careerPlan === "Return"
                             ? "Returning to school next year. New sponsor opportunities open in preseason; this client will skip Pro Days and the draft."
-                            : `Current draft projection: ${projection(chosen)}. Your choices can help, but no preparation package guarantees a selection.`
+                            : `${researchedOutlook(chosen)}. ${priorities[chosen.promise].service}`
                           : chosen.status === "Pro"
                             ? "A professional relationship. Annual income continues at renewal, provided trust remains at least 50."
                             : chosen.status === "Undrafted"
@@ -869,7 +1145,7 @@ export function AgencyGame() {
                     <section className="as-panel">
                       <h3>Career & service record</h3>
                       <p>
-                        Ability {Math.round(chosen.ability)} · Recognition{" "}
+                        Ability {Math.round(chosen.ability)} · Public profile{" "}
                         {Math.round(chosen.recognition)}
                       </p>
                       <p>
@@ -891,6 +1167,35 @@ export function AgencyGame() {
                       </p>
                     </section>
                   </div>
+                  <details className="as-panel">
+                    <summary>Scouting file & research upgrades</summary>
+                    <ScoutingReport p={chosen} s={s} />
+                    <div className="as-buttons">
+                      {scoutingPackages.map((pack, i) => (
+                        <button
+                          key={pack.name}
+                          disabled={scoutingLevel(chosen) >= i + 1}
+                          onClick={() => {
+                            if (
+                              update((x) =>
+                                decideAgency(x, {
+                                  type: "scout",
+                                  id: chosen.id,
+                                  level: i + 1,
+                                }),
+                              )
+                            )
+                              setOverlay({ kind: "scout", id: chosen.id });
+                          }}
+                        >
+                          {pack.name} ·{" "}
+                          {scoutingLevel(chosen) >= i + 1
+                            ? "Owned"
+                            : cash(scoutingUpgradeCost(chosen, i + 1))}
+                        </button>
+                      ))}
+                    </div>
+                  </details>
                   <h2>Weekly box statistics</h2>
                   <p className="as-fine">
                     Client-focused box stats. Supporting roster production is
@@ -949,7 +1254,7 @@ export function AgencyGame() {
                         Position technique · football ability
                       </option>
                       <option value="Media">
-                        Media coaching · recognition
+                        Media coaching · public profile
                       </option>
                       <option value="Recovery">
                         Recovery · fatigue and trust
@@ -1027,7 +1332,7 @@ export function AgencyGame() {
                     </strong>
                     <p>
                       QB–WR and FS–EDGE pairings help technique work. Media
-                      builds recognition; expensive support does not remove a
+                      builds public profile; expensive support does not remove a
                       player's ceiling.
                     </p>
                     <button
@@ -1097,7 +1402,7 @@ export function AgencyGame() {
                           Guaranteed fee · predictable income
                         </option>
                         <option value="bonus">
-                          Lower guarantee + recognition bonus
+                          Lower guarantee + public-profile bonus
                         </option>
                       </select>
                     </label>
@@ -1120,7 +1425,7 @@ export function AgencyGame() {
                           <p>
                             {b.weeks} weeks ·{" "}
                             {b.min
-                              ? `${b.min}+ recognition`
+                              ? `${b.min}+ public profile`
                               : "Available to new clients"}
                           </p>
                           <dl>
@@ -1143,16 +1448,16 @@ export function AgencyGame() {
                           </dl>
                           {performance && (
                             <p className="as-fine">
-                              Bonus depends on recognition at completion; it can
-                              be zero. Your agency receives its commission on
-                              any bonus.
+                              Bonus depends on public profile at completion; it
+                              can be zero. Your agency receives its commission
+                              on any bonus.
                             </p>
                           )}
                           <p className="as-fine">
                             Client keeps the contract payment less commission.
                             Obligation adds {b.load} fatigue. Offers reflect
-                            school reach, role and recognition. Injury does not
-                            cancel a signed guarantee.
+                            school reach, role and public profile. Injury does
+                            not cancel a signed guarantee.
                           </p>
                           <button
                             className="as-primary"
@@ -1384,7 +1689,7 @@ export function AgencyGame() {
                     <div>
                       <h3>{chosen.name}</h3>
                       <p>
-                        {projection({
+                        {researchedOutlook({
                           ...chosen,
                           interview:
                             chosen.interview >= 100
@@ -1770,7 +2075,7 @@ export function AgencyGame() {
                         <span>{agentName(p)}</span>
                         <strong>
                           {s.week < 16
-                            ? projection(p)
+                            ? researchedOutlook(p)
                             : p.pick
                               ? `Round ${Math.ceil(p.pick / 32)} · Pick ${((p.pick - 1) % 32) + 1}`
                               : p.status}

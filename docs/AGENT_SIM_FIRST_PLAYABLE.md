@@ -24,6 +24,14 @@ Agency income comes from commercial commissions and disclosed fictional professi
 
 ## Presentation and saves
 
+Team and conference profiles now include five-star stature/exposure ratings derived from the fictional school data. The scouting guide explains the scale and separates it from player ability. Client priorities use plain-language labels: improve my game (arrange training), build my name (media/brands), and earn NIL income (deliver a paying commercial campaign). Recognition is presented as public profile.
+
+Unresearched prospects no longer show a draft verdict. Film review costs $1,000 and reveals a broad potential range; the $5,000 player/market assessment adds career-route and commercial information; $25,000 full due diligence narrows estimates and adds current draft evaluation, school alternatives and actual rival signing priorities. Previous research is credited toward upgrades. Old scouted saves retain the first tier. Assessments update with player development and do not guarantee outcomes.
+
+Every pitch opens an accessible result dialog with acceptance/decline, costs, service expectations, next steps and rival position. The last pitch remains reviewable, and the scouting screen identifies previously pitched prospects who subsequently signed elsewhere. Rival reports use the same target ranking as rival recruitment; they are not invented competing offers.
+
+High-school recruiting remains a proposed next extension: a small watchlist of prospects, early research and a transition into the college client pool. A separate high-school league is outside this update. NIL representation and professional sports representation should remain distinct in any future rules expansion; the demo's current professional transition uses fictional mechanics.
+
 The new interface uses an original SVG agency office with scouting, client and meeting areas. Client and staff occupancy changes with the agency. Portraits are procedural SVG illustrations; no school-management artwork is used in the agency interface. The interface adapts to phone widths and respects reduced-motion preferences. It remains prototype art, not a final production asset set.
 
 The browser save key is `football-agent-sim-v1`, separate from all prior demos. The previous core-player demo remains at `?core=1`; other earlier prototypes remain at `?enterprise=1`, `?prototype=1` and `?legacy=1`.

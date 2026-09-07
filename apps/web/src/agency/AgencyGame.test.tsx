@@ -16,6 +16,11 @@ it("connects first client, deal, weekly recap and client box statistics", () => 
   );
   fireEvent.click(screen.getByRole("button", { name: "Pitch Miles Ellis" }));
   expect(
+    screen.getByRole("dialog", { name: "Miles Ellis signed" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText(/Agency spent \$2,000/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  expect(
     screen.getByRole("button", { name: "Advance to Week 1 →" }),
   ).toBeEnabled();
   fireEvent.click(screen.getByRole("button", { name: "Deals" }));
@@ -37,6 +42,37 @@ it("connects first client, deal, weekly recap and client box statistics", () => 
   ).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Advance to Week 2 →" }));
   expect(screen.getByText(/client keeps/)).toBeInTheDocument();
+});
+it("shows understandable stars and reveals research only after purchase", () => {
+  render(<AgencyGame />);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Meet the prospects ↗" }),
+  );
+  expect(screen.queryByText("Undrafted / fringe")).not.toBeInTheDocument();
+  expect(
+    screen.getAllByRole("img", { name: "Conference: 3 out of 5 stars" }).length,
+  ).toBeGreaterThan(0);
+  expect(
+    screen.getAllByText("Career assessment not yet researched").length,
+  ).toBeGreaterThan(0);
+  fireEvent.click(
+    screen.getAllByRole("button", { name: "Scout · $1,000" })[0]!,
+  );
+  expect(
+    screen.getByRole("dialog", { name: "Miles Ellis · Scouting report" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("heading", { name: "Career & commercial assessment" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  fireEvent.change(screen.getByLabelText("Scouting depth"), {
+    target: { value: "2" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Upgrade · $4,000" }));
+  expect(
+    screen.getByRole("heading", { name: "Career & commercial assessment" }),
+  ).toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem(SAVE_KEY)!).money).toBe(95000);
 });
 it("requires an explicit second click before replacing a saved agency", () => {
   render(<AgencyGame />);
@@ -73,9 +109,7 @@ it("shows football context and persists the return decision from the existing cl
   expect(
     JSON.parse(localStorage.getItem(SAVE_KEY)!).players[0].careerPlan,
   ).toBe("Return");
-  fireEvent.click(
-    screen.getByRole("button", { name: "Pro Preparation" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Pro Preparation" }));
   expect(
     screen.getByRole("button", { name: "Returning to school" }),
   ).toBeDisabled();

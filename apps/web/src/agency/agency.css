@@ -1073,3 +1073,92 @@ input {
   padding-top: 16px;
   border-top: 1px solid #ddd6c8;
 }
+.as-school-ratings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin: 10px 0;
+}
+.as-star-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.as-star-rating small {
+  font-size: 12px;
+}
+.as-star-rating > span {
+  font-size: 19px;
+  letter-spacing: 1px;
+  color: #85774d;
+  white-space: nowrap;
+}
+.as-star-rating b {
+  color: #876511;
+}
+.as-research-picker {
+  margin: 18px 0;
+}
+.as-research-picker label {
+  display: grid;
+  gap: 8px;
+  font-weight: 600;
+}
+.as-research-picker select {
+  max-width: 100%;
+  width: 100%;
+  min-width: 0;
+}
+.as-scouting-guide {
+  margin: 16px 0;
+}
+.as-scouting-guide summary {
+  padding: 8px 0;
+  cursor: pointer;
+  font-weight: 600;
+}
+.as-result-dialog {
+  box-sizing: border-box;
+  border: 1px solid #c9c5b6;
+  border-radius: 16px;
+  padding: 28px;
+  width: min(620px, calc(100vw - 24px));
+  max-height: 85dvh;
+  overflow: auto;
+  background: #faf8f0;
+  color: #213e36;
+  box-shadow: 0 20px 80px #102e3540;
+}
+.as-result-dialog::backdrop {
+  background: #12292199;
+}
+.as-result-dialog h2 {
+  font-size: 26px;
+  line-height: 1.2;
+  margin: 0 0 20px;
+}
+.as-result-dialog h3 {
+  font-size: 18px;
+  margin-top: 22px;
+}
+.as-result-dialog p {
+  font-size: 15px;
+  line-height: 1.6;
+}
+.as-result-dialog button {
+  min-height: 44px;
+  padding: 12px 22px;
+  font: inherit;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #234b3f;
+  color: #fff;
+}
+.as-result-dialog button:focus-visible {
+  outline: 3px solid #ac8135;
+  outline-offset: 3px;
+}
+.as-research-report {
+  line-height: 1.6;
+}
