@@ -1,3 +1,4 @@
+import { representedAgency } from "./testFixtures.js";
 import { describe, expect, it } from "vitest";
 import {
   advanceAgency,
@@ -17,13 +18,7 @@ import {
   type DevelopmentKind,
 } from "./growth.js";
 
-const signed = (seed = 42) =>
-  decideAgency(startAgency(seed), {
-    type: "pitch",
-    id: "2027-0",
-    promise: "Development",
-    fee: 15,
-  });
+const signed = representedAgency;
 const book = (s: State, kind: DevelopmentKind = "Skill", provider = 0) =>
   decideAgency(s, {
     type: "developmentPlan",

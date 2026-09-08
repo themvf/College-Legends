@@ -1,3 +1,4 @@
+import { representedAgency } from "./testFixtures.js";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { beforeEach, it, expect } from "vitest";
 import { AgencyGame } from "./AgencyGame.js";
@@ -10,11 +11,28 @@ function dismissResult() {
   const dialog=screen.queryByRole('dialog');
   if(dialog) fireEvent.click(within(dialog).getByRole('button',{name:'Continue'}));
 }
-function sendPitch(name:string, promise?:string) {
+function sendPitch(name:string, promise?:string,fee?:number) {
   fireEvent.click(screen.getByRole('button',{name:`Pitch ${name}`}));
   if(promise) fireEvent.change(screen.getByLabelText(`Promise to ${name}`),{target:{value:promise}});
+  if(fee) fireEvent.change(screen.getByLabelText('Your commercial commission'),{target:{value:fee}});
   fireEvent.click(screen.getByRole('button',{name:`Send pitch to ${name}`}));
 }
+it('automatically opens draft night and replay never deposits the payout again',()=>{
+  const s=representedAgency();s.week=15;
+  const p=s.players[0]!;p.schoolYear=4;p.careerPlan='Draft';p.ability=95;p.testing=4;p.interview=4;
+  localStorage.setItem(SAVE_KEY,JSON.stringify(s));
+  render(<AgencyGame/>);
+  fireEvent.click(screen.getByRole('button',{name:'Enter draft weekend →'}));
+  expect(screen.getByRole('dialog',{name:'Draft night'})).toBeInTheDocument();
+  const paid=JSON.parse(localStorage.getItem(SAVE_KEY)!);
+  expect(paid.players[0].status).toBe('Drafted');
+  fireEvent.click(screen.getByRole('button',{name:'Reveal Miles’s draft result'}));
+  expect(screen.getByText(/overall/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button',{name:'See the night’s full results'}));
+  fireEvent.click(screen.getByRole('button',{name:'Replay draft night'}));
+  fireEvent.click(screen.getByRole('button',{name:'Reveal Miles’s draft result'}));
+  expect(JSON.parse(localStorage.getItem(SAVE_KEY)!).money).toBe(paid.money);
+});
 it('sets promises inside each client pitch and does not charge for opening or cancelling',()=>{
   render(<AgencyGame/>);
   fireEvent.click(screen.getByRole('button',{name:'Meet the prospects ↗'}));
@@ -76,58 +94,27 @@ it("carries a renewed client's negotiated school agreement through payout and th
   expect(next.players[5]).toMatchObject({ school: agreement.school, season: 2028, owner: 'you', fee: 15 });
   expect(next.offseason.agreements[0].status).toBe('Paid');
 });
-it("keeps live money and prestige visible through development, navigation, and dialogs", () => {
-  const s = decideAgency(startAgency(42), {
-    type: "pitch",
-    id: "2027-0",
-    fee: 15,
-    promise: "Development",
-  });
-  localStorage.setItem(SAVE_KEY, JSON.stringify(s));
-  render(<AgencyGame />);
-  fireEvent.click(
-    screen.getByRole("button", { name: "Development" }),
-  );
-  const goals = within(
-    screen.getByRole("region", { name: "Money and prestige" }),
-  );
-  expect(goals.getByText("$98,000")).toBeInTheDocument();
-  expect(goals.getByText('/ 85 goal')).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Development specialist"), {
-    target: { value: "1" },
-  });
-  expect(
-    screen.getByRole("button", { name: "Book development · $4,500" }),
-  ).toBeDisabled();
-  fireEvent.change(screen.getByLabelText("Development specialist"), {
-    target: { value: "0" },
-  });
-  fireEvent.click(
-    screen.getByRole("button", { name: "Book development · $1,500" }),
-  );
-  expect(screen.getByRole("dialog")).toHaveTextContent("$96,500");
+it("shows a preparation commitment, the completed deliverable and updated offers", () => {
+  localStorage.setItem(SAVE_KEY,JSON.stringify(representedAgency()));
+  render(<AgencyGame/>);
+  fireEvent.click(screen.getByRole('button',{name:'Brand Studio'}));
+  expect(screen.queryByLabelText('Development specialist')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button',{name:'Review hire · $750'}));
+  expect(screen.getByRole('dialog')).toHaveTextContent('It does not sign a deal');
+  fireEvent.click(screen.getByRole('button',{name:'Confirm commitment'}));
+  expect(screen.getByRole('dialog',{name:'Preparation booked'})).toHaveTextContent('Week 1');
   dismissResult();
-  expect(goals.getByText("$96,500")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Advance to Week 1 →" }));
-  fireEvent.click(screen.getByRole("button", { name: "Advance to Week 2 →" }));
-  fireEvent.click(
-    screen.getByRole("button", { name: "Development" }),
-  );
-  expect(screen.getByText(/training added/)).toBeInTheDocument();
-  expect(
-    JSON.parse(localStorage.getItem(SAVE_KEY)!).growth.records[0].status,
-  ).toBe("Complete");
-  fireEvent.click(
-    screen.getByRole("button", { name: "View agency goals and unlocks" }),
-  );
-  const dialog = within(
-    screen.getByRole("dialog", { name: "Agency goals and unlocks" }),
-  );
-  expect(
-    dialog.getByRole("region", { name: "Money and prestige" }),
-  ).toHaveTextContent("$93,500");
-  expect(dialog.getByText(/Locked · 18 prestige/)).toBeInTheDocument();
+  expect(screen.getByRole('region',{name:'Money and prestige'})).toHaveTextContent('$97,250');
+  fireEvent.click(screen.getByRole('button',{name:'Advance to Week 1 →'}));
+  expect(screen.getByRole('dialog',{name:'Preparation delivered'})).toHaveTextContent('Photo portfolio delivered');
+  dismissResult();
+  fireEvent.click(screen.getByRole('button',{name:'Brand Studio'}));
+  expect(screen.getByText('✓ Photo portfolio delivered')).toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem(SAVE_KEY)!).players[0].brandKit).toEqual(['Styling']);
+  fireEvent.click(screen.getByRole('button',{name:'View agency goals and unlocks'}));
+  expect(within(screen.getByRole('dialog')).getByRole('region',{name:'Money and prestige'})).toHaveTextContent('$95,750');
 });
+
 it("lets a player finish a rival negotiation in the pitch dialog and persists the result", () => {
   render(<AgencyGame />);
   fireEvent.click(
@@ -159,12 +146,7 @@ it("lets a player finish a rival negotiation in the pitch dialog and persists th
   expect(screen.getByText("Recruiting results")).toBeInTheDocument();
 });
 it("exposes client decisions and season ambitions, and shows the response after a choice", () => {
-  let s = decideAgency(startAgency(42), {
-    type: "pitch",
-    id: "2027-0",
-    fee: 15,
-    promise: "Development",
-  });
+  let s = representedAgency();
   s = advanceAgency(advanceAgency(s));
   localStorage.setItem(SAVE_KEY, JSON.stringify(s));
   render(<AgencyGame />);
@@ -175,7 +157,7 @@ it("exposes client decisions and season ambitions, and shows the response after 
     screen.getByRole("progressbar", { name: "Miles Ellis season ambition" }),
   ).toBeInTheDocument();
   fireEvent.click(
-    screen.getByRole("button", { name: /Book position coaching/ }),
+    screen.getByRole("button", { name: /Build a sponsor portfolio/ }),
   );
   const saved = JSON.parse(localStorage.getItem(SAVE_KEY)!);
   expect(saved.money).toBe(s.money - 2000);
@@ -210,7 +192,7 @@ it("connects first client, deal, weekly recap and client box statistics", () => 
   fireEvent.click(
     screen.getByRole("button", { name: "Meet the prospects ↗" }),
   );
-  sendPitch("Miles Ellis");
+  sendPitch("Miles Ellis",undefined,10);
   expect(
     screen.getByRole("dialog", { name: "Miles Ellis signed" }),
   ).toBeInTheDocument();
@@ -224,7 +206,7 @@ it("connects first client, deal, weekly recap and client box statistics", () => 
     screen.getByRole("button", { name: "Review local endorsement" }),
   );
   const before=JSON.parse(localStorage.getItem(SAVE_KEY)!).money;
-  expect(screen.getByRole('dialog',{name:'Review Hometown Outfitters'})).toHaveTextContent('Campaign takes 2 weeks');
+  expect(screen.getByRole('dialog',{name:'Review Hometown Outfitters'})).toHaveTextContent('No signing charge. 2 weeks');
   expect(JSON.parse(localStorage.getItem(SAVE_KEY)!).money).toBe(before);
   fireEvent.click(screen.getByRole('button',{name:'Confirm commitment'}));
   expect(screen.getByRole('dialog',{name:'Deal signed'})).toHaveTextContent('Advance the week to deliver');
@@ -288,12 +270,7 @@ it("requires an explicit second click before replacing a saved agency", () => {
   ).not.toBeInTheDocument();
 });
 it("shows football context and persists the return decision from the existing client file", () => {
-  const s = decideAgency(startAgency(42), {
-    type: "pitch",
-    id: "2027-0",
-    promise: "Development",
-    fee: 15,
-  });
+  const s = representedAgency();
   s.week = 12;
   s.players[0]!.eligibility = 2;
   s.players[0]!.schoolYear = 4;

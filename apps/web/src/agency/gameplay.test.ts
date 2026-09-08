@@ -1,3 +1,4 @@
+import { representedAgency } from "./testFixtures.js";
 import { describe, expect, it } from "vitest";
 import {
   advanceAgency,
@@ -19,14 +20,7 @@ import {
   updateAmbitions,
 } from "./gameplay.js";
 
-function signed(seed = 42) {
-  return decideAgency(startAgency(seed), {
-    type: "pitch",
-    id: "2027-0",
-    promise: "Development",
-    fee: 15,
-  });
-}
+const signed = representedAgency;
 function through(s: State, week: number) {
   // Keep these story/eligibility fixtures represented; contested retention has its own suite.
   function retain() {
@@ -85,7 +79,7 @@ describe("client stories and ambitions", () => {
   });
   it("makes an achieved ambition memorable and awards only one referral and reward", () => {
     let s = signed();
-    s.players[0]!.ability = 70;
+    s.players[0]!.recognition = gameplay(s).ambitions[0]!.target;
     s = advanceAgency(s);
     const a = gameplay(s).ambitions[0]!;
     expect(a.completed).toBe(1);
@@ -316,7 +310,7 @@ describe("breakout sponsors", () => {
     const before = s.money,
       fatigue = p.fatigue;
     s = decideAgency(s, { type: "spotlightDeal", id: o.id, choice: "Light" });
-    expect(s.money).toBe(before - 500);
+    expect(s.money).toBe(before);
     expect(s.players[0]!.fatigue).toBe(fatigue + 4);
     expect(s.deals[0]).toMatchObject({
       gross: Math.round(o.gross * 0.6),
@@ -344,7 +338,7 @@ describe("breakout sponsors", () => {
     expect(full.deals[0]).toMatchObject({
       gross: o.gross,
       left: 2,
-      cost: 1000,
+      cost: 0,
     });
     expect(() =>
       decideAgency(full, {

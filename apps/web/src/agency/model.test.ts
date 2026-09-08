@@ -1,3 +1,4 @@
+import { representedAgency } from "./testFixtures.js";
 import { describe, it, expect } from "vitest";
 import {
   startAgency,
@@ -18,13 +19,7 @@ import {
   competitionReport,
   type State,
 } from "./model.js";
-const signed = (seed = 42) =>
-  decideAgency(startAgency(seed), {
-    type: "pitch",
-    id: "2027-0",
-    promise: "Development",
-    fee: 15,
-  });
+const signed = representedAgency;
 function through(s: State, week: number) {
   // These existing tests isolate draft/renewal economics from contested agency retention.
   // Real retention probabilities, losses and deadlines are covered in offseason.test.ts.
@@ -58,7 +53,7 @@ describe("agency career", () => {
     expect(scoutingLevel(old)).toBe(1);
   });
   it("persists accepted and declined pitch results and reports actual rival priorities", () => {
-    const accepted = signed();
+    const accepted = decideAgency(startAgency(42), {type:"pitch",id:"2027-0",promise:"Development",fee:10});
     expect(accepted.lastPitch).toMatchObject({
       accepted: true,
       cost: 2000,
@@ -213,7 +208,7 @@ describe("agency career", () => {
       advanceAgency(s),
     );
   });
-  it("starts with five distinct rivals and no clients; first matching overlooked pitch is accessible", () => {
+  it("starts with five distinct rivals and no clients; a lower commission can win an overlooked prospect", () => {
     const s = startAgency(42);
     expect(s.rivals.map((r) => r.tier)).toEqual([
       "Established leader",
@@ -224,7 +219,7 @@ describe("agency career", () => {
     ]);
     expect(clientList(s)).toHaveLength(0);
     expect(() => advanceAgency(s)).toThrow();
-    const n = signed();
+    const n = decideAgency(s,{type:"pitch",id:"2027-0",promise:"Development",fee:10});
     expect(clientList(n)).toHaveLength(1);
     expect(n.money).toBe(98000);
     expect(s.money).toBe(100000);
@@ -246,7 +241,7 @@ describe("agency career", () => {
       performance: false,
     });
     const deal = s.deals[0]!;
-    expect(s.money).toBe(97200);
+    expect(s.money).toBe(98000);
     s = through(s, 2);
     expect(
       s.ledger.filter((l) => l.kind === "Commission").map((l) => l.amount),

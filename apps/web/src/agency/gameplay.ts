@@ -1,3 +1,5 @@
+import { activeDevelopment } from './growth.js';
+import { commercialService } from './commercial.js';
 import {
   cash,
   collegeClients,
@@ -150,6 +152,11 @@ export function initializeGameplay(s: State) {
     }
   }
   for (const p of collegeClients(s)) assignAmbition(s, p);
+  // Retire unfinished coach-style goals in older saves while keeping achieved history.
+  for (const a of g.ambitions.filter(a=>a.kind==='Growth'&&a.completed===undefined)) {
+    const p=s.players.find(p=>p.id===a.player);
+    if(p){a.kind='Profile';a.baseline=p.recognition;a.target=Math.min(100,p.recognition+15);}
+  }
 }
 export function assignAmbition(s: State, p: Athlete) {
   const g = gameplay(s);
@@ -159,11 +166,8 @@ export function assignAmbition(s: State, p: Athlete) {
       ? "Income"
       : p.want === "Visibility" && p.recognition < 99
         ? "Profile"
-        : depth(p).rank > 1 || p.ceiling - p.ability < 1
-          ? "Starter"
-          : "Growth";
-  const baseline =
-    kind === "Growth" ? p.ability : kind === "Profile" ? p.recognition : 0;
+        : p.recognition < 99 ? "Profile" : "Income";
+  const baseline = kind === "Profile" ? p.recognition : 0;
   g.ambitions.push({
     id: `${p.id}-goal-${s.year}`,
     player: p.id,
@@ -171,9 +175,7 @@ export function assignAmbition(s: State, p: Athlete) {
     kind,
     baseline,
     target:
-      kind === "Growth"
-        ? Math.min(p.ceiling, p.ability + 3)
-        : kind === "Profile"
+      kind === "Profile"
           ? Math.min(100, p.recognition + 15)
           : kind === "Income"
             ? 15000
@@ -281,12 +283,7 @@ export function beginNegotiation(
   promise: Want,
   fee: number,
 ) {
-  const friendlyFirst =
-    collegeClients(s).length === 0 &&
-    p.ability <= 72 &&
-    promise === p.want &&
-    !p.id.startsWith("hs-");
-  if (friendlyFirst || p.ability < 73) return false;
+  if (p.ability < 73) return false;
   const rival = [...s.rivals]
     .filter(
       (r) =>
@@ -419,7 +416,7 @@ export function requestText(r: ClientRequest) {
     ? "I am feeling the workload. Can we make room to recover?"
     : r.kind === "Income"
       ? "I need this season to bring in money. Can you help me become ready for a sponsor?"
-      : "I want a bigger role. Can we work on my game, or plan for a stronger school next year?";
+      : "I want better commercial opportunities. Can we improve my presentation or review next season’s school options?";
 }
 export function requestOptions(r: ClientRequest, p?: Athlete) {
   return r.kind === "Workload"
@@ -462,9 +459,9 @@ export function requestOptions(r: ClientRequest, p?: Athlete) {
         ]
       : [
           {
-            label: "Book position coaching",
+            label: "Build a sponsor portfolio",
             detail:
-              "$2,000 · ability +1 (up to potential), fatigue +6, trust +6",
+              "$2,000 · public profile +6, fatigue +6, trust +6; no guaranteed deal",
             cost: 2000,
           },
           {
@@ -549,8 +546,8 @@ export function storyAction(s: State, a: GameplayAction) {
       p.trust = limit(p.trust + [6, 3, -2][a.choice]!);
       p.fatigue = limit(p.fatigue + [6, 0, -4][a.choice]!);
       if (a.choice === 0) {
-        p.ability = Math.min(p.ceiling, p.ability + 1);
-        if (p.promise === "Development") p.delivered = true;
+        p.recognition = limit(p.recognition + 6);
+        // A quick portfolio consultation does not replace the promised completed brand project.
       }
       if (a.choice === 1) {
         p.recognition = limit(p.recognition + 3);
@@ -590,9 +587,9 @@ export function storyAction(s: State, a: GameplayAction) {
     throw Error(
       "Finish this client's active campaign before accepting another.",
     );
+  if (activeDevelopment(s).some(r=>r.player===p.id&&commercialService(r.kind))) throw Error('Finish brand preparation before signing a campaign.');
   const light = a.choice === "Light",
-    cost = light ? 500 : 1000;
-  pay(s, `${p.name} · Saturday Spotlight activation`, cost);
+    cost = 0; // Sponsor pays its production costs.
   s.deals.push({
     id: o.id,
     player: p.id,
@@ -629,7 +626,7 @@ export function weeklyGameplay(s: State) {
           ? `The recovery check: fatigue is now ${Math.round(p.fatigue)}; ${p.fatigue > 55 ? "workload still limits snaps" : "fatigue is not limiting snaps"}.`
           : r.kind === "Income"
             ? `Sponsor check: public profile ${Math.round(p.recognition)}; ${s.deals.some((d) => d.player === p.id && d.year === s.year) ? "a campaign is on the books" : "you still need to secure a campaign"}.`
-            : `Football check: ${depth(p).role} at ${teams[p.school]}; ability ${Math.round(p.ability)}. ${r.choice === 1 ? "A school move remains a preseason decision, with eligibility and playing time to consider." : "Coaches set the depth chart; representation cannot guarantee starts."}`;
+            : `Football check: ${depth(p).role} at ${teams[p.school]}; ability ${Math.round(p.ability)}. ${r.choice === 1 ? "Compare school offers in the offseason, with eligibility and playing time to consider." : "Coaches set the depth chart; representation cannot guarantee starts."}`;
       s.news.push(`${p.name} follows up: ${r.followup}`);
     }
   }

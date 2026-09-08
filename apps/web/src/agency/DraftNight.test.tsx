@@ -1,0 +1,20 @@
+import {render,screen,fireEvent} from '@testing-library/react';
+import {it,expect,vi} from 'vitest';
+import {DraftNight} from './DraftNight.js';
+it('reveals each client separately and gives the undrafted player a next action',()=>{
+  const finish=vi.fn(),followUp=vi.fn();
+  render(<DraftNight entries={[{id:'one',name:'Caleb Banks',position:'QB',pick:12},{id:'two',name:'Owen Hill',position:'HB',pick:null}]} finish={finish} followUp={followUp}/>);
+  expect(screen.queryByText(/Round 1/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button',{name:'Reveal Caleb’s draft result'}));
+  expect(screen.getByText('Round 1 · Pick 12 overall')).toBeInTheDocument();
+  expect(screen.getByText('+$350,000')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button',{name:'Next client’s draft result'}));
+  expect(screen.queryByText(/Round 1/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button',{name:'Reveal Owen’s draft result'}));
+  expect(screen.getByText('No selection this time')).toBeInTheDocument();
+  expect(screen.getByText(/open Pro Preparation/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button',{name:'Arrange team outreach'}));
+  expect(followUp).toHaveBeenCalledWith('two');
+  fireEvent.click(screen.getByRole('button',{name:'See the night’s full results'}));
+  expect(finish).toHaveBeenCalledOnce();
+});

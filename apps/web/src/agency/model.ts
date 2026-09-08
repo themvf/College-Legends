@@ -31,6 +31,7 @@ import {
   type GameplayState,
   type GameplayAction,
 } from "./gameplay.js";
+import { commercialPremium, commercialService, type CommercialKind } from "./commercial.js";
 export const SAVE_KEY = "football-agent-sim-v1";
 export const cash = (n: number) =>
   n.toLocaleString("en-US", {
@@ -56,6 +57,7 @@ export type Box = {
   points: number;
 };
 export type Athlete = {
+  brandKit?: CommercialKind[];
   schoolYear: number;
   eligibility: number;
   careerPlan: "Draft" | "Return";
@@ -234,7 +236,7 @@ export const brands = [
   {
     name: "Hometown Outfitters",
     type: "Local endorsement",
-    cost: 800,
+    cost: 0,
     base: 16000,
     weeks: 2,
     min: 0,
@@ -243,7 +245,7 @@ export const brands = [
   {
     name: "Sideline Stories",
     type: "Media & podcast series",
-    cost: 2000,
+    cost: 0,
     base: 32000,
     weeks: 3,
     min: 22,
@@ -252,7 +254,7 @@ export const brands = [
   {
     name: "Saturday Signature",
     type: "Licensed merchandise",
-    cost: 5000,
+    cost: 0,
     base: 60000,
     weeks: 4,
     min: 38,
@@ -324,17 +326,17 @@ export const conferenceStrength = (school: number) => {
 };
 export const priorities = {
   Development: {
-    label: "Improve my game",
+    label: "Build my brand",
     description:
-      "Arrange specialist training and support. Coaches do the coaching; you coordinate the help.",
-    service: "Complete a technique training session.",
+      "Build a sponsor-ready portfolio, social content or press presence.",
+    service: "Complete a stylist, social media or press project.",
   },
   Visibility: {
     label: "Build my name",
     description:
       "Arrange media work and brand opportunities to grow public awareness.",
     service:
-      "Start a commercial campaign or complete a media training session.",
+      "Start a sponsor campaign or complete social media or press preparation.",
   },
   Security: {
     label: "Earn NIL income",
@@ -453,6 +455,7 @@ export function dealValue(p: Athlete, kind: number, performance = false) {
       (0.8 + p.recognition / 100) *
       market *
       opportunity *
+      (1 + commercialPremium(p, kind)) *
       (performance ? 0.7 : 1),
   );
 }
@@ -646,15 +649,15 @@ export const draftPayout = (pick: number) =>
   ]!;
 export function fit(s: State, p: Athlete, promise: Want, fee: number) {
   return clamp(
-    68 +
+    44 +
       recruitingBonus(s, p) +
-      (promise === p.want ? 22 : 0) +
-      (15 - fee) * 3 +
+      (promise === p.want ? 18 : 0) +
+      (15 - fee) * 2 +
       (s.reputation - 10) * 0.4 -
       Math.max(0, p.ability - 75) * 4 -
       Math.max(0, schools[p.school]!.prestige - 70) * 0.3,
     8,
-    96,
+    85,
   );
 }
 export function prepCost(level: number, travel: boolean, recovery: boolean) {
@@ -805,12 +808,7 @@ function decision(current: State, a: Action): State {
     if (beginNegotiation(s, p, a.promise, a.fee)) return s;
     const chance = fit(s, p, a.promise, a.fee);
     const competition = competitionReport(s, p);
-    const accepted =
-      (collegeClients(s).length === 0 &&
-        !p.id.startsWith("hs-") &&
-        p.ability <= 72 &&
-        a.promise === p.want) ||
-      roll(s.seed, `${p.id}pitch${s.week}`) * 100 < chance;
+    const accepted = roll(s.seed, `${p.id}pitch${s.week}`) * 100 < chance;
     if (accepted) {
       spend(s, `${p.name} · onboarding and service setup`, 1500);
       p.owner = "you";
@@ -965,7 +963,9 @@ function decision(current: State, a: Action): State {
       throw Error(
         "Finish the existing campaign before adding another obligation.",
       );
-    spend(s, `${p.name} · ${b.name} activation`, b.cost);
+    if (activeDevelopment(s).some(r=>r.player===p.id&&commercialService(r.kind)))
+      throw Error('Finish brand preparation before signing a campaign.');
+    // Brands fund campaign delivery; optional agency preparation is purchased separately.
     const gross = dealValue(p, a.kind, a.performance);
     s.deals.push({
       id: `${p.id}-${s.year}-${a.kind}`,
@@ -1291,7 +1291,7 @@ export function advanceAgency(current: State): State {
   initializeGrowth(s);
   active(s);
   initializeOffseason(s);
-  if (s.week === 0 && !collegeClients(s).length)
+    if (s.week === 0 && !collegeClients(s).length && !s.lastPitch)
     throw Error("Sign your first client before advancing.");
   if (s.week === 18) {
     const next = nextYear(s);
@@ -1769,7 +1769,7 @@ export function restore(raw: string | null): State | null {
           (r) =>
             r &&
             s.players.some((p) => p.id === r.player) &&
-            ["Skill", "Media", "Recovery", "Mentor"].includes(r.kind) &&
+            ["Skill", "Media", "Recovery", "Mentor", "Styling", "Social", "Press"].includes(r.kind) &&
             ["Active", "Complete"].includes(r.status) &&
             [0, 1, 2].includes(r.skill) &&
             [0, 1, 2].includes(r.provider) &&
@@ -1784,6 +1784,7 @@ export function restore(raw: string | null): State | null {
         ))
     )
       return null;
+    if (s.players.some(p => p.brandKit !== undefined && (!Array.isArray(p.brandKit) || new Set(p.brandKit).size !== p.brandKit.length || p.brandKit.some(k => !['Styling','Social','Press'].includes(k))))) return null;
     initializeGrowth(s);
     if (!validOffseason(s)) return null;
     initializeOffseason(s);

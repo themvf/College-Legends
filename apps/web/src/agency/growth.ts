@@ -1,14 +1,15 @@
+import { commercialService, preparedPlayer, type CommercialKind } from "./commercial.js";
 import { cash, depth, roll, type Athlete, type State } from "./model.js";
 
 export const agencyGoal = { money: 1000000, prestige: 85 };
 export const prestigeTiers = [
-  { at: 0, name: "Unknown", unlock: "Local development and commercial work" },
+  { at: 0, name: "Unknown", unlock: "Local deals and brand preparation" },
   {
     at: 18,
     name: "Local name",
-    unlock: "Targeted specialists and client service hires",
+    unlock: "Client service hires",
   },
-  { at: 40, name: "Regional contender", unlock: "Elite development team" },
+  { at: 40, name: "Regional contender", unlock: "Regional agency recognition" },
   {
     at: 65,
     name: "National agency",
@@ -32,7 +33,7 @@ const skillNames = {
   EDGE: ["Pass-rush technique", "Run defense", "Pursuit"],
   FS: ["Coverage", "Tackling", "Reading plays"],
 };
-export type DevelopmentKind = "Skill" | "Media" | "Recovery" | "Mentor";
+export type DevelopmentKind = "Skill" | "Media" | "Recovery" | "Mentor" | CommercialKind;
 type Snapshot = {
   ability: number;
   recognition: number;
@@ -199,6 +200,8 @@ export function developmentQuote(
   skill: number,
   provider: number,
 ) {
+  const commercial = commercialService(kind);
+  if (commercial) return {cost:commercial.cost,weeks:commercial.weeks,maxSkill:0,detail:commercial.fit};
   const pro = providers[provider] ?? providers[0]!;
   const values = playerSkills(s, p);
   const target = values[skill] ?? values[0]!;
@@ -231,7 +234,7 @@ export function bookDevelopment(s: State, a: DevelopmentAction) {
   if (!p || p.owner !== "you" || p.status !== "College")
     throw Error("Choose a current college client.");
   if (
-    !["Skill", "Media", "Recovery", "Mentor"].includes(a.kind) ||
+    !["Skill", "Media", "Recovery", "Mentor", "Styling", "Social", "Press"].includes(a.kind) ||
     !Number.isInteger(a.skill) ||
     a.skill < 0 ||
     a.skill > 2 ||
@@ -247,6 +250,9 @@ export function bookDevelopment(s: State, a: DevelopmentAction) {
     throw Error(
       "This client is injured. Arrange recovery support or wait for their return before skill training.",
     );
+  const commercial = commercialService(a.kind);
+  if (commercial && p.brandKit?.includes(commercial.kind)) throw Error('This client already has this preparation.');
+  if (commercial && s.deals.some(d=>d.player===p.id&&d.status==='Active')) throw Error('Deliver the active campaign before scheduling preparation.');
   const quote = developmentQuote(s, p, a.kind, a.skill, a.provider);
   if (s.week + quote.weeks > 12)
     throw Error("Development must finish by Week 12.");
@@ -263,7 +269,7 @@ export function bookDevelopment(s: State, a: DevelopmentAction) {
   if (s.money < quote.cost)
     throw Error("Not enough agency cash for this plan.");
   s.money -= quote.cost;
-  const label = a.kind === "Skill" ? playerSkills(s, p)[a.skill]!.name : a.kind;
+  const label = commercial?.name ?? (a.kind === "Skill" ? playerSkills(s, p)[a.skill]!.name : a.kind);
   s.ledger.push({
     year: s.year,
     week: s.week,
@@ -292,6 +298,8 @@ export function bookDevelopment(s: State, a: DevelopmentAction) {
 export function resolveDevelopment(s: State) {
   for (const r of activeDevelopment(s)) {
     const p = s.players.find((p) => p.id === r.player)!;
+    const commercial= commercialService(r.kind);
+    if (commercial) p.fatigue=limit(p.fatigue+commercial.hours);
     if (r.kind === "Skill") {
       if (p.injury && s.week <= p.injury.throughWeek) r.missed++;
       else p.fatigue = limit(p.fatigue + 3);
@@ -299,7 +307,13 @@ export function resolveDevelopment(s: State) {
     if (s.week < r.due) continue;
     const chance = roll(s.seed, `${r.id}-development-result`);
     const skills = playerSkills(s, p);
-    if (r.kind === "Skill") {
+    if (commercial) {
+      const prepared=preparedPlayer(p,commercial.kind);
+      p.brandKit=prepared.brandKit!;
+      p.recognition=prepared.recognition;
+      r.result=`${commercial.result}. ${commercial.fit} Future quotes updated; existing contracts unchanged.`;
+      if (p.promise==='Development'||p.promise==='Visibility'&&commercial.profile>0) p.delivered=true;
+    } else if (r.kind === "Skill") {
       const quote = developmentQuote(s, p, r.kind, r.skill, r.provider);
       const ceilingRoom = Math.max(0, p.ceiling - p.ability) * 3;
       const attendance = Math.max(0, 1 - r.missed / (r.due - r.week));
@@ -338,6 +352,6 @@ export function resolveDevelopment(s: State) {
     }
     r.status = "Complete";
     r.after = snapshot(p);
-    s.news.push(`${p.name} completed development: ${r.result}`);
+    s.news.push(`${p.name} completed ${commercial ? "brand preparation" : "development"}: ${r.result}`);
   }
 }

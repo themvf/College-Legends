@@ -1520,3 +1520,14 @@ input {
 .as-app .as-school-offer .as-primary { width: 100%; }
 .as-app .as-offseason > progress { max-width: none; width: 100%; height: 5px; }
 .as-app .as-offseason > .as-panel { margin-top: 16px; }
+.as-prep-comparison {display:grid;gap:12px;margin:20px 0}
+.as-prep-comparison>div {display:grid;gap:5px;padding:14px;background:var(--as-paper,#f2f1e7);border-radius:10px}
+.as-prep-comparison strong {font-size:20px}
+.as-draft-night {text-align:center;padding:8px 0 22px}
+.as-draft-emblem {padding:30px 12px;margin:20px 0;border:2px solid #bca46e;border-radius:16px;background:#173a32;color:#eedcae;font-size:25px;font-weight:800;letter-spacing:2px}
+.as-draft-selected .as-draft-emblem {background:linear-gradient(130deg,#173a32,#3d6958,#173a32);box-shadow:0 0 32px #c7a65d60;animation:as-draft-arrival .5s ease-out}
+.as-draft-pick {display:block;font-size:28px}
+.as-draft-payout {margin:20px 0;padding:22px 12px;border-radius:12px;background:#e7ecd7;color:#173a32;font-size:38px;font-weight:800}
+.as-draft-payout small {display:block;margin-top:8px;font-weight:400}
+@keyframes as-draft-arrival {from{transform:scale(.9);opacity:.3}to{transform:scale(1);opacity:1}}
+@media(prefers-reduced-motion:reduce){.as-draft-selected .as-draft-emblem {animation:none}}

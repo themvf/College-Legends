@@ -1,3 +1,5 @@
+import { activeDevelopment } from "./growth.js";
+import { commercialService } from "./commercial.js";
 import { useState } from "react";
 import {
   cash,
@@ -328,9 +330,7 @@ export function SpotlightOffers({ s, update }: Props) {
       <div className="as-grid">
         {open.map((o) => {
           const p = s.players.find((p) => p.id === o.player)!;
-          const busy = s.deals.some(
-            (d) => d.player === p.id && d.status === "Active",
-          );
+          const busy = s.deals.some(d=>d.player===p.id&&d.status==='Active') || activeDevelopment(s).some(r=>r.player===p.id&&commercialService(r.kind));
           return (
             <article className="as-panel as-story-card" key={o.id}>
               <span className="as-eyebrow">
@@ -344,7 +344,7 @@ export function SpotlightOffers({ s, update }: Props) {
               <p>
                 Current fatigue: {Math.round(p.fatigue)}.
                 {busy
-                  ? " Finish the active campaign before taking another."
+                  ? " Finish the current campaign or preparation before taking another."
                   : " Choose how much time to commit."}
               </p>
               <div className="as-choice-list">
@@ -352,7 +352,7 @@ export function SpotlightOffers({ s, update }: Props) {
                   const gross = Math.round(
                       o.gross * (choice === "Light" ? 0.6 : 1),
                     ),
-                    cost = choice === "Light" ? 500 : 1000;
+                    cost = 0;
                   const commission = Math.round((gross * p.fee) / 100);
                   return (
                     <button
@@ -377,7 +377,7 @@ export function SpotlightOffers({ s, update }: Props) {
                         {choice === "Light"
                           ? "1 week · +4 fatigue"
                           : "2 weeks · +14 fatigue"}{" "}
-                        · activation {cash(cost)}. Client keeps{" "}
+                        · sponsor funds production. Client keeps{" "}
                         {cash(gross - commission)}; agency commission{" "}
                         {cash(commission)}, margin {cash(commission - cost)}.
                       </small>

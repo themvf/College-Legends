@@ -98,13 +98,12 @@ export function AgencyGoals({
           {s.loan
             ? " after reserving $44,800 for the bridge repayment."
             : "."}{" "}
-          Scouting and development use your agency cash; client contract totals
+          Scouting and brand preparation use your agency cash; client contract totals
           are not your income.
         </p>
         <p>
           Delivered contracts earn 2 prestige below $50,000, 6 at $50,000+, or
-          10 at $100,000+. A client who gains at least 3 ability from targeted
-          training and then records an 18-point game earns 5 prestige once.
+          10 at $100,000+.
           Season ambitions, honors and draft success also build prestige.
         </p>
         <p className="as-fine">
