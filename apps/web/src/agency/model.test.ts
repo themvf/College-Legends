@@ -72,7 +72,8 @@ describe("agency career", () => {
       )
       .find((x) => !x.lastPitch!.accepted)!;
     expect(declined.lastPitch).toMatchObject({ accepted: false, cost: 500 });
-    expect(declined.lastPitch!.message).toMatch(/Revisit next week/);
+    expect(declined.lastPitch).toMatchObject({ pending: true });
+    expect(declined.lastPitch!.message).toMatch(/Counter by the end of Week 1/);
     expect(restore(JSON.stringify(declined))!.lastPitch).toEqual(
       declined.lastPitch,
     );
@@ -187,7 +188,7 @@ describe("agency career", () => {
     expect(s.recaps.find((r) => r.week === 1 && r.year === 2027)).toEqual(
       oldRecap,
     );
-    expect(s.players.filter((p) => p.season === 2028)).toHaveLength(80);
+    expect(s.players.filter((p) => p.season === 2028)).toHaveLength(83);
     s = decideAgency(s, {
       type: "deal",
       id: "2027-0",
@@ -378,7 +379,7 @@ describe("agency career", () => {
     expect(s.week).toBe(0);
     expect(s.money).toBe(before + 22000);
     expect(clientList(s)[0]!.status).toBe("Pro");
-    expect(s.players.filter((p) => p.season === 2028)).toHaveLength(80);
+    expect(s.players.filter((p) => p.season === 2028)).toHaveLength(83);
   });
   it("offers signed, tryout and unsigned paths, with paid outreach improving signing odds", () => {
     const outcomes = new Set<string>();

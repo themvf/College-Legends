@@ -46,6 +46,16 @@ import {
   type Prep,
 } from "./model.js";
 import { Office } from "./Office.js";
+import { pendingNegotiation, recruitingBonus } from "./gameplay.js";
+import {
+  DecisionDesk,
+  ClientRequests,
+  ClientAmbitions,
+  CounterOffer,
+  RecruitingContests,
+  SpotlightOffers,
+  SeniorWatchlist,
+} from "./GameplayPanels.js";
 import "./agency.css";
 const sections = [
   "Agency",
@@ -198,6 +208,12 @@ function ResultDialog({
       if (previous?.isConnected) previous.focus();
     };
   }, []);
+  useEffect(() => {
+    ref.current
+      ?.querySelector<HTMLElement>("h2")
+      ?.focus({ preventScroll: true });
+    if (ref.current) ref.current.scrollTop = 0;
+  }, [title]);
   return (
     <dialog
       ref={ref}
@@ -380,6 +396,7 @@ function SchoolChoices({
           Choose after Week 12, before Pro Days. Returning uses one season of
           eligibility and retains a client place. A booked Pro Day package
           commits the draft path.
+          {p.schoolYear < 3 && " In this demo, the draft path opens in Year 3."}
         </p>
         <div className="as-buttons">
           <button
@@ -399,7 +416,7 @@ function SchoolChoices({
           </button>
           <button
             aria-pressed={p.careerPlan === "Draft"}
-            disabled={s.week < 12 || s.week > 14}
+            disabled={s.week < 12 || s.week > 14 || p.schoolYear < 3}
             onClick={() =>
               update(
                 (x) =>
@@ -458,7 +475,9 @@ export function AgencyGame() {
     targets = (
       expanded
         ? available
-        : available.filter((p) => Number(p.id.split("-")[1]) < 12)
+        : available.filter(
+            (p) => Number(p.id.split("-")[1]) < 12 || p.id.startsWith("hs-"),
+          )
     ).sort((a, b) => a.ability - b.ability),
     recap = s.recaps[recapIndex];
   function update(fn: (s: State) => State, msg = "") {
@@ -523,6 +542,12 @@ export function AgencyGame() {
         </div>
       </div>
       {p.status === "College" && <FootballProfile p={p} week={s.week} />}
+      {prospect && recruitingBonus(s, p) > 0 && (
+        <p className="as-referral">
+          A relationship already exists · +{recruitingBonus(s, p)} recruiting
+          interest from familiarity or a referral.
+        </p>
+      )}
       <div className="as-metrics">
         <div>
           <b>{Math.round(p.ability)}</b>
@@ -552,8 +577,8 @@ export function AgencyGame() {
       {prospect ? (
         <>
           <p className="as-fine">
-            {Math.round(fit(s, p, promise, fee))}% estimated interest in this
-            offer. Rivals are also recruiting.
+            {Math.round(fit(s, p, promise, fee))}% estimated initial interest. A
+            rival offer may lead to a final counter.
           </p>
           <div className="as-buttons">
             <button
@@ -585,6 +610,7 @@ export function AgencyGame() {
               disabled={
                 s.week > 6 ||
                 college.length >= 4 + s.staff ||
+                !!pendingNegotiation(s, p.id) ||
                 p.approached === s.week
               }
               onClick={() => {
@@ -644,19 +670,36 @@ export function AgencyGame() {
                   ? `${player.name} · Scouting report`
                   : result?.accepted
                     ? `${player.name} signed`
-                    : `${player.name} · Pitch declined`
+                    : result?.pending
+                      ? `${player.name} · Final offer requested`
+                      : `${player.name} · Pitch result`
               }
               close={() => setOverlay(null)}
             >
               {overlay.kind === "scout" ? (
                 <ScoutingReport p={player} s={s} />
+              ) : pendingNegotiation(s, player.id) ? (
+                <>
+                  <p>
+                    Meeting completed · $500 spent. Choose your final offer now
+                    or return to Scouting before the deadline.
+                  </p>
+                  <CounterOffer
+                    key={pendingNegotiation(s, player.id)!.id}
+                    n={pendingNegotiation(s, player.id)!}
+                    s={s}
+                    update={update}
+                  />
+                </>
               ) : (
                 <>
                   <p>{result?.message}</p>
                   <p>
                     <strong>Agency spent {cash(result?.cost ?? 0)}</strong> ·{" "}
                     {result?.accepted
-                      ? "$500 meeting + $1,500 setup"
+                      ? result.cost > 2000
+                        ? "$500 meeting + $1,500 setup + $2,500 dedicated session"
+                        : "$500 meeting + $1,500 setup"
                       : "$500 meeting; no setup charged"}
                   </p>
                   <h3>Rival position</h3>
@@ -664,7 +707,9 @@ export function AgencyGame() {
                   <p>
                     {result?.accepted
                       ? "Next: open the client file and arrange the promised service."
-                      : "Next: review the player's priority and your service offer before trying again."}
+                      : result?.pending
+                        ? "Choose your final offer below, or return to Scouting before the deadline."
+                        : "Review the result and recruit another prospect, or revisit an available player next week."}
                   </p>
                 </>
               )}
@@ -756,6 +801,7 @@ export function AgencyGame() {
               then start a new agency below.
             </div>
           )}
+          <DecisionDesk s={s} go={go} />
           {tab === "Agency" && (
             <>
               <div className="as-hero-heading">
@@ -854,6 +900,7 @@ export function AgencyGame() {
                   </button>
                 </section>
               </div>
+              <ClientRequests s={s} update={update} />
               {clients.length > 0 && (
                 <>
                   <div className="as-section-title">
@@ -871,6 +918,12 @@ export function AgencyGame() {
           )}
           {tab === "Scouting" && (
             <>
+              <RecruitingContests
+                s={s}
+                update={update}
+                onResolved={(id) => setOverlay({ kind: "pitch", id })}
+              />
+              <SeniorWatchlist s={s} update={update} />
               <div className="as-page-intro">
                 <span className="as-eyebrow">
                   A GOOD EYE IS YOUR FIRST ADVANTAGE
@@ -1012,6 +1065,7 @@ export function AgencyGame() {
           )}
           {tab === "Clients" && (
             <>
+              <ClientRequests s={s} update={update} />
               {s.players.some(
                 (p) => p.representedByYou && p.status === "Departed",
               ) && (
@@ -1090,6 +1144,7 @@ export function AgencyGame() {
                     s={s}
                     update={update}
                   />
+                  <ClientAmbitions s={s} p={chosen} />
                   <div className="as-two">
                     <section className="as-panel">
                       <h3>The next step</h3>
@@ -1375,6 +1430,7 @@ export function AgencyGame() {
           )}
           {tab === "Deals" && (
             <>
+              <SpotlightOffers s={s} update={update} />
               <div className="as-page-intro">
                 <span className="as-eyebrow">
                   GOOD REPRESENTATION IS GOOD BUSINESS

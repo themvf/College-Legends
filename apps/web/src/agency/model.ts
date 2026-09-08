@@ -5,6 +5,21 @@ import {
   type Position,
 } from "../new-game/core.js";
 export { teams };
+import {
+  initializeGameplay,
+  assignAmbition,
+  updateAmbitions,
+  recruitingBonus,
+  pendingNegotiation,
+  beginNegotiation,
+  reservedPlaces,
+  resolveRecruitingDeadlines,
+  storyAction,
+  weeklyGameplay,
+  graduateSeniors,
+  type GameplayState,
+  type GameplayAction,
+} from "./gameplay.js";
 export const SAVE_KEY = "football-agent-sim-v1";
 export const cash = (n: number) =>
   n.toLocaleString("en-US", {
@@ -142,7 +157,9 @@ export type Recap = {
   balance: number;
 };
 export type State = {
+  gameplay?: GameplayState;
   lastPitch?: {
+    pending?: boolean;
     player: string;
     accepted: boolean;
     message: string;
@@ -360,6 +377,7 @@ function rivalProspects(s: State, r: Rival) {
         p.season === s.year &&
         p.status === "College" &&
         !p.owner &&
+        !pendingNegotiation(s, p.id) &&
         p.ability < 68 + r.reputation * 0.3,
     )
     .sort(
@@ -370,6 +388,9 @@ function rivalProspects(s: State, r: Rival) {
     );
 }
 export function competitionReport(s: State, p: Athlete) {
+  const negotiation = pendingNegotiation(s, p.id);
+  if (negotiation)
+    return `${s.rivals.find((r) => r.id === negotiation.rival)!.name} has made a firm offer. Submit your final counter in Scouting by the end of Week ${negotiation.deadline}.`;
   if (p.owner === "you")
     return "Signed with your agency. Rivals cannot take this client during the current agreement.";
   if (p.owner)
@@ -378,7 +399,8 @@ export function competitionReport(s: State, p: Athlete) {
     (r) =>
       s.week < 6 &&
       r.cash > 8000 &&
-      s.players.filter((q) => q.owner === r.id && q.season === s.year).length <
+      s.players.filter((q) => q.owner === r.id && q.season === s.year).length +
+        reservedPlaces(s, r.id) <
         r.capacity &&
       rivalProspects(s, r)[0]?.id === p.id,
   );
@@ -562,6 +584,7 @@ export function startAgency(seed = Date.now()): State {
       .sort((a, b) => b.ability - a.ability);
     for (const p of available.slice(0, i < 2 ? 3 : 2)) p.owner = r.id;
   }
+  initializeGameplay(s);
   return s;
 }
 export function standings(s: State) {
@@ -608,6 +631,7 @@ export const draftPayout = (pick: number) =>
 export function fit(s: State, p: Athlete, promise: Want, fee: number) {
   return clamp(
     68 +
+      recruitingBonus(s, p) +
       (promise === p.want ? 22 : 0) +
       (15 - fee) * 3 +
       (s.reputation - 10) * 0.4 -
@@ -641,6 +665,7 @@ function active(s: State) {
     throw Error("The agency has closed. Start a new career to try again.");
 }
 export type Action =
+  | GameplayAction
   | { type: "career"; id: string; plan: Athlete["careerPlan"] }
   | { type: "transfer"; id: string; school: number }
   | { type: "scout"; id: string; level?: number }
@@ -669,8 +694,25 @@ export type Action =
   | { type: "loan" }
   | { type: "support"; id: string };
 export function decideAgency(current: State, a: Action): State {
+  const s = decision(current, a);
+  updateAmbitions(s);
+  return s;
+}
+function decision(current: State, a: Action): State {
   const s = structuredClone(current);
   active(s);
+  initializeGameplay(s);
+  if (
+    a.type === "request" ||
+    a.type === "counter" ||
+    a.type === "walkAway" ||
+    a.type === "spotlightDeal" ||
+    a.type === "watchSenior" ||
+    a.type === "researchSenior"
+  ) {
+    storyAction(s, a);
+    return s;
+  }
   if (a.type === "loan") {
     if (s.loan)
       throw Error(
@@ -713,6 +755,10 @@ export function decideAgency(current: State, a: Action): State {
     return s;
   }
   if (a.type === "pitch") {
+    if (pendingNegotiation(s, p.id))
+      throw Error(
+        "A final offer is already pending. Resolve the negotiation in Scouting.",
+      );
     if (p.owner || p.status !== "College" || p.season !== s.year || s.week > 6)
       throw Error(
         "This player is unavailable. Recruitment closes after Week 6.",
@@ -723,12 +769,16 @@ export function decideAgency(current: State, a: Action): State {
       throw Error("The player will reconsider next week.");
     if (![10, 15, 20].includes(a.fee))
       throw Error("Choose an available commission rate.");
+    if (!priorities[a.promise])
+      throw Error("Choose an available service promise.");
     spend(s, `${p.name} · representation meeting`, 500);
     p.approached = s.week;
+    if (beginNegotiation(s, p, a.promise, a.fee)) return s;
     const chance = fit(s, p, a.promise, a.fee);
     const competition = competitionReport(s, p);
     const accepted =
       (collegeClients(s).length === 0 &&
+        !p.id.startsWith("hs-") &&
         p.ability <= 72 &&
         a.promise === p.want) ||
       roll(s.seed, `${p.id}pitch${s.week}`) * 100 < chance;
@@ -739,6 +789,7 @@ export function decideAgency(current: State, a: Action): State {
       p.promise = a.promise;
       p.fee = a.fee;
       p.trust = a.promise === p.want ? 80 : 65;
+      assignAmbition(s, p);
       s.news.unshift(
         `${p.name} signs with you at ${a.fee}% commercial commission. ${a.promise === p.want ? "Your service plan matches their priority." : "They accepted, but your service plan differs from their priority."}`,
       );
@@ -767,6 +818,10 @@ export function decideAgency(current: State, a: Action): State {
       );
     if (a.plan !== "Draft" && a.plan !== "Return")
       throw Error("Choose a career path.");
+    if (a.plan === "Draft" && p.schoolYear < 3)
+      throw Error(
+        "In this demo, the draft path opens in Year 3. This player returns to college.",
+      );
     if (a.plan === "Return" && p.eligibility <= 1)
       throw Error("This is the client's final eligible season.");
     if (a.plan === "Return" && p.prep)
@@ -1127,7 +1182,8 @@ function rivalsTurn(s: State) {
     if (
       s.week <= 6 &&
       s.week % 2 === 0 &&
-      s.players.filter((p) => p.owner === r.id && p.season === s.year).length <
+      s.players.filter((p) => p.owner === r.id && p.season === s.year).length +
+        reservedPlaces(s, r.id) <
         r.capacity
     ) {
       const prospects = rivalProspects(s, r);
@@ -1186,6 +1242,7 @@ function creditOwner(s: State, p: Athlete, label: string, amount: number) {
 }
 export function advanceAgency(current: State): State {
   const s = structuredClone(current);
+  initializeGameplay(s);
   active(s);
   if (s.week === 0 && !collegeClients(s).length)
     throw Error("Sign your first client before advancing.");
@@ -1265,6 +1322,7 @@ export function advanceAgency(current: State): State {
       );
     }
   }
+  resolveRecruitingDeadlines(s);
   rivalsTurn(s);
   if (s.week <= 14) {
     simulateFootball(s);
@@ -1404,6 +1462,7 @@ export function advanceAgency(current: State): State {
       "The year review will settle any bridge loan. Continuing professionals provide annual income next year. Clients below 50 trust may choose another agency.",
     );
   }
+  weeklyGameplay(s);
   if (s.money < 0) {
     s.failed = true;
     s.news.unshift(
@@ -1452,8 +1511,14 @@ function nextYear(s: State): State {
   s.news = [];
   s.year++;
   s.week = 0;
-  for (const p of clientList(s)) {
-    p.representedByYou = true;
+  for (const p of s.players.filter(
+    (p) =>
+      (p.owner === "you" && p.status !== "Departed") ||
+      (p.status === "College" &&
+        p.careerPlan === "Return" &&
+        p.season === s.year - 1),
+  )) {
+    if (p.owner === "you") p.representedByYou = true;
     if (
       p.status === "College" &&
       p.careerPlan === "Return" &&
@@ -1462,7 +1527,8 @@ function nextYear(s: State): State {
       p.schoolYear++;
       p.eligibility--;
       p.season = s.year;
-      p.careerPlan = "Draft";
+      p.careerPlan = p.schoolYear < 3 ? "Return" : "Draft";
+      p.approached = -1;
       p.boxes = [];
       p.prep = null;
       p.testing = 0;
@@ -1470,9 +1536,10 @@ function nextYear(s: State): State {
       p.injury = null;
       p.fatigue = 0;
       p.delivered = false;
-      s.news.push(
-        `${p.name} returns to ${teams[p.school]}: ${yearLabel(p)}. Their client place and commission terms carry forward.`,
-      );
+      if (p.owner === "you")
+        s.news.push(
+          `${p.name} returns to ${teams[p.school]}: ${yearLabel(p)}. Their client place and commission terms carry forward.`,
+        );
     } else if (p.status === "Pro") {
       if (p.trust < 50) {
         p.owner = p.promise === "Visibility" ? "crown" : "field";
@@ -1519,7 +1586,9 @@ function nextYear(s: State): State {
   }
   s.matches = schedule();
   s.jobs = [];
-  const returning = collegeClients(s);
+  const returning = s.players.filter(
+    (p) => p.status === "College" && p.season === s.year,
+  );
   s.players.push(
     ...population(s.seed, s.year).filter(
       (p) =>
@@ -1528,6 +1597,7 @@ function nextYear(s: State): State {
         ),
     ),
   );
+  graduateSeniors(s);
   s.news.unshift(
     "A new class is available. Your office, cash, reputation and professional relationships carry forward.",
   );
@@ -1584,11 +1654,11 @@ export function restore(raw: string | null): State | null {
       if (
         !schools[p.school] ||
         !Number.isInteger(p.schoolYear) ||
-        p.schoolYear < 3 ||
+        p.schoolYear < 1 ||
         p.schoolYear > 7 ||
         !Number.isInteger(p.eligibility) ||
         p.eligibility < 1 ||
-        p.eligibility > 3 ||
+        p.eligibility > 4 ||
         !["Draft", "Return"].includes(p.careerPlan) ||
         !Number.isFinite(p.transferredYear) ||
         (p.scoutingLevel !== undefined &&
@@ -1600,6 +1670,21 @@ export function restore(raw: string | null): State | null {
       )
         return null;
     }
+    if (
+      s.gameplay &&
+      ![
+        "requests",
+        "negotiations",
+        "offers",
+        "ambitions",
+        "seniors",
+        "referrals",
+      ].every((key) =>
+        Array.isArray((s.gameplay as unknown as Record<string, unknown>)[key]),
+      )
+    )
+      return null;
+    initializeGameplay(s);
     return s;
   } catch {
     return null;

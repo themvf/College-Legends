@@ -1,10 +1,86 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { beforeEach, it, expect } from "vitest";
 import { AgencyGame } from "./AgencyGame.js";
-import { SAVE_KEY, startAgency, decideAgency } from "./model.js";
+import { SAVE_KEY, startAgency, decideAgency, advanceAgency } from "./model.js";
 beforeEach(() => {
   localStorage.clear();
   localStorage.setItem(SAVE_KEY, JSON.stringify(startAgency(42)));
+});
+it("lets a player finish a rival negotiation in the pitch dialog and persists the result", () => {
+  render(<AgencyGame />);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Meet the prospects ↗" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Pitch Owen Hill" }));
+  const dialog = within(
+    screen.getByRole("dialog", { name: "Owen Hill · Final offer requested" }),
+  );
+  expect(dialog.getByText(/reserved \$4,000/)).toBeInTheDocument();
+  fireEvent.change(dialog.getByRole("combobox", { name: "Final commission" }), {
+    target: { value: "10" },
+  });
+  fireEvent.change(
+    dialog.getByRole("combobox", { name: "Final service plan" }),
+    { target: { value: "Security" } },
+  );
+  fireEvent.click(dialog.getByRole("checkbox"));
+  fireEvent.click(
+    dialog.getByRole("button", { name: "Submit final offer for Owen Hill" }),
+  );
+  const saved = JSON.parse(localStorage.getItem(SAVE_KEY)!);
+  expect(saved.gameplay.negotiations[0].status).not.toBe("Open");
+  expect(screen.getByRole("dialog")).toHaveTextContent(saved.lastPitch.message);
+  expect(
+    screen.queryByRole("button", { name: "Submit final offer for Owen Hill" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  expect(screen.getByText("Recruiting results")).toBeInTheDocument();
+});
+it("exposes client decisions and season ambitions, and shows the response after a choice", () => {
+  let s = decideAgency(startAgency(42), {
+    type: "pitch",
+    id: "2027-0",
+    fee: 15,
+    promise: "Development",
+  });
+  s = advanceAgency(advanceAgency(s));
+  localStorage.setItem(SAVE_KEY, JSON.stringify(s));
+  render(<AgencyGame />);
+  fireEvent.click(
+    screen.getByRole("button", { name: /1 client request · earliest/ }),
+  );
+  expect(
+    screen.getByRole("progressbar", { name: "Miles Ellis season ambition" }),
+  ).toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("button", { name: /Book position coaching/ }),
+  );
+  const saved = JSON.parse(localStorage.getItem(SAVE_KEY)!);
+  expect(saved.money).toBe(s.money - 2000);
+  expect(saved.gameplay.requests[0].status).toBe("Answered");
+  expect(screen.getByText(/Client conversations · 1/)).toBeInTheDocument();
+});
+it("researches a senior without adding a college client or enabling early follow-ups", () => {
+  render(<AgencyGame />);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Meet the prospects ↗" }),
+  );
+  fireEvent.click(screen.getByText(/Next year's prospects/));
+  fireEvent.click(
+    screen.getAllByRole("button", { name: "Film report · $500" })[0]!,
+  );
+  const saved = JSON.parse(localStorage.getItem(SAVE_KEY)!);
+  expect(saved.money).toBe(99500);
+  expect(saved.gameplay.seniors[0]).toMatchObject({
+    research: 1,
+    watched: true,
+  });
+  expect(
+    saved.players.filter((p: { owner: string }) => p.owner === "you"),
+  ).toHaveLength(0);
+  expect(
+    screen.getByRole("button", { name: "Follow-up · $1,500" }),
+  ).toBeDisabled();
 });
 it("connects first client, deal, weekly recap and client box statistics", () => {
   render(<AgencyGame />);

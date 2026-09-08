@@ -1162,3 +1162,122 @@ input {
 .as-research-report {
   line-height: 1.6;
 }
+.as-decision-desk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 20px;
+  margin-bottom: 24px;
+  border: 1px solid #c7cdbb;
+  border-left: 4px solid #a17638;
+  border-radius: 8px;
+  background: #eeefdf;
+}
+.as-decision-desk small {
+  flex-basis: 100%;
+  line-height: 1.5;
+}
+.as-story-section {
+  margin: 24px 0;
+}
+.as-story-section > .as-panel {
+  margin-bottom: 18px;
+}
+.as-story-section .as-grid:empty {
+  display: none;
+}
+.as-story-card {
+  min-width: 0;
+  padding: 22px;
+}
+.as-story-card p {
+  line-height: 1.6;
+}
+.as-choice-list {
+  display: grid;
+  gap: 10px;
+}
+.as-choice-list button {
+  text-align: left;
+  white-space: normal;
+}
+.as-choice-list strong,
+.as-choice-list small {
+  display: block;
+}
+.as-choice-list small {
+  font-weight: 400;
+  line-height: 1.5;
+  margin-top: 6px;
+}
+.as-story-history {
+  margin-top: 18px;
+}
+.as-story-history > div + div {
+  border-top: 1px solid var(--line);
+}
+.as-story-section summary {
+  cursor: pointer;
+  font-weight: 700;
+  line-height: 1.6;
+}
+.as-story-card .as-offer {
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.as-story-card .as-offer label {
+  flex: 1 1 170px;
+  min-width: 0;
+}
+.as-story-card select {
+  width: 100%;
+  max-width: 100%;
+}
+.as-attention {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 1.6;
+}
+.as-attention input {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-top: 3px;
+}
+.as-ambition {
+  margin: 20px 0;
+}
+.as-ambition progress {
+  width: 100%;
+  height: 12px;
+  accent-color: #32634f;
+}
+.as-referral,
+.as-pipeline-arrivals {
+  padding: 14px;
+  background: #edf0df;
+  border-radius: 6px;
+}
+.as-result-dialog .as-story-card {
+  padding: 16px;
+}
+@media (max-width: 600px) {
+  .as-story-card {
+    padding: 16px;
+  }
+  .as-decision-desk {
+    padding: 14px;
+  }
+  .as-decision-desk button {
+    width: 100%;
+    text-align: left;
+  }
+  .as-story-section .as-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .as-story-card .as-buttons {
+    flex-direction: column;
+  }
+}

@@ -42,7 +42,7 @@ The browser save key is `football-agent-sim-v1`, separate from all prior demos. 
 - Football statistics cover the tracked QB, HB, WR, FS and EDGE players. Supporting roster production remains aggregate.
 - The wider professional draft has untracked prospects. This is not a complete professional league or contract simulation.
 - Professional follow-up is a simplified annual representation-income and retention model. There is no professional game schedule in this slice.
-- Rival financial decisions and client signings are simulated; sophisticated competing offer negotiations, shared specialist auctions and detailed rival expense reports remain future work.
+- Rival financial decisions and client signings are simulated. Contested pitches now include one final counteroffer; shared specialist auctions, multi-round contract negotiations and detailed rival expense reports remain future work.
 - Campaigns are licensed/contracted opportunities, not a merchandise manufacturing or inventory-management system.
 - Legal specialists, transfer negotiations, detailed health narratives, elaborate contract clauses and custom agency naming remain future work.
 - The two fictional D-I FBS/FCS conferences share the existing demo schedule and invitational playoff; separate real-world division championships are not modeled.
@@ -50,7 +50,23 @@ The browser save key is `football-agent-sim-v1`, separate from all prior demos. 
 - The calendar compresses the offseason into labeled career phases while using one operating-cost charge per advance. Economics require further balancing.
 - This is a browser playable, published on [GitHub Pages](https://themvf.github.io/College-Legends/), not a native iOS build.
 
-## Verification
+## Gameplay expansion — September 7, 2026
+
+Five additions run inside the existing agency, scouting, client, deal and recap screens:
+
+1. **Client conversations.** Up to three requests per client, spaced across Weeks 2–10, react to workload, income and playing opportunities. Each has three disclosed cost/consequence choices, an end-of-week deadline and a follow-up two weeks after the answer. Requests alter fatigue, trust, profile or ability. Ignoring one costs four trust once. Conversations remain in the client file and follow-ups appear in the recap.
+2. **Contested recruiting.** After an initial $500 meeting, eligible rivals can reserve $4,000 and a client place. The player gives the agency through the next week to submit one final offer, changing commission, service and an optional $2,500 dedicated planning session. The displayed probability compares both offers; the session is charged only if signed, alongside normal $1,500 onboarding. Rival funds are refunded if the agency wins. A loss, walkaway or missed deadline assigns the prospect to that rival. Reserved prospects cannot be silently signed by another agency.
+3. **Breakout sponsor windows.** Actual standout game results in Weeks 2–10 can generate Saturday Spotlight offers, capped at two per client and spaced at least four weeks apart. Choose the full guarantee with two weeks and 14 fatigue, a 60% guarantee with one week and four fatigue, or pass. Activation costs are $1,000/$500. Existing campaigns block overlaps. Client take-home, agency commission and margin are shown before signing; injury cannot cancel a signed guarantee. Offers expire after the next week without a penalty.
+4. **Season ambitions and memories.** Clients pursue a starting role, ability improvement, $15,000 of client NIL take-home or a public-profile milestone. A career conversation can change an unfinished ambition to a stronger school with real playing time, carrying that plan into a returning client's next season. Achievement grants eight trust and two reputation once; during recruiting it also provides an eight-point referral advantage when an unrepresented prospect is available. Ambitions and earned memories persist across saves and years.
+5. **Senior watchlist.** Three fictional seniors per year can be watched without a fee. A $500 film report reveals an ability range; a $1,500 follow-up opens in Week 6 and adds a priority and potential estimate. They commit to one of three schools in Week 10, then enter next year's college pool. Watching/research contributes up to ten points of initial recruiting interest, with no guaranteed signature. They arrive in Year 1 with four seasons of eligibility; this demo keeps them in college through Year 2. Owned, rival-owned and unrepresented underclassmen carry forward. This is a small pipeline, with no high school season or high school commercial contracts.
+
+The deadline desk stays visible when a request or offer is open. Existing saves gain these systems without resetting money, rosters, matches or archived recaps. The original college scouting tiers ($1,000 / $5,000 / $25,000), five-star school and conference ratings, and professional transition remain available.
+
+## Verification details
+
+The gameplay expansion passed the 100-test web suite and a production build. Focused tests cover request deadlines and follow-ups, rival cash reservations/refunds and capacity, winning/losing counters, one-time sponsor settlements, injury guarantees, ambition rewards/referrals, school-goal carryover, senior research gates, college commitments, early-year draft restrictions and multi-year save persistence.
+
+A desktop/390-pixel phone browser run verified a lost Owen Hill negotiation and a successful Micah Ward counter. Position coaching moved Miles Ellis into the starting role; his Week 4 performance attracted a $22,963 full / $13,778 light sponsor offer. The light campaign paid the client $11,711 and the agency $2,067 in Week 5. Darius Bennett's researched senior profile committed to Mountain Tech, entered the 2028 college class with four eligible seasons and +10 recruiting interest, and survived a browser reload. No browser console errors were recorded during that run.
 
 Automated coverage exercises representation, commercial accounting, project constraints, complete football seasons, recaps, rival activity, Pro Day bookings, unique draft slots, undrafted paths, roster and renewal income, loans, insolvency, and deterministic save/reload behavior. UI coverage follows first recruitment through a commercial payment and client statistics, and verifies the explicit new-save confirmation.
 
