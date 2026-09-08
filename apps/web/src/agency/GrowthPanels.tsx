@@ -38,7 +38,7 @@ export function GoalBar({
       aria-label="Money and prestige"
     >
       <div>
-        <span>Agency cash</span>
+        <span>Cash · $1M goal</span>
         <strong>{cash(s.money)}</strong>
         <small>Goal: {cash(agencyGoal.money)} after debt</small>
         <progress
@@ -48,7 +48,7 @@ export function GoalBar({
         />
       </div>
       <div>
-        <span>Prestige · {prestigeTier(s).name}</span>
+        <span>Prestige</span>
         <strong>
           {Math.round(s.reputation)} <small>/ {agencyGoal.prestige} goal</small>
         </strong>
@@ -65,7 +65,7 @@ export function GoalBar({
       </div>
       {open && (
         <button onClick={open} aria-label="View agency goals and unlocks">
-          Goals & unlocks ↗
+          Goals
         </button>
       )}
     </section>
@@ -238,7 +238,9 @@ export function DevelopmentPlanner({
   update: (fn: (s: State) => State, message?: string) => boolean;
 }) {
   const skills = playerSkills(s, p);
-  const [kind, setKind] = useState<DevelopmentKind>("Skill");
+  const [kind, setKind] = useState<DevelopmentKind>(
+    !p.delivered && p.promise === "Visibility" ? "Media" : "Skill",
+  );
   const [skill, setSkill] = useState(() =>
     skills.indexOf(skills.reduce((a, b) => (a.value < b.value ? a : b))),
   );

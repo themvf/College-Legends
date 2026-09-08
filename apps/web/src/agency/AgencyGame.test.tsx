@@ -6,6 +6,28 @@ beforeEach(() => {
   localStorage.clear();
   localStorage.setItem(SAVE_KEY, JSON.stringify(startAgency(42)));
 });
+function dismissResult() {
+  const dialog=screen.queryByRole('dialog');
+  if(dialog) fireEvent.click(within(dialog).getByRole('button',{name:'Continue'}));
+}
+function sendPitch(name:string, promise?:string) {
+  fireEvent.click(screen.getByRole('button',{name:`Pitch ${name}`}));
+  if(promise) fireEvent.change(screen.getByLabelText(`Promise to ${name}`),{target:{value:promise}});
+  fireEvent.click(screen.getByRole('button',{name:`Send pitch to ${name}`}));
+}
+it('sets promises inside each client pitch and does not charge for opening or cancelling',()=>{
+  render(<AgencyGame/>);
+  fireEvent.click(screen.getByRole('button',{name:'Meet the prospects ↗'}));
+  expect(screen.queryByLabelText('Your service promise')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button',{name:'Pitch Caleb Banks'}));
+  expect(screen.getByLabelText('Promise to Caleb Banks')).toHaveValue('Security');
+  fireEvent.change(screen.getByLabelText('Promise to Caleb Banks'),{target:{value:'Visibility'}});
+  fireEvent.click(screen.getByRole('button',{name:'Cancel'}));
+  fireEvent.click(screen.getByRole('button',{name:'Pitch Miles Ellis'}));
+  expect(screen.getByLabelText('Promise to Miles Ellis')).toHaveValue('Development');
+  expect(JSON.parse(localStorage.getItem(SAVE_KEY)!).money).toBe(100000);
+  fireEvent.click(screen.getByRole('button',{name:'Cancel'}));
+});
 it("carries a renewed client's negotiated school agreement through payout and the new season", () => {
   let s = decideAgency(startAgency(42), { type: 'pitch', id: '2027-5', promise: 'Security', fee: 15 });
   s.players[5]!.ability = 78;
@@ -16,21 +38,31 @@ it("carries a renewed client's negotiated school agreement through payout and th
   render(<AgencyGame />);
   fireEvent.click(screen.getByRole('button', { name: 'Offseason' }));
   fireEvent.click(screen.getByRole('button', { name: /^Renew current terms/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'Explore another college season' }));
+  dismissResult();
+  fireEvent.click(screen.getByRole('button', { name: /^Compare college offers/ }));
+  dismissResult();
   fireEvent.click(screen.getByRole('button', { name: 'Open transfer market & play semifinals →' }));
   fireEvent.click(screen.getByRole('button', { name: 'Seek school offers · no cost' }));
+  dismissResult();
   const offer = screen.getByRole('article', { name: 'Mountain Tech school offer' });
   fireEvent.click(within(offer).getByRole('button', { name: /^Ask for/ }));
+  dismissResult();
   expect(screen.queryByRole('button', { name: /^Ask for/ })).not.toBeInTheDocument();
   expect(screen.getAllByText('Counter used · choose from the remaining offers.')).toHaveLength(3);
   // The seeded counter can lose; sign a surviving offer through the actual UI.
   const available = screen.getAllByRole('button', { name: /^Sign .* agreement$/ }).find(button => !button.hasAttribute('disabled'))!;
   fireEvent.click(available);
-  expect(screen.getByRole('button', { name: 'Choose the draft path' })).toBeDisabled();
+  expect(screen.getByRole('dialog')).toHaveTextContent('Signing closes other school offers');
+  fireEvent.click(screen.getByRole('button',{name:'Confirm commitment'}));
+  dismissResult();
+  expect(screen.queryByRole('button',{name:/^Explore the draft/})).not.toBeInTheDocument();
+  expect(screen.queryByRole('button',{name:/^Sign .* agreement$/})).not.toBeInTheDocument();
   expect(screen.getByText(/Pays this offseason \(2027\)/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Enter final commitments & championship →' }));
   fireEvent.click(screen.getByRole('button', { name: 'Close school offers & run Pro Days →' }));
   fireEvent.click(screen.getByRole('button', { name: 'Enter draft weekend →' }));
+  expect(screen.getByRole('dialog',{name:'Payday'})).toBeInTheDocument();
+  dismissResult();
   expect(screen.getByText(/will play at .* under the signed .* school agreement/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Offseason' }));
   expect(screen.getByText('PAYMENT RECEIVED')).toBeInTheDocument();
@@ -60,9 +92,7 @@ it("keeps live money and prestige visible through development, navigation, and d
     screen.getByRole("region", { name: "Money and prestige" }),
   );
   expect(goals.getByText("$98,000")).toBeInTheDocument();
-  expect(
-    goals.getByRole("progressbar", { name: "Prestige goal" }),
-  ).toHaveAttribute("value", "10");
+  expect(goals.getByText('/ 85 goal')).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Development specialist"), {
     target: { value: "1" },
   });
@@ -75,6 +105,8 @@ it("keeps live money and prestige visible through development, navigation, and d
   fireEvent.click(
     screen.getByRole("button", { name: "Book development · $1,500" }),
   );
+  expect(screen.getByRole("dialog")).toHaveTextContent("$96,500");
+  dismissResult();
   expect(goals.getByText("$96,500")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Advance to Week 1 →" }));
   fireEvent.click(screen.getByRole("button", { name: "Advance to Week 2 →" }));
@@ -101,7 +133,7 @@ it("lets a player finish a rival negotiation in the pitch dialog and persists th
   fireEvent.click(
     screen.getByRole("button", { name: "Meet the prospects ↗" }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Pitch Owen Hill" }));
+  sendPitch("Owen Hill", "Development");
   const dialog = within(
     screen.getByRole("dialog", { name: "Owen Hill · Final offer requested" }),
   );
@@ -174,13 +206,11 @@ it("researches a senior without adding a college client or enabling early follow
 });
 it("connects first client, deal, weekly recap and client box statistics", () => {
   render(<AgencyGame />);
-  expect(
-    screen.getByRole("button", { name: "Advance to Week 1 →" }),
-  ).toBeDisabled();
+  expect(screen.queryByRole('button',{name:'Advance to Week 1 →'})).not.toBeInTheDocument();
   fireEvent.click(
     screen.getByRole("button", { name: "Meet the prospects ↗" }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Pitch Miles Ellis" }));
+  sendPitch("Miles Ellis");
   expect(
     screen.getByRole("dialog", { name: "Miles Ellis signed" }),
   ).toBeInTheDocument();
@@ -191,11 +221,15 @@ it("connects first client, deal, weekly recap and client box statistics", () => 
   ).toBeEnabled();
   fireEvent.click(screen.getByRole("button", { name: "Deals" }));
   fireEvent.click(
-    screen.getByRole("button", { name: "Negotiate local endorsement" }),
+    screen.getByRole("button", { name: "Review local endorsement" }),
   );
-  expect(
-    screen.getByText("Contract signed. Commission arrives after delivery."),
-  ).toBeInTheDocument();
+  const before=JSON.parse(localStorage.getItem(SAVE_KEY)!).money;
+  expect(screen.getByRole('dialog',{name:'Review Hometown Outfitters'})).toHaveTextContent('Campaign takes 2 weeks');
+  expect(JSON.parse(localStorage.getItem(SAVE_KEY)!).money).toBe(before);
+  fireEvent.click(screen.getByRole('button',{name:'Confirm commitment'}));
+  expect(screen.getByRole('dialog',{name:'Deal signed'})).toHaveTextContent('Advance the week to deliver');
+  dismissResult();
+  expect(screen.getAllByRole('button',{name:'Campaign in progress'}).every(b=>b.hasAttribute('disabled'))).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Advance to Week 1 →" }));
   expect(
     screen.getByRole("heading", { name: "Your clients on Saturday" }),
@@ -207,6 +241,8 @@ it("connects first client, deal, weekly recap and client box statistics", () => 
     screen.getByRole("heading", { name: "Weekly box statistics" }),
   ).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Advance to Week 2 →" }));
+  expect(screen.getByRole("dialog",{name:"Payday"})).toBeInTheDocument();
+  dismissResult();
   expect(screen.getByText(/client keeps/)).toBeInTheDocument();
 });
 it("shows understandable stars and reveals research only after purchase", () => {
@@ -267,15 +303,17 @@ it("shows football context and persists the return decision from the existing cl
   render(<AgencyGame />);
   fireEvent.click(screen.getByRole('button', {name:'Offseason'}));
   fireEvent.click(screen.getByRole('button', {name:/Renew current terms/}));
+  dismissResult();
+  fireEvent.click(screen.getByRole('button',{name:/^Compare college offers/}));
+  dismissResult();
   fireEvent.click(screen.getByRole("button", { name: "Clients" }));
+  fireEvent.click(screen.getByText("Player profile & career history"));
   expect(screen.getByText("D-I FCS · Founders Conference")).toBeInTheDocument();
   expect(screen.getByText(/Year 4 · 2 seasons/)).toBeInTheDocument();
   expect(screen.getByText("Rotation · QB2")).toBeInTheDocument();
   expect(screen.getByText("Available")).toBeInTheDocument();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Return for another season" }),
-  );
-  expect(screen.getByText("Plan: return to school")).toBeInTheDocument();
+  expect(screen.queryByRole('button',{name:'Return for another season'})).not.toBeInTheDocument();
+  expect(screen.queryByRole('button',{name:'Enter the draft'})).not.toBeInTheDocument();
   expect(
     JSON.parse(localStorage.getItem(SAVE_KEY)!).players[0].careerPlan,
   ).toBe("Return");

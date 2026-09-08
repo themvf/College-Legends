@@ -1443,3 +1443,80 @@ input {
   .as-school-offer dl { grid-template-columns: 1fr; }
   .as-school-offer dd { text-align: left; margin-bottom: .4rem; }
 }
+
+/* Mobile action flow: readable decisions, compact goals, reachable navigation. */
+.as-mobile-nav { display: none; }
+.as-app { font-size: 16px; }
+.as-app p, .as-app label, .as-app select, .as-app button, .as-app summary { font-size: 16px; line-height: 1.5; }
+.as-app small, .as-app dt, .as-app .as-fine { font-size: 14px !important; line-height: 1.5; }
+.as-app h2 { font-size: 28px; line-height: 1.2; }
+.as-app h3 { font-size: 21px; line-height: 1.3; }
+.as-app .as-eyebrow { font-size: 13px; letter-spacing: .07em; }
+.as-app button, .as-app select, .as-app summary { min-height: 48px; }
+.as-app summary { padding: 12px 0; cursor: pointer; font-weight: 600; }
+.as-app details { margin: 12px 0; }
+.as-app details > p { margin: 10px 0; }
+.as-app .as-panel { padding: 20px; }
+.as-app .as-choice-list button span { display: block; font-size: 15px; font-weight: 400; }
+.as-career-track { display: flex; gap: 6px; margin: 12px 0; }
+.as-career-track span { flex: 1; padding: 8px; background: #edf0e5; border-radius: 8px; font-size: 14px; }
+.as-career-track [aria-current] { background: #244c40; color: white; }
+.as-activity-grid, .as-menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 20px 0; }
+.as-home-client > button { margin: 6px 8px 0 0; }
+.as-client-journey > button { width: 100%; }
+.as-app .as-player { padding: 20px; }
+.as-app .as-person h3 { font-size: 23px; }
+.as-prospect-details { border-top: 1px solid var(--line); }
+.as-app .as-school-ratings small { font-size: 14px !important; }
+.as-result-dialog { width: min(540px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 24px; border-radius: 16px; }
+.as-result-dialog > button { width: 100%; margin: 8px 0 0; }
+.as-result-dialog label { display: grid; gap: 8px; margin: 18px 0; }
+.as-result-dialog select { width: 100%; }
+.as-result-dialog::backdrop { background: #102e29b8; }
+.as-app .as-goal-bar { grid-template-columns: 1fr 1fr auto; padding: 10px 24px; gap: 12px; }
+.as-app .as-goal-bar > div > small, .as-app .as-goal-bar > div > progress { display: none; }
+.as-app .as-goal-bar strong { font-size: 22px; }
+.as-app .as-goal-bar span, .as-app .as-goal-bar small { font-size: 14px !important; }
+.as-app .as-goal-bar > button { grid-column: auto; font-size: 14px; padding: 8px 10px; }
+.as-app .as-goal-compact { grid-template-columns: 1fr 1fr; }
+.as-stage-heading { font-weight: 700; }
+.as-offseason > progress { width: 100%; accent-color: #244c40; }
+@media (max-width: 760px) {
+  html { scroll-padding-top: 100px; scroll-padding-bottom: 85px; }
+  .as-app .as-sidebar { display: none; }
+  .as-mobile-nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 30; display: grid; grid-template-columns: repeat(5, 1fr); padding: 6px 6px max(8px,env(safe-area-inset-bottom)); gap: 2px; background: #203d37; box-shadow: 0 -2px 10px #172e2926; }
+  .as-app .as-mobile-nav button { background: transparent; border: 0; border-radius: 8px; color: #eff4e7; font-size: 14px; padding: 12px 2px; min-height: 48px; }
+  .as-mobile-nav button[aria-current] { background: #3a5d51; }
+  .as-app .as-goal-bar { top: 0; padding: 10px 14px; gap: 8px; min-height: 76px; }
+  .as-app .as-goal-bar span { font-size: 13px !important; }
+  .as-app .as-goal-bar strong { font-size: 21px; }
+  .as-app .as-goal-bar > button { font-size: 14px; min-height: 44px; }
+  .as-app .as-goal-bar strong small { font-size: 13px !important; }
+  .as-app main { padding: 20px 16px 100px; }
+  .as-app .as-top { padding: 16px; gap: 12px; }
+  .as-app .as-top h1 { font-size: 22px; }
+  .as-app .as-top .as-eyebrow { font-size: 14px; }
+  .as-app .as-grid, .as-app .as-school-offers { grid-template-columns: 1fr; gap: 16px; }
+  .as-app .as-person { gap: 14px; }
+  .as-app .as-person .as-portrait { width: 64px; height: 64px; }
+  .as-app .as-player { padding: 18px; }
+  .as-app .as-client-file { gap: 14px; }
+  .as-app .as-client-file .as-portrait { width: 64px; }
+  .as-app .as-client-file h2 { font-size: 26px; }
+  .as-app .as-tags span { font-size: 14px; }
+  .as-app .as-deal { padding: 20px; }
+  .as-app .as-deal dd { font-size: 20px; }
+  .as-app .as-metrics b { font-size: 23px; }
+  .as-app .as-client-strip button { font-size: 16px; }
+  .as-app .as-activity-grid button { padding: 12px; }
+  .as-app .as-row { gap: 10px; flex-wrap: wrap; font-size: 16px; }
+  .as-result-dialog { margin: auto; padding: 20px; }
+}
+.as-app [hidden] { display: none !important; }
+.as-app .as-client-file { padding: 16px; margin: 8px 0 16px; }
+.as-app .as-client-file p { margin: 8px 0; }
+.as-app .as-client-file .as-tags { margin: 8px 0 0; }
+.as-app .as-stage-heading { margin-bottom: 6px; }
+.as-app .as-school-offer .as-primary { width: 100%; }
+.as-app .as-offseason > progress { max-width: none; width: 100%; height: 5px; }
+.as-app .as-offseason > .as-panel { margin-top: 16px; }

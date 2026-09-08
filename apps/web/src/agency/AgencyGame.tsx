@@ -36,14 +36,16 @@ import {
   prepCost,
   decideAgency,
   advanceAgency,
+  type Action,
   type State,
   type Athlete,
   type Want,
   type Box,
   type Prep,
 } from "./model.js";
-import { Office } from "./Office.js";
-import { OffseasonPanel, OffseasonLink } from './OffseasonPanel.js';
+import { ClientJourney, ClientHomeCard, promiseTask } from "./ClientJourney.js";
+import { currentReview, nextAgreement } from "./offseason.js";
+import { OffseasonPanel, OffseasonLink } from './OffseasonDesk.js';
 import { pendingNegotiation, recruitingBonus } from "./gameplay.js";
 import {
   DecisionDesk,
@@ -235,8 +237,8 @@ function ResultDialog({
         {title}
       </h2>
       {children}
-      <button className="as-primary" onClick={close}>
-        Continue
+      <button className={title.startsWith('Review ') || title.startsWith('Your pitch to') ? '' : 'as-primary'} onClick={close}>
+        {title.startsWith('Review ') || title.startsWith('Your pitch to') ? 'Cancel' : 'Continue'}
       </button>
     </dialog>
   );
@@ -316,142 +318,19 @@ function ScoutingReport({ p, s }: { p: Athlete; s: State }) {
     </div>
   );
 }
-function SchoolChoices({
-  p,
-  s,
-  update,
-}: {
-  p: Athlete;
-  s: State;
-  update: (fn: (s: State) => State, msg?: string) => boolean;
-}) {
-  const [destination, setDestination] = useState(p.school);
-  if (p.status !== "College") return null;
-  const projected = { ...p, school: destination };
-  const locked =
-    s.week !== 0 ||
-    p.transferredYear === s.year ||
-    s.deals.some((d) => d.player === p.id && d.status === "Active") ||
-    s.jobs.some((j) => j.player === p.id) ||
-    activeDevelopment(s).some((r) => r.player === p.id);
-  return (
-    <section className="as-panel as-school-choices">
-      <h3>School & next season</h3>
-      <p>
-        {depth(p).rank > 1
-          ? `${p.name} is behind other players at ${teams[p.school]}. A move could open playing time at a smaller school.`
-          : `${p.name} has a starting role at ${teams[p.school]}. A bigger stage may mean more competition for snaps.`}
-      </p>
-      <p className="as-fine">
-        Depth reflects ability against the school's position standard and can
-        change with development. Health affects availability separately.
-      </p>
-      <details>
-        <summary>Compare a preseason school move</summary>
-        <label>
-          Destination school
-          <select
-            value={destination}
-            onChange={(e) => setDestination(Number(e.target.value))}
-          >
-            {schools.map((school, i) => (
-              <option key={i} value={i}>
-                {school.name} · {school.division} · {school.conference}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p>
-          {depth(projected).role} · {p.position}
-          {depth(projected).rank} · {depth(projected).snaps}% expected healthy
-          snaps
-        </p>
-        <p>
-          Local endorsement guarantee at current public profile:{" "}
-          {cash(dealValue(p, 0))} → {cash(dealValue(projected, 0))}.
-        </p>
-        <p className="as-fine">
-          School reach and playing time affect new sponsor offers. Future
-          performances change public profile. One preseason move costs the
-          agency $2,500. Active campaigns and training must be completed first;
-          earned payments stay earned.
-        </p>
-        <button
-          disabled={locked || destination === p.school}
-          onClick={() =>
-            update(
-              (x) =>
-                decideAgency(x, {
-                  type: "transfer",
-                  id: p.id,
-                  school: destination,
-                }),
-              "School move completed. Role and new sponsor offers updated.",
-            )
-          }
-        >
-          Move to {schools[destination]!.name} · $2,500
-        </button>
-        {locked && (
-          <p className="as-fine">
-            School moves open in preseason, before commitments, once per client
-            each year.
-          </p>
-        )}
-      </details>
-      <div className="as-season-choice">
-        <strong>
-          {p.careerPlan === "Return"
-            ? "Plan: return to school"
-            : "Plan: enter the draft"}
-        </strong>
-        <p>
-          {p.eligibility > 1
-            ? "Another college season keeps the relationship and opens new annual NIL deals. Earnings are not guaranteed; compare that opportunity with the current draft outlook."
-            : "This is the final eligible season. The professional path remains available."}
-        </p>
-        <p className="as-fine">
-          Choose after Week 12, before Pro Days. Returning uses one season of
-          eligibility and retains a client place. A booked Pro Day package
-          commits the draft path.
-          {p.schoolYear < 3 && " In this demo, the draft path opens in Year 3."}
-        </p>
-        <div className="as-buttons">
-          <button
-            aria-pressed={p.careerPlan === "Return"}
-            disabled={
-              s.week < 12 || s.week > 14 || p.eligibility <= 1 || !!p.prep
-            }
-            onClick={() =>
-              update(
-                (x) =>
-                  decideAgency(x, { type: "career", id: p.id, plan: "Return" }),
-                "Client plans to return for another college season.",
-              )
-            }
-          >
-            Return for another season
-          </button>
-          <button
-            aria-pressed={p.careerPlan === "Draft"}
-            disabled={s.week < 12 || s.week > 14 || p.schoolYear < 3}
-            onClick={() =>
-              update(
-                (x) =>
-                  decideAgency(x, { type: "career", id: p.id, plan: "Draft" }),
-                "Client plans to enter the draft.",
-              )
-            }
-          >
-            Enter the draft
-          </button>
-        </div>
-      </div>
-    </section>
-  );
+function SchoolChoices({p,s,go}:{p:Athlete;s:State;go:(tab:string)=>void}) {
+  if(p.status !== 'College') return null;
+  const agreement=nextAgreement(s,p.id);
+  return <section className="as-panel"><h3>School & next season</h3><p>{agreement ? `${teams[agreement.school]} committed for next season. College route locked.` : s.week < 12 ? 'Keep earning this season. Review college offers and draft options after Week 12.' : 'Make this client’s career decision at the offseason desk.'}</p>{s.week >= 12 && <button onClick={()=>go('Offseason')}>Review offseason decision</button>}</section>;
 }
 export function AgencyGame() {
   const [showGoals, setShowGoals] = useState(false);
+  const [menu, setMenu] = useState(false);
+  const [pitchTarget, setPitchTarget] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<{title:string; lines:string[]; action:Action} | null>(null);
+  const [feedback, setFeedback] = useState<{title:string; lines:string[]} | null>(null);
+  function reviewAction(action:Action,title:string,lines:string[]) { setConfirmation({action,title,lines}); }
+
   const [s, setS] = useState(initial),
     [tab, setTab] = useState("Agency"),
     [selected, setSelected] = useState(""),
@@ -499,16 +378,36 @@ export function AgencyGame() {
       localStorage.setItem(SAVE_KEY, JSON.stringify(next));
       setS(next);
       setError("");
-      setNotice(msg);
+      setNotice('');
+      const pitchChanged = next.lastPitch && JSON.stringify(next.lastPitch) !== JSON.stringify(s.lastPitch);
+      const researchChanged = next.players.some((p,i) => scoutingLevel(p) !== scoutingLevel(s.players[i] ?? p));
+      if (pitchChanged) { setFeedback(null); setSelected(next.lastPitch!.player); setOverlay({kind:'pitch',id:next.lastPitch!.player}); }
+      else if (researchChanged) { const researched=next.players.find((p,i)=>scoutingLevel(p)!==scoutingLevel(s.players[i]??p))!; setFeedback(null); setOverlay({kind:'scout',id:researched.id}); }
+      else if (next.week === s.week && next.year === s.year && !researchChanged) {
+        const deal = next.deals.find(d => !s.deals.some(old => old.id === d.id));
+        const request = next.gameplay?.requests.find(r => r.response && !s.gameplay?.requests.some(old => old.id === r.id && old.response === r.response));
+        const changedReview = next.offseason?.reviews.find(r => JSON.stringify(r) !== JSON.stringify(s.offseason?.reviews.find(old => old.player === r.player && old.year === r.year)));
+        const reviewBefore = changedReview && s.offseason?.reviews.find(r=>r.player===changedReview.player && r.year===changedReview.year);
+        const offer = changedReview?.offers.find(o=>o.reason !== reviewBefore?.offers.find(old=>old.id===o.id)?.reason);
+        const person = deal && next.players.find(p=>p.id===deal.player);
+        const summary = deal ? `${person?.name} · ${deal.brand}` : request?.response || (changedReview?.marketResult !== reviewBefore?.marketResult ? changedReview?.marketResult : null) || (changedReview?.response !== reviewBefore?.response ? changedReview?.response : null) || offer?.reason || msg || next.news.find(n=>!s.news.includes(n)) || 'Your choice is saved. The client’s next step has updated.';
+        const delta=next.money-s.money;
+        setFeedback({title:deal ? 'Deal signed' : changedReview?.status === 'Lost' ? 'Client chose another agent' : 'Decision complete', lines:deal ? [summary, `Paid now: ${cash(deal.cost)} activation.`, `In ${deal.left} weeks: client ${cash(deal.gross-Math.round(deal.gross*deal.fee/100))} · agency ${cash(Math.round(deal.gross*deal.fee/100))}.`, 'Advance the week to deliver the campaign. Other campaigns are locked until it finishes.'] : [summary, ...(delta ? [`Agency cash ${delta < 0 ? 'spent' : 'received'}: ${cash(Math.abs(delta))}.`] : []), ...(next.reputation !== s.reputation ? [`Prestige ${Math.round(s.reputation)} → ${Math.round(next.reputation)}.`] : [])]});
+      }
+      if(next.week!==s.week) {
+        const payments=next.deals.filter(d=>d.status==='Paid'&&s.deals.some(old=>old.id===d.id&&old.status==='Active'));
+        const schoolPayments=next.offseason?.agreements.filter(a=>a.status==='Paid'&&s.offseason?.agreements.some(old=>old.id===a.id&&old.status==='Signed'))??[];
+        if(payments.length||schoolPayments.length) setFeedback({title:'Payday',lines:[...payments.map(d=>`${next.players.find(p=>p.id===d.player)?.name} · ${d.brand}: agency received ${cash(Math.round(d.gross*d.fee/100))}.`),...schoolPayments.map(a=>`${next.players.find(p=>p.id===a.player)?.name} · school agreement: client ${cash(a.clientNet)}, agency ${cash(a.commission)}.`),`Agency cash is now ${cash(next.money)} after this week’s costs.`]});
+      }
       return true;
     } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "Unable to save this decision.",
-      );
+      const message=e instanceof Error ? e.message : 'Unable to save this decision.';
+      setError(message); setFeedback({title:'Action unavailable',lines:[message]});
       return false;
     }
   }
   function go(t: string) {
+    setMenu(false);
     setTab(t);
     setError("");
     setNotice("");
@@ -553,13 +452,14 @@ export function AgencyGame() {
           </p>
         </div>
       </div>
-      {p.status === "College" && <FootballProfile p={p} week={s.week} />}
+      {prospect ? <><p>{schools[p.school]!.division} · Year {p.schoolYear} · {depth(p).role}</p><div className="as-school-ratings"><Stars label="Team" value={ratingStars(schools[p.school]!.prestige)} /><Stars label="Conference" value={ratingStars(conferenceStrength(p.school))} /></div></> : p.status === 'College' && <FootballProfile p={p} week={s.week} />}
       {prospect && recruitingBonus(s, p) > 0 && (
         <p className="as-referral">
           A relationship already exists · +{recruitingBonus(s, p)} recruiting
           interest from familiarity or a referral.
         </p>
       )}
+      <details className="as-prospect-details"><summary>Ability, potential & career details</summary>
       <div className="as-metrics">
         <div>
           <b>{Math.round(p.ability)}</b>
@@ -586,12 +486,9 @@ export function AgencyGame() {
             : "Career outcome"}
         </small>
       </div>
+      </details>
       {prospect ? (
         <>
-          <p className="as-fine">
-            {Math.round(fit(s, p, promise, fee))}% estimated initial interest. A
-            rival offer may lead to a final counter.
-          </p>
           <div className="as-buttons">
             <button
               disabled={scoutingLevel(p) >= researchTier}
@@ -625,16 +522,7 @@ export function AgencyGame() {
                 !!pendingNegotiation(s, p.id) ||
                 p.approached === s.week
               }
-              onClick={() => {
-                if (
-                  update((x) =>
-                    decideAgency(x, { type: "pitch", id: p.id, promise, fee }),
-                  )
-                ) {
-                  setSelected(p.id);
-                  setOverlay({ kind: "pitch", id: p.id });
-                }
-              }}
+              onClick={() => { setPromise(p.want); setFee(15); setPitchTarget(p.id); }}
             >
               Pitch {p.name.split(" ")[0]}
             </button>
@@ -671,6 +559,10 @@ export function AgencyGame() {
   );
   return (
     <div className="as-app">
+      {menu && <ResultDialog s={s} title="All activities" close={()=>setMenu(false)}><div className="as-menu-grid">{sections.filter(t=>t !== 'Offseason' || s.week>=12 || s.offseason?.reviews.length).map(t=><button key={t} onClick={()=>go(t)}>{t}</button>)}</div></ResultDialog>}
+      {feedback && !overlay && <ResultDialog s={s} title={feedback.title} close={()=>setFeedback(null)}>{feedback.lines.map((line,i)=><p key={i}>{line}</p>)}</ResultDialog>}
+      {confirmation && <ResultDialog s={s} title={confirmation.title} close={()=>setConfirmation(null)}>{confirmation.lines.map((line,i)=><p key={i}>{line}</p>)}<button className="as-primary" onClick={()=>{const a=confirmation.action;setConfirmation(null);update(x=>decideAgency(x,a));}}>Confirm commitment</button></ResultDialog>}
+      {pitchTarget && (()=>{const p=s.players.find(p=>p.id===pitchTarget)!;return <ResultDialog s={s} title={`Your pitch to ${p.name}`} close={()=>setPitchTarget(null)}><p>{p.name} wants to {priorities[p.want].label.toLowerCase()}.</p><label>Promise to {p.name}<select value={promise} onChange={e=>setPromise(e.target.value as Want)}>{(['Development','Visibility','Security'] as Want[]).map(w=><option key={w} value={w}>{w==='Security'?'Paying sponsor campaign':w==='Visibility'?'Media & sponsor exposure':'Football skills training'}</option>)}</select></label><p>{promiseTask(promise)} for {p.name}. Deliver during the season to build trust.</p><label>Your commercial commission<select value={fee} onChange={e=>setFee(Number(e.target.value))}><option value={10}>10% · client-friendly</option><option value={15}>15% · standard</option><option value={20}>20% · higher agency share</option></select></label><p>{Math.round(fit(s,p,promise,fee))}% initial interest · $500 meeting, plus $1,500 only if signed.</p><button className="as-primary" onClick={()=>{setPitchTarget(null);update(x=>decideAgency(x,{type:'pitch',id:p.id,promise,fee}));}}>Send pitch to {p.name}</button></ResultDialog>})()}
       {showGoals && (
         <ResultDialog
           s={s}
@@ -724,11 +616,11 @@ export function AgencyGame() {
                         : "$500 meeting + $1,500 setup"
                       : "$500 meeting; no setup charged"}
                   </p>
-                  <h3>Rival position</h3>
-                  <p>{result?.competition}</p>
+                  <details><summary>Rival response</summary><p>{result?.competition}</p></details>
+                  {result?.accepted && <button className="as-primary" onClick={()=>{setOverlay(null);setSelected(player.id);go('Clients');}}>Plan {player.name.split(' ')[0]}’s next step</button>}
                   <p>
                     {result?.accepted
-                      ? "Next: open the client file and arrange the promised service."
+                      ? `Your promise: ${promiseTask(player.promise)}.`
                       : result?.pending
                         ? "Choose your final offer below, or return to Scouting before the deadline."
                         : "Review the result and recruit another prospect, or revisit an available player next week."}
@@ -738,6 +630,7 @@ export function AgencyGame() {
             </ResultDialog>
           );
         })()}
+      <nav className="as-mobile-nav" aria-label="Quick navigation">{['Agency','Clients','Scouting','Deals'].map(t=><button key={t} onClick={()=>go(t)} aria-current={tab===t?'page':undefined}>{t==='Agency'?'Home':t==='Scouting'?'Recruit':t}</button>)}<button aria-expanded={menu} onClick={()=>setMenu(true)}>More</button></nav>
       <aside className="as-sidebar">
         <a
           className="as-logo"
@@ -785,10 +678,11 @@ export function AgencyGame() {
             <span className="as-eyebrow">
               {s.year} / {phase(s)}
             </span>
-            <h1>{tab === "Agency" ? "A small office. A big belief." : tab}</h1>
+            <h1>{tab === "Agency" ? "Your agency" : tab}</h1>
           </div>
           <button
             className="as-primary"
+            hidden={s.week===0&&!college.length}
             disabled={s.failed || (s.week === 0 && !college.length)}
             onClick={() => {
               if (update(advanceAgency)) {
@@ -820,122 +714,15 @@ export function AgencyGame() {
           )}
           <DecisionDesk s={s} go={go} />
           {tab !== 'Offseason' && <OffseasonLink s={s} go={go} />}
-          {tab === 'Offseason' && <OffseasonPanel s={s} update={update} go={go} />}
-          {tab === "Agency" && (
-            <>
-              <div className="as-hero-heading">
-                <div>
-                  <span className="as-eyebrow">
-                    YOUR STORY STARTS WITH SOMEONE ELSE’S
-                  </span>
-                  <h2>
-                    {college.length
-                      ? "Build careers. Build your agency."
-                      : s.year > 2027
-                        ? "Find your next class."
-                        : "Find your first client."}
-                  </h2>
-                  <p>
-                    {college.length
-                      ? "Your clients play on Saturdays. You build the opportunities around them."
-                      : "An overlooked player. The right support. A chance to make it together."}
-                  </p>
-                </div>
-                <button onClick={() => go("Scouting")}>
-                  {college.length
-                    ? "Find another prospect"
-                    : "Meet the prospects"}{" "}
-                  ↗
-                </button>
-              </div>
-              <AgencyGoals s={s} condensed />
-              <Office
-                clients={clients.length}
-                staff={s.staff}
-                year={s.year}
-                onRoom={go}
-              />
-              <div className="as-summary">
-                <div>
-                  <span>College clients</span>
-                  <b>
-                    {college.length}
-                    <small> / {4 + s.staff} places</small>
-                  </b>
-                </div>
-                <div>
-                  <span>Professional clients</span>
-                  <b>{clients.filter((p) => p.status === "Pro").length}</b>
-                </div>
-                <div>
-                  <span>Agency prestige</span>
-                  <b>
-                    {Math.round(s.reputation)}
-                    <small> / 100</small>
-                  </b>
-                </div>
-                <div>
-                  <span>Weekly overhead</span>
-                  <b>{cash(burn(s))}</b>
-                </div>
-              </div>
-              <div className="as-two">
-                <section className="as-panel">
-                  <span className="as-eyebrow">ON YOUR DESK</span>
-                  <h3>
-                    {s.year === 2027 && s.week === 0 && !clients.length
-                      ? "One relationship comes first"
-                      : "Agency dispatch"}
-                  </h3>
-                  {s.news.slice(0, 5).map((n, i) => (
-                    <p key={i}>{n}</p>
-                  ))}
-                  {s.week >= 12 && s.week <= 14 && (
-                    <button
-                      className="as-primary"
-                      onClick={() => go("Pro Preparation")}
-                    >
-                      Book Pro Day packages ↗
-                    </button>
-                  )}
-                </section>
-                <section className="as-panel">
-                  <span className="as-eyebrow">
-                    THE BUSINESS YOU’RE BUILDING
-                  </span>
-                  <h3>Invest before the outcome is known.</h3>
-                  <p>
-                    Clients keep their earnings. Your agency receives its
-                    commission, pays its own expenses, and carries the risk of
-                    preparation spending.
-                  </p>
-                  <div className="as-steps">
-                    <span>Discover</span>
-                    <span>Develop</span>
-                    <span>Represent</span>
-                    <span>Reinvest</span>
-                  </div>
-                  <button onClick={() => go("Finances")}>
-                    See the cash plan ↗
-                  </button>
-                </section>
-              </div>
-              <ClientRequests s={s} update={update} />
-              {clients.length > 0 && (
-                <>
-                  <div className="as-section-title">
-                    <h2>Your people</h2>
-                    <button onClick={() => go("Clients")}>
-                      All client files ↗
-                    </button>
-                  </div>
-                  <div className="as-grid">
-                    {clients.map((p) => playerCard(p))}
-                  </div>
-                </>
-              )}
-            </>
-          )}
+          {tab === 'Offseason' && <OffseasonPanel s={s} update={update} go={go} reviewAction={reviewAction} player={chosen?.id??''} selectClient={setSelected} />}
+          {tab === 'Agency' && <>
+            <h2>{clients.length ? 'Your next moves' : 'Sign your first client'}</h2>
+            <p>{clients.length ? 'Choose a client. Make a move. Advance to see the result.' : 'Find talent → earn their trust → land deals → make the offseason move.'}</p>
+            {!clients.length && <button className="as-primary" onClick={()=>go('Scouting')}>Meet the prospects ↗</button>}
+            <div className="as-grid">{clients.map(p=><ClientHomeCard key={p.id} p={p} s={s} go={t=>{setSelected(p.id);go(t);}} />)}</div>
+            <div className="as-activity-grid"><button onClick={()=>go('Scouting')}>Recruit clients</button><button onClick={()=>go('Development')}>Arrange development</button><button onClick={()=>go('Deals')}>Find sponsor deals</button><button onClick={()=>go(s.week>=12?'Offseason':'Weekly Recap')}>{s.week>=12?'Offseason decisions':'Season results'}</button></div>
+            <details className="as-panel"><summary>Agency news & finances</summary><p>Weekly overhead: {cash(burn(s))}</p>{s.news.slice(0,5).map((n,i)=><p key={i}>{n}</p>)}<button onClick={()=>go('Finances')}>Open finances</button></details>
+          </>}
           {tab === "Scouting" && (
             <>
               <RecruitingContests
@@ -943,50 +730,26 @@ export function AgencyGame() {
                 update={update}
                 onResolved={(id) => setOverlay({ kind: "pitch", id })}
               />
-              <SeniorWatchlist s={s} update={update} />
+
               <div className="as-page-intro">
-                <span className="as-eyebrow">
-                  A GOOD EYE IS YOUR FIRST ADVANTAGE
-                </span>
-                <h2>Who deserves a chance?</h2>
+
+                <h2>Choose your client</h2>
                 <p>
-                  Sign up to {4 + s.staff} college clients. Start with one. The
-                  prospects have different schools, roles and eligibility. A
-                  bigger stage offers exposure, but playing time matters.
+                  Pick a player. Research them or build a personal pitch.
                 </p>
               </div>
-              <div className="as-panel as-offer">
-                <label>
-                  Your service promise
-                  <select
-                    value={promise}
-                    onChange={(e) => setPromise(e.target.value as Want)}
-                  >
-                    <option value="Development">
-                      Improve my game · arrange training
-                    </option>
-                    <option value="Visibility">
-                      Build my name · media & brands
-                    </option>
-                    <option value="Security">
-                      Earn NIL income · deliver a paying deal
-                    </option>
-                  </select>
-                </label>
-                <label>
-                  Your commercial commission
-                  <select value={fee} onChange={(e) => setFee(+e.target.value)}>
-                    <option value={10}>10% · client-friendly</option>
-                    <option value={15}>15% · standard offer</option>
-                    <option value={20}>20% · higher agency share</option>
-                  </select>
-                </label>
-                <p>
-                  $500 meeting cost; $1,500 setup only if signed. No client
-                  advance. Promises affect trust.{" "}
-                  {priorities[promise].description}{" "}
-                  {priorities[promise].service}
-                </p>
+              <div className="as-section-title">
+                <h3>
+                  {college.length}/{4 + s.staff} college places filled
+                </h3>
+                <button onClick={() => setExpanded(!expanded)}>
+                  {expanded
+                    ? "Show overlooked prospects"
+                    : "Include established prospects"}
+                </button>
+              </div>
+              <div className="as-grid">
+                {targets.map((p) => playerCard(p, true))}
               </div>
               <details className="as-panel as-scouting-guide">
                 <summary>How to read a prospect</summary>
@@ -1009,7 +772,7 @@ export function AgencyGame() {
                   representation.
                 </p>
               </details>
-              <div className="as-panel as-research-picker">
+              <details className="as-panel as-research-picker"><summary>Scouting packages · from $1,000</summary>
                 <label>
                   Scouting depth
                   <select
@@ -1029,8 +792,8 @@ export function AgencyGame() {
                   report totals $25,000 per player, not $31,000. Better
                   information cannot guarantee future results.
                 </p>
-              </div>
-              {s.lastPitch && s.lastPitch.year === s.year && (
+              </details>
+              <details className="as-panel"><summary>Recruiting history</summary>              {s.lastPitch && s.lastPitch.year === s.year && (
                 <section className="as-panel">
                   <h3>Last pitch</h3>
                   <p>{s.lastPitch.message}</p>
@@ -1068,19 +831,8 @@ export function AgencyGame() {
                   {s.news[0]}
                 </p>
               )}
-              <div className="as-section-title">
-                <h3>
-                  {college.length}/{4 + s.staff} college places filled
-                </h3>
-                <button onClick={() => setExpanded(!expanded)}>
-                  {expanded
-                    ? "Show overlooked prospects"
-                    : "Include established prospects"}
-                </button>
-              </div>
-              <div className="as-grid">
-                {targets.map((p) => playerCard(p, true))}
-              </div>
+</details>
+              <SeniorWatchlist s={s} update={update} />
             </>
           )}
           {tab === "Clients" && (
@@ -1117,7 +869,7 @@ export function AgencyGame() {
                 </div>
               ) : (
                 <>
-                  <div className="as-client-strip">
+                  <div className="as-client-strip" hidden={clients.length<2}>
                     {clients.map((p) => (
                       <button
                         key={p.id}
@@ -1155,6 +907,9 @@ export function AgencyGame() {
                       </div>
                     </div>
                   </div>
+                  <ClientJourney s={s} p={chosen} go={go} />
+                  <div className="as-activity-grid"><button onClick={()=>go('Deals')}>Sponsor deals</button><button onClick={()=>go('Development')}>Development</button><button onClick={()=>go(s.week>=12?'Offseason':'Pro Preparation')}>{s.week>=12?'Offseason decision':'Pro career'}</button></div>
+                  <details className="as-panel"><summary>Player profile & career history</summary>
                   {chosen.status === "College" && (
                     <FootballProfile p={chosen} week={s.week} />
                   )}
@@ -1162,7 +917,7 @@ export function AgencyGame() {
                     key={`${chosen.id}-${chosen.school}`}
                     p={chosen}
                     s={s}
-                    update={update}
+                    go={go}
                   />
                   <ClientAmbitions s={s} p={chosen} />
                   <div className="as-two">
@@ -1237,7 +992,7 @@ export function AgencyGame() {
                         {chosen.pick
                           ? `Drafted: Round ${Math.ceil(chosen.pick / 32)} · Pick ${((chosen.pick - 1) % 32) + 1}`
                           : chosen.status === "College"
-                            ? `Next-season plan: ${chosen.careerPlan === "Return" ? "Return to school" : "Draft"}`
+                            ? `Next-season plan: ${nextAgreement(s,chosen.id) ? "College contract signed" : chosen.prep ? "Draft preparation committed" : s.week<12 ? "Review after Week 12" : "See offseason desk"}`
                             : `Professional status: ${chosen.status}`}
                       </p>
                     </section>
@@ -1300,6 +1055,7 @@ export function AgencyGame() {
                         </div>
                       ))
                   )}
+                  </details>
                 </>
               )}
             </>
@@ -1334,7 +1090,7 @@ export function AgencyGame() {
                     key={`development-school-${chosen.id}`}
                     s={s}
                     p={chosen}
-                    update={update}
+                    go={go}
                   />
                 </>
               )}
@@ -1379,6 +1135,7 @@ export function AgencyGame() {
                       once per client per year.
                     </p>
                   </div>
+                  {s.deals.some(d=>d.player===chosen.id&&d.status==='Active') && <p className="as-notice">Campaign underway. Advance the week to deliver it; other deals unlock after payment.</p>}
                   <div className="as-grid">
                     {brands.map((b, i) => {
                       const gross = dealValue(chosen, i, performance),
@@ -1421,16 +1178,7 @@ export function AgencyGame() {
                               on any bonus.
                             </p>
                           )}
-                          <p className="as-fine">
-                            Client keeps the contract payment less commission.
-                            Obligation adds {b.load} fatigue. Offers reflect
-                            school reach, role and public profile. Injury does
-                            not cancel a signed guarantee.
-                          </p>
-                          <p className="as-fine">
-                            Paid deal prestige: 2 below $50,000 · 6 at $50,000+
-                            · 10 at $100,000+.
-                          </p>
+                          <p>{b.load} fatigue · pays after {b.weeks} weekly advances.</p>
                           {i === 2 && earnedPrestige(s) < 65 && (
                             <p>
                               Unlocks at 65 agency prestige. Your client also
@@ -1442,7 +1190,8 @@ export function AgencyGame() {
                             disabled={
                               (i === 2 && earnedPrestige(s) < 65) ||
                               chosen.recognition < b.min ||
-                              chosen.status !== "College" ||
+                              chosen.status !== "College" || s.failed || s.money < b.cost || s.week+b.weeks>14 ||
+                              s.deals.some(d=>d.player===chosen.id && d.status==='Active') || !!nextAgreement(s,chosen.id) ||
                               s.deals.some(
                                 (d) =>
                                   d.player === chosen.id &&
@@ -1450,20 +1199,9 @@ export function AgencyGame() {
                                   d.year === s.year,
                               )
                             }
-                            onClick={() =>
-                              update(
-                                (x) =>
-                                  decideAgency(x, {
-                                    type: "deal",
-                                    id: chosen.id,
-                                    kind: i,
-                                    performance,
-                                  }),
-                                "Contract signed. Commission arrives after delivery.",
-                              )
-                            }
+                            onClick={()=>reviewAction({type:'deal',id:chosen.id,kind:i,performance},`Review ${b.name}`, [`${chosen.name} · ${b.type}`, `Pay ${cash(b.cost)} now. Campaign takes ${b.weeks} weeks and adds ${b.load} fatigue.`, `At delivery: client ${cash(gross-commission)} · agency ${cash(commission)}. Agency margin ${cash(commission-b.cost)}.`, performance ? 'Any public-profile bonus is uncertain; these figures are the guarantee.' : 'This is a fixed offer. Signing starts the campaign; advance the week to deliver it.'])}
                           >
-                            Negotiate {b.type.toLowerCase()}
+                            {s.deals.some(d=>d.player===chosen.id&&d.status==='Active') ? 'Campaign in progress' : `Review ${b.type.toLowerCase()}`}
                           </button>
                         </article>
                       );
@@ -1571,6 +1309,7 @@ export function AgencyGame() {
                           "as-package " + (i === level ? "selected" : "")
                         }
                         key={p.name}
+                        disabled={!!chosen.prep||chosen.careerPlan==='Return'||chosen.status!=='College'}
                         onClick={() => setLevel(i)}
                         aria-pressed={i === level}
                       >
@@ -1640,6 +1379,8 @@ export function AgencyGame() {
                           s.week < 12 ||
                           s.week > 14 ||
                           !!chosen.prep ||
+                          s.failed || s.money < prepCost(level,travel,recovery) ||
+                          (!!currentReview(s,chosen.id) && currentReview(s,chosen.id)!.status !== 'Renewed') ||
                           chosen.careerPlan === "Return" ||
                           chosen.status !== "College"
                         }
@@ -1862,7 +1603,7 @@ export function AgencyGame() {
                   <h2>On and off the field</h2>
                   <section className="as-panel">
                     {recap.news.length ? (
-                      recap.news.map((n, i) => (
+                      recap.news.slice(0,3).map((n, i) => (
                         <p className="as-dispatch" key={i}>
                           {n}
                         </p>
@@ -1874,6 +1615,7 @@ export function AgencyGame() {
                       </p>
                     )}
                   </section>
+                  {recap.news.length>3&&<details className="as-panel"><summary>More league news · {recap.news.length-3}</summary>{recap.news.slice(3).map((n,i)=><p key={i}>{n}</p>)}</details>}
                   {s.honors.some(
                     (h) => h.year === recap.year && h.week === recap.week,
                   ) && <h3>Weekly honors</h3>}
