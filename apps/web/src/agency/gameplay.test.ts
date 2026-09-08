@@ -28,7 +28,15 @@ function signed(seed = 42) {
   });
 }
 function through(s: State, week: number) {
-  while (s.week < week) s = advanceAgency(s);
+  // Keep these story/eligibility fixtures represented; contested retention has its own suite.
+  function retain() {
+    for (const r of s.offseason?.reviews.filter(r => r.year === s.year && r.status === 'Open') ?? []) {
+      r.chance = 100;
+      s = decideAgency(s, {type:'renewClient', id:r.player, approach:'Keep'});
+    }
+  }
+  while (s.week < week) { retain(); s = advanceAgency(s); }
+  retain();
   return s;
 }
 function contested(seed = 42) {

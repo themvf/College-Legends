@@ -32,8 +32,6 @@ import {
   draftGrade,
   fit,
   packages,
-  coaches,
-  venues,
   brands,
   prepCost,
   decideAgency,
@@ -42,10 +40,10 @@ import {
   type Athlete,
   type Want,
   type Box,
-  type Job,
   type Prep,
 } from "./model.js";
 import { Office } from "./Office.js";
+import { OffseasonPanel, OffseasonLink } from './OffseasonPanel.js';
 import { pendingNegotiation, recruitingBonus } from "./gameplay.js";
 import {
   DecisionDesk,
@@ -57,9 +55,18 @@ import {
   SeniorWatchlist,
 } from "./GameplayPanels.js";
 import "./agency.css";
+import { activeDevelopment, earnedPrestige, playerSkills } from "./growth.js";
+import {
+  GoalBar,
+  AgencyGoals,
+  PlayerGrowth,
+  DevelopmentPlanner,
+  DevelopmentHistory,
+} from "./GrowthPanels.js";
 const sections = [
   "Agency",
   "Weekly Recap",
+  "Offseason",
   "Clients",
   "Scouting",
   "Development",
@@ -187,10 +194,12 @@ function Stars({ label, value }: { label: string; value: number }) {
   );
 }
 function ResultDialog({
+  s,
   title,
   children,
   close,
 }: {
+  s: State;
   title: string;
   children: ReactNode;
   close: () => void;
@@ -221,6 +230,7 @@ function ResultDialog({
       aria-labelledby="as-result-title"
       onCancel={close}
     >
+      <GoalBar s={s} compact />
       <h2 id="as-result-title" tabIndex={-1}>
         {title}
       </h2>
@@ -243,6 +253,13 @@ function ScoutingReport({ p, s }: { p: Athlete; s: State }) {
       </p>
       {level > 0 && (
         <>
+          <div className="as-skill-grid">
+            {playerSkills(s, p).map((v) => (
+              <p key={v.name}>
+                <strong>{v.name}</strong> · {v.value.toFixed(1)} / 99
+              </p>
+            ))}
+          </div>
           <p>
             <strong>Potential range: {potentialRange(p)}</strong> · an estimate,
             not a guaranteed outcome.
@@ -315,7 +332,8 @@ function SchoolChoices({
     s.week !== 0 ||
     p.transferredYear === s.year ||
     s.deals.some((d) => d.player === p.id && d.status === "Active") ||
-    s.jobs.some((j) => j.player === p.id);
+    s.jobs.some((j) => j.player === p.id) ||
+    activeDevelopment(s).some((r) => r.player === p.id);
   return (
     <section className="as-panel as-school-choices">
       <h3>School & next season</h3>
@@ -433,6 +451,7 @@ function SchoolChoices({
   );
 }
 export function AgencyGame() {
+  const [showGoals, setShowGoals] = useState(false);
   const [s, setS] = useState(initial),
     [tab, setTab] = useState("Agency"),
     [selected, setSelected] = useState(""),
@@ -440,12 +459,6 @@ export function AgencyGame() {
     [notice, setNotice] = useState(""),
     [promise, setPromise] = useState<Want>("Development"),
     [fee, setFee] = useState(15),
-    [focus, setFocus] = useState<Job["focus"]>("Technique"),
-    [specialist, setSpecialist] = useState(0),
-    [venue, setVenue] = useState(0),
-    [partner, setPartner] = useState(""),
-    [duration, setDuration] = useState(2),
-    [intensity, setIntensity] = useState(false),
     [level, setLevel] = useState(0),
     [prepFocus, setPrepFocus] = useState<Prep["focus"]>("Testing"),
     [travel, setTravel] = useState(false),
@@ -509,7 +522,6 @@ export function AgencyGame() {
         value={chosen?.id || ""}
         onChange={(e) => {
           setSelected(e.target.value);
-          setPartner("");
         }}
       >
         {clients.map((p) => (
@@ -659,12 +671,22 @@ export function AgencyGame() {
   );
   return (
     <div className="as-app">
+      {showGoals && (
+        <ResultDialog
+          s={s}
+          title="Agency goals and unlocks"
+          close={() => setShowGoals(false)}
+        >
+          <AgencyGoals s={s} />
+        </ResultDialog>
+      )}
       {overlay &&
         (() => {
           const player = s.players.find((p) => p.id === overlay.id)!;
           const result = s.lastPitch;
           return (
             <ResultDialog
+              s={s}
               title={
                 overlay.kind === "scout"
                   ? `${player.name} · Scouting report`
@@ -734,7 +756,7 @@ export function AgencyGame() {
         </a>
         <p className="as-edition">COLLEGE FOOTBALL AGENT SIM</p>
         <nav aria-label="Agency navigation">
-          {sections.map((t, i) => (
+          {sections.filter(t => t !== 'Offseason' || s.week >= 12 || !!s.offseason?.reviews.length).map((t, i) => (
             <button
               key={t}
               aria-label={t}
@@ -757,18 +779,13 @@ export function AgencyGame() {
         </div>
       </aside>
       <div className="as-workspace">
+        <GoalBar s={s} open={() => setShowGoals(true)} />
         <header className="as-top">
           <div>
             <span className="as-eyebrow">
               {s.year} / {phase(s)}
             </span>
             <h1>{tab === "Agency" ? "A small office. A big belief." : tab}</h1>
-          </div>
-          <div className="as-top-money">
-            <strong>{cash(s.money)}</strong>
-            <small>
-              {(s.money / burn(s)).toFixed(1)} weeks at current overhead
-            </small>
           </div>
           <button
             className="as-primary"
@@ -777,7 +794,7 @@ export function AgencyGame() {
               if (update(advanceAgency)) {
                 setRecapIndex(0);
                 if (s.week === 18) setSelected("");
-                go(s.week === 18 ? "Agency" : "Weekly Recap");
+                go(s.week === 18 ? "Agency" : s.week >= 11 && s.week <= 13 ? "Offseason" : "Weekly Recap");
               }
             }}
           >
@@ -802,6 +819,8 @@ export function AgencyGame() {
             </div>
           )}
           <DecisionDesk s={s} go={go} />
+          {tab !== 'Offseason' && <OffseasonLink s={s} go={go} />}
+          {tab === 'Offseason' && <OffseasonPanel s={s} update={update} go={go} />}
           {tab === "Agency" && (
             <>
               <div className="as-hero-heading">
@@ -829,6 +848,7 @@ export function AgencyGame() {
                   ↗
                 </button>
               </div>
+              <AgencyGoals s={s} condensed />
               <Office
                 clients={clients.length}
                 staff={s.staff}
@@ -848,7 +868,7 @@ export function AgencyGame() {
                   <b>{clients.filter((p) => p.status === "Pro").length}</b>
                 </div>
                 <div>
-                  <span>Agency reputation</span>
+                  <span>Agency prestige</span>
                   <b>
                     {Math.round(s.reputation)}
                     <small> / 100</small>
@@ -1251,6 +1271,8 @@ export function AgencyGame() {
                       ))}
                     </div>
                   </details>
+                  <PlayerGrowth s={s} p={chosen} />
+                  <DevelopmentHistory s={s} p={chosen} />
                   <h2>Weekly box statistics</h2>
                   <p className="as-fine">
                     Client-focused box stats. Supporting roster production is
@@ -1285,11 +1307,14 @@ export function AgencyGame() {
           {tab === "Development" && (
             <>
               <div className="as-page-intro">
-                <h2>Invest in the person behind the numbers.</h2>
+                <span className="as-eyebrow">
+                  FROM POTENTIAL TO PERFORMANCE
+                </span>
+                <h2>Back the player you believe in.</h2>
                 <p>
-                  Choose the specialist, setting and workload. Two concurrent
-                  projects initially; one per client. All blocks finish by Week
-                  12.
+                  Identify a weakness, arrange the right help, and watch the
+                  results. Training builds ability; school fit opens
+                  opportunity; media work builds fame.
                 </p>
               </div>
               {!chosen ? (
@@ -1297,135 +1322,22 @@ export function AgencyGame() {
                   Sign a client first
                 </button>
               ) : (
-                <div className="as-planner">
-                  {pickClient}
-                  <label>
-                    Focus
-                    <select
-                      value={focus}
-                      onChange={(e) => setFocus(e.target.value as Job["focus"])}
-                    >
-                      <option value="Technique">
-                        Position technique · football ability
-                      </option>
-                      <option value="Media">
-                        Media coaching · public profile
-                      </option>
-                      <option value="Recovery">
-                        Recovery · fatigue and trust
-                      </option>
-                    </select>
-                  </label>
-                  <label>
-                    Specialist
-                    <select
-                      value={specialist}
-                      onChange={(e) => setSpecialist(+e.target.value)}
-                    >
-                      {coaches.map((c, i) => (
-                        <option key={c.name} value={i}>
-                          {c.name} · {cash(c.cost)} / 2 weeks
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Environment
-                    <select
-                      value={venue}
-                      onChange={(e) => setVenue(+e.target.value)}
-                    >
-                      {venues.map((v, i) => (
-                        <option key={v.name} value={i}>
-                          {v.name} · {cash(v.cost)} / 2 weeks
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Training partner
-                    <select
-                      value={partner}
-                      onChange={(e) => setPartner(e.target.value)}
-                    >
-                      <option value="">Facility training group</option>
-                      {college
-                        .filter((p) => p.id !== chosen.id)
-                        .map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name} · {p.position}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                  <label>
-                    Duration
-                    <select
-                      value={duration}
-                      onChange={(e) => setDuration(+e.target.value)}
-                    >
-                      <option value={2}>2 weeks</option>
-                      <option value={4}>4 weeks</option>
-                    </select>
-                  </label>
-                  <label className="as-check">
-                    <input
-                      type="checkbox"
-                      checked={intensity}
-                      onChange={(e) => setIntensity(e.target.checked)}
-                    />{" "}
-                    Intensive technique work: faster gains, more fatigue
-                  </label>
-                  <div className="as-quote">
-                    <span>Total agency investment</span>
-                    <strong>
-                      {cash(
-                        ((coaches[specialist]!.cost + venues[venue]!.cost) *
-                          duration) /
-                          2,
-                      )}
-                    </strong>
-                    <p>
-                      QB–WR and FS–EDGE pairings help technique work. Media
-                      builds public profile; expensive support does not remove a
-                      player's ceiling.
-                    </p>
-                    <button
-                      className="as-primary"
-                      onClick={() =>
-                        update(
-                          (x) =>
-                            decideAgency(x, {
-                              type: "job",
-                              id: chosen.id,
-                              focus,
-                              specialist,
-                              venue,
-                              partner,
-                              duration,
-                              intensity,
-                            }),
-                          "Development block booked.",
-                        )
-                      }
-                    >
-                      Book development
-                    </button>
-                  </div>
-                </div>
+                <>
+                  <div className="as-panel">{pickClient}</div>
+                  <DevelopmentPlanner
+                    key={chosen.id}
+                    s={s}
+                    p={chosen}
+                    update={update}
+                  />
+                  <SchoolChoices
+                    key={`development-school-${chosen.id}`}
+                    s={s}
+                    p={chosen}
+                    update={update}
+                  />
+                </>
               )}
-              <h2>
-                Work in progress · {s.jobs.length}/{2 + s.staff}
-              </h2>
-              {s.jobs.map((j) => (
-                <div className="as-row" key={j.player}>
-                  <b>{s.players.find((p) => p.id === j.player)!.name}</b>
-                  <span>
-                    {j.focus} · {j.left} weeks remaining
-                  </span>
-                  <progress value={j.duration - j.left} max={j.duration} />
-                </div>
-              ))}
             </>
           )}
           {tab === "Deals" && (
@@ -1515,9 +1427,20 @@ export function AgencyGame() {
                             school reach, role and public profile. Injury does
                             not cancel a signed guarantee.
                           </p>
+                          <p className="as-fine">
+                            Paid deal prestige: 2 below $50,000 · 6 at $50,000+
+                            · 10 at $100,000+.
+                          </p>
+                          {i === 2 && earnedPrestige(s) < 65 && (
+                            <p>
+                              Unlocks at 65 agency prestige. Your client also
+                              needs {b.min} public profile.
+                            </p>
+                          )}
                           <button
                             className="as-primary"
                             disabled={
+                              (i === 2 && earnedPrestige(s) < 65) ||
                               chosen.recognition < b.min ||
                               chosen.status !== "College" ||
                               s.deals.some(
@@ -2163,7 +2086,7 @@ export function AgencyGame() {
                 </div>
                 <div>
                   <strong>{Math.round(s.reputation)}</strong>
-                  <small>Reputation</small>
+                  <small>Prestige</small>
                 </div>
                 <div>
                   <strong>{clients.length}</strong>
@@ -2197,7 +2120,7 @@ export function AgencyGame() {
                     </div>
                     <div>
                       <strong>{Math.round(r.reputation)}</strong>
-                      <small>Reputation</small>
+                      <small>Prestige</small>
                     </div>
                     <div>
                       <strong>
@@ -2281,7 +2204,7 @@ export function AgencyGame() {
                     each week.
                   </p>
                   <button
-                    disabled={s.reputation < 18 || s.staff >= 2}
+                    disabled={earnedPrestige(s) < 18 || s.staff >= 2}
                     onClick={() =>
                       update(
                         (x) => decideAgency(x, { type: "hire" }),
@@ -2289,8 +2212,8 @@ export function AgencyGame() {
                       )
                     }
                   >
-                    {s.reputation < 18
-                      ? "Available at 18 reputation"
+                    {earnedPrestige(s) < 18
+                      ? "Available at 18 prestige"
                       : "Hire client service associate"}
                   </button>
                 </section>

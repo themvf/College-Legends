@@ -1,4 +1,7 @@
 @import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600&display=swap");
+html {
+  scroll-padding-top: 155px;
+}
 * {
   box-sizing: border-box;
 }
@@ -158,6 +161,139 @@ input {
   margin-left: 230px;
   flex: 1;
   min-width: 0;
+}
+.as-goal-bar {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  align-items: center;
+  gap: 12px 24px;
+  padding: 14px 38px;
+  background: #203d37;
+  color: #fff5dd;
+  box-shadow: 0 3px 10px #182f2920;
+}
+.as-goal-bar > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.as-app .as-goal-bar span,
+.as-app .as-goal-bar small {
+  font-size: 12px;
+  color: #d7e3d6;
+}
+.as-goal-bar strong {
+  font-size: 23px;
+  font-variant-numeric: tabular-nums;
+}
+.as-app .as-goal-bar progress {
+  width: 100%;
+  max-width: none;
+  height: 5px;
+  accent-color: #e1b56c;
+}
+.as-goal-bar.as-goal-compact {
+  grid-template-columns: 1fr 1fr;
+  top: 0;
+  padding: 12px;
+  margin: -4px -4px 18px;
+}
+.as-goal-compact strong {
+  font-size: 18px;
+}
+.as-agency-goals {
+  margin-bottom: 22px;
+}
+.as-tier-list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.as-tier-list li {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line, #dddcd0);
+}
+.as-tier-list span {
+  font-size: 13px;
+}
+.as-growth-factors,
+.as-skill-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.as-growth-factors {
+  margin: 16px 0 22px;
+}
+.as-growth-factors > div,
+.as-skill-grid > div {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+.as-growth-factors strong {
+  font-size: 25px;
+}
+.as-growth-factors span,
+.as-skill-grid span {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.as-app .as-skill-grid progress {
+  width: 100%;
+  max-width: none;
+  accent-color: #376250;
+}
+.as-development-builder {
+  display: grid;
+  gap: 16px;
+  margin: 20px 0;
+}
+.as-development-receipt {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line, #dddcd0);
+}
+.as-development-receipt small {
+  line-height: 1.6;
+  display: block;
+}
+@media (max-width: 760px) {
+  html {
+    scroll-padding-top: 215px;
+  }
+  .as-goal-bar {
+    top: 54px;
+    padding: 10px 15px;
+    gap: 8px 12px;
+    grid-template-columns: 1fr 1fr;
+  }
+  .as-goal-bar > button {
+    grid-column: 1 / -1;
+    padding: 6px 12px;
+  }
+  .as-goal-bar strong {
+    font-size: 20px;
+  }
+  .as-app .as-goal-bar span,
+  .as-app .as-goal-bar small {
+    font-size: 11px;
+  }
+  .as-goal-bar.as-goal-compact {
+    top: 0;
+  }
+  .as-growth-factors {
+    grid-template-columns: 1fr;
+  }
+  .as-skill-grid {
+    grid-template-columns: 1fr;
+  }
 }
 .as-top {
   min-height: 112px;
@@ -1280,4 +1416,30 @@ input {
   .as-story-card .as-buttons {
     flex-direction: column;
   }
+}
+.as-offseason-timeline { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .5rem; padding: 0; list-style: none; margin: 1.5rem 0; }
+.as-offseason-timeline li { padding: .85rem; border: 1px solid #d5d9cf; border-radius: .7rem; display: flex; gap: .65rem; align-items: center; color: #56665f; }
+.as-offseason-timeline li[aria-current="step"] { background: #244e42; color: #fffbea; border-color: #244e42; }
+.as-offseason-timeline strong { font-size: 1.35rem; }
+.as-offseason-timeline span { font-size: .85rem; line-height: 1.35; }
+.as-offseason-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; padding: 1rem 0; }
+.as-offseason-stats small, .as-offseason-stats strong { display: block; }
+.as-offseason-stats strong { margin-top: .35rem; font-size: 1.2rem; }
+.as-school-offers { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 1rem; margin: 1rem 0; align-items: start; }
+.as-school-offer { min-width: 0; }
+.as-school-value { display: block; font-size: 2rem; color: #244e42; }
+.as-school-offer dl, .as-offseason-payoff dl { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+.as-school-offer dt, .as-offseason-payoff dt { color: #596960; }
+.as-school-offer dd, .as-offseason-payoff dd { margin: 0; font-weight: 600; text-align: right; }
+.as-offseason .as-choice-list button { white-space: normal; min-height: 44px; }
+.as-offseason .as-choice-list small { display: block; margin-top: .35rem; }
+.as-offseason .as-client-tabs { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
+.as-offseason-payoff { border-left: 4px solid #ac8a45; }
+.as-offseason-link { border-color: #ac8a45; }
+@media (max-width: 650px) {
+  .as-offseason-timeline { grid-template-columns: 1fr; }
+  .as-offseason-timeline li { padding: .55rem .8rem; }
+  .as-offseason-stats { grid-template-columns: 1fr 1fr; }
+  .as-school-offer dl { grid-template-columns: 1fr; }
+  .as-school-offer dd { text-align: left; margin-bottom: .4rem; }
 }

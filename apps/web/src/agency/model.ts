@@ -5,6 +5,17 @@ import {
   type Position,
 } from "../new-game/core.js";
 export { teams };
+import { initializeOffseason, ensureCareerReviews, offseasonAction, offseasonBeforeAdvance, offseasonAfterWeek, applySchoolDestination, nextAgreement, currentReview, validOffseason, type OffseasonState, type OffseasonAction } from './offseason.js';
+import {
+  initializeGrowth,
+  growthMilestones,
+  bookDevelopment,
+  resolveDevelopment,
+  activeDevelopment,
+  earnedPrestige,
+  type GrowthState,
+  type DevelopmentAction,
+} from "./growth.js";
 import {
   initializeGameplay,
   assignAmbition,
@@ -157,6 +168,8 @@ export type Recap = {
   balance: number;
 };
 export type State = {
+  offseason?: OffseasonState;
+  growth?: GrowthState;
   gameplay?: GameplayState;
   lastPitch?: {
     pending?: boolean;
@@ -254,28 +267,30 @@ export const burn = (s: State) => 1500 + s.staff * 750;
 export const phase = (s: State) =>
   s.week === 0
     ? "Preseason"
-    : s.week <= 12
+    : s.week < 12
       ? `Week ${s.week}`
+      : s.week === 12
+        ? "Offseason 1 · Career review"
       : s.week === 13
-        ? "Playoff semifinals"
+        ? "Offseason 2 · Transfer market / semifinals"
         : s.week === 14
-          ? "National championship"
+          ? "Offseason 3 · Commitments / championship"
           : s.week === 15
-            ? "Pro Day results"
+            ? "Offseason 4 · Pro Day results"
             : s.week === 16
-              ? "Draft weekend"
+              ? "Offseason 4 · Draft & paydays"
               : s.week === 17
-                ? "Undrafted signings"
-                : "Roster decisions";
+                ? "Offseason 5 · Undrafted offers"
+                : "Offseason 5 · Roster decisions";
 export const nextLabel = (s: State) =>
   s.week < 12
     ? `Advance to Week ${s.week + 1}`
     : s.week === 12
-      ? "Play semifinals"
+      ? "Open transfer market & play semifinals"
       : s.week === 13
-        ? "Play championship"
+        ? "Enter final commitments & championship"
         : s.week === 14
-          ? "Run Pro Days"
+          ? "Close school offers & run Pro Days"
           : s.week === 15
             ? "Enter draft weekend"
             : s.week === 16
@@ -585,6 +600,7 @@ export function startAgency(seed = Date.now()): State {
     for (const p of available.slice(0, i < 2 ? 3 : 2)) p.owner = r.id;
   }
   initializeGameplay(s);
+  initializeGrowth(s);
   return s;
 }
 export function standings(s: State) {
@@ -665,6 +681,8 @@ function active(s: State) {
     throw Error("The agency has closed. Start a new career to try again.");
 }
 export type Action =
+  | OffseasonAction
+  | DevelopmentAction
   | GameplayAction
   | { type: "career"; id: string; plan: Athlete["careerPlan"] }
   | { type: "transfer"; id: string; school: number }
@@ -696,12 +714,23 @@ export type Action =
 export function decideAgency(current: State, a: Action): State {
   const s = decision(current, a);
   updateAmbitions(s);
+  growthMilestones(s);
   return s;
 }
 function decision(current: State, a: Action): State {
   const s = structuredClone(current);
   active(s);
   initializeGameplay(s);
+  initializeGrowth(s);
+  initializeOffseason(s);
+  if (['renewClient', 'openSchoolMarket', 'counterSchool', 'signSchool', 'staySchool'].includes(a.type)) {
+    offseasonAction(s, a as OffseasonAction);
+    return s;
+  }
+  if (a.type === "developmentPlan") {
+    bookDevelopment(s, a);
+    return s;
+  }
   if (
     a.type === "request" ||
     a.type === "counter" ||
@@ -729,8 +758,8 @@ function decision(current: State, a: Action): State {
     return s;
   }
   if (a.type === "hire") {
-    if (s.staff >= 2 || s.reputation < 18)
-      throw Error("Hire support staff at 18 reputation, up to two staff.");
+    if (s.staff >= 2 || earnedPrestige(s) < 18)
+      throw Error("Hire support staff at 18 prestige, up to two staff.");
     spend(s, "Client service hire and equipment", 6000);
     s.staff++;
     s.news.unshift(
@@ -806,7 +835,7 @@ function decision(current: State, a: Action): State {
       week: s.week,
       message: accepted
         ? `${p.name} signed at ${a.fee}% commission. Their priority is: ${priorities[p.want].label.toLowerCase()}. ${priorities[a.promise].service}`
-        : `${p.name} has not signed. Their priority is: ${priorities[p.want].label.toLowerCase()}. ${a.promise !== p.want ? "Your proposed service did not match that priority." : "Your service matched, but the offer was not accepted at your current fee and reputation."} ${s.week < 6 ? "Revisit next week with a matching service or lower commission." : "The recruitment window has closed for further pitches."}`,
+        : `${p.name} has not signed. Their priority is: ${priorities[p.want].label.toLowerCase()}. ${a.promise !== p.want ? "Your proposed service did not match that priority." : "Your service matched, but the offer was not accepted at your current fee and prestige."} ${s.week < 6 ? "Revisit next week with a matching service or lower commission." : "The recruitment window has closed for further pitches."}`,
     };
     return s;
   }
@@ -828,6 +857,10 @@ function decision(current: State, a: Action): State {
       throw Error(
         "A Pro Day package is already committed. This client is on the draft path.",
       );
+    const review = currentReview(s, p.id);
+    if (review && review.status !== 'Renewed') throw Error('Resolve the client representation review in Offseason first.');
+    if (a.plan === 'Draft' && nextAgreement(s, p.id)) throw Error('A next-season school agreement is already committed.');
+    if (review) review.routeChosen = true;
     p.careerPlan = a.plan;
     s.news.unshift(
       `${p.name} plans to ${a.plan === "Return" ? "return for another college season, with new NIL opportunities next year" : "enter the draft"}.`,
@@ -837,6 +870,7 @@ function decision(current: State, a: Action): State {
   if (a.type === "transfer") {
     if (p.status !== "College" || s.week !== 0 || p.transferredYear === s.year)
       throw Error("One school move per client is available in preseason.");
+    if (s.offseason?.agreements.some(a => a.player === p.id && a.season === s.year)) throw Error('The current-season school agreement is already committed.');
     if (
       !Number.isInteger(a.school) ||
       !schools[a.school] ||
@@ -845,7 +879,8 @@ function decision(current: State, a: Action): State {
       throw Error("Choose a different school.");
     if (
       s.deals.some((d) => d.player === p.id && d.status === "Active") ||
-      s.jobs.some((j) => j.player === p.id)
+      s.jobs.some((j) => j.player === p.id) ||
+      activeDevelopment(s).some((r) => r.player === p.id)
     )
       throw Error(
         "Finish current campaign and development commitments before moving schools.",
@@ -877,7 +912,11 @@ function decision(current: State, a: Action): State {
       !venues[a.venue]
     )
       throw Error("Choose a valid training plan.");
-    if (s.jobs.some((j) => j.player === p.id) || s.jobs.length >= 2 + s.staff)
+    if (
+      s.jobs.some((j) => j.player === p.id) ||
+      activeDevelopment(s).some((r) => r.player === p.id) ||
+      s.jobs.length + activeDevelopment(s).length >= 2 + s.staff
+    )
       throw Error(
         "One development block per client; hire staff for more than two concurrent blocks.",
       );
@@ -906,6 +945,10 @@ function decision(current: State, a: Action): State {
     if (p.status !== "College" || !brands[a.kind])
       throw Error("Choose a current college client and opportunity.");
     const b = brands[a.kind]!;
+    if (a.kind === 2 && earnedPrestige(s) < 65)
+      throw Error(
+        "National licensed merchandise campaigns unlock at 65 agency prestige.",
+      );
     if (p.recognition < b.min)
       throw Error(`This brand needs ${b.min} recognition.`);
     if (s.week + b.weeks > 14)
@@ -945,6 +988,8 @@ function decision(current: State, a: Action): State {
     return s;
   }
   if (a.type === "prep") {
+    const review = currentReview(s, p.id);
+    if (review && review.status !== 'Renewed') throw Error('Renew representation in Offseason before booking preparation.');
     if (p.careerPlan === "Return")
       throw Error(
         "This client is returning to school. Choose the draft path before booking preparation.",
@@ -1243,17 +1288,25 @@ function creditOwner(s: State, p: Athlete, label: string, amount: number) {
 export function advanceAgency(current: State): State {
   const s = structuredClone(current);
   initializeGameplay(s);
+  initializeGrowth(s);
   active(s);
+  initializeOffseason(s);
   if (s.week === 0 && !collegeClients(s).length)
     throw Error("Sign your first client before advancing.");
-  if (s.week === 18) return nextYear(s);
-  s.week++;
+  if (s.week === 18) {
+    const next = nextYear(s);
+    growthMilestones(next);
+    return next;
+  }
   s.news = [];
+  offseasonBeforeAdvance(s);
+  s.week++;
   const before = s.recaps[0]?.balance ?? 100000;
   const previousOutlooks = new Map(
     collegeClients(s).map((p) => [p.id, projection(p)]),
   );
   entry(s, "Office, services and payroll", -burn(s), "Expense");
+  resolveDevelopment(s);
   for (const j of s.jobs) {
     const p = owned(s, j.player);
     const quality = coaches[j.specialist]!.quality * venues[j.venue]!.quality;
@@ -1292,7 +1345,7 @@ export function advanceAgency(current: State): State {
   for (const d of s.deals.filter((d) => d.status === "Active")) {
     d.left--;
     if (d.left === 0) {
-      const p = owned(s, d.player);
+      const p = s.players.find(p => p.id === d.player)!;
       const bonus = d.id.endsWith("-bonus")
         ? Math.round(d.gross * clamp((p.recognition - 20) / 35, 0, 1.6))
         : 0;
@@ -1300,11 +1353,14 @@ export function advanceAgency(current: State): State {
       const commission = Math.round((d.gross * d.fee) / 100);
       entry(s, `${p.name} · ${d.brand} commission`, commission, "Commission");
       d.status = "Paid";
-      p.trust = clamp(p.trust + 5);
-      if (p.promise === "Security") p.delivered = true;
-      s.reputation = clamp(s.reputation + 2);
+      if (p.owner === 'you') {
+        p.trust = clamp(p.trust + 5);
+        if (p.promise === "Security") p.delivered = true;
+      }
+      const prestige = d.gross >= 100000 ? 10 : d.gross >= 50000 ? 6 : 2;
+      s.reputation = clamp(s.reputation + prestige);
       s.news.push(
-        `${d.brand} pays ${cash(d.gross)}: client keeps ${cash(d.gross - commission)}; agency earns ${cash(commission)}.`,
+        `${d.brand} pays ${cash(d.gross)}: client keeps ${cash(d.gross - commission)}; agency earns ${cash(commission)}. Prestige +${prestige}.`,
       );
     }
   }
@@ -1356,10 +1412,14 @@ export function advanceAgency(current: State): State {
     }
   }
   if (s.week === 16) {
-    for (const p of collegeClients(s).filter((p) => p.careerPlan === "Return"))
+    for (const p of collegeClients(s).filter((p) => p.careerPlan === "Return")) {
+      const agreement = nextAgreement(s, p.id);
       s.news.push(
-        `${p.name} is returning to ${teams[p.school]} for Year ${p.schoolYear + 1}. Another season offers playing time and NIL opportunities, not guaranteed earnings.`,
+        agreement
+          ? `${p.name} will play at ${teams[agreement.school]} in Year ${p.schoolYear + 1} under the signed ${cash(agreement.gross)} school agreement. Playing time and additional sponsor earnings remain uncertain.`
+          : `${p.name} is returning to ${teams[p.school]} for Year ${p.schoolYear + 1}. Another season offers playing time and NIL opportunities, not guaranteed earnings.`,
       );
+    }
     const eligible = s.players.filter(
       (p) => p.season === s.year && p.careerPlan !== "Return",
     );
@@ -1463,12 +1523,14 @@ export function advanceAgency(current: State): State {
     );
   }
   weeklyGameplay(s);
+  offseasonAfterWeek(s);
   if (s.money < 0) {
     s.failed = true;
     s.news.unshift(
       "The agency cannot pay its bills. Your career ends with negative cash.",
     );
   }
+  growthMilestones(s);
   s.recaps.unshift({
     year: s.year,
     week: s.week,
@@ -1536,6 +1598,7 @@ function nextYear(s: State): State {
       p.injury = null;
       p.fatigue = 0;
       p.delivered = false;
+      applySchoolDestination(s, p);
       if (p.owner === "you")
         s.news.push(
           `${p.name} returns to ${teams[p.school]}: ${yearLabel(p)}. Their client place and commission terms carry forward.`,
@@ -1599,7 +1662,7 @@ function nextYear(s: State): State {
   );
   graduateSeniors(s);
   s.news.unshift(
-    "A new class is available. Your office, cash, reputation and professional relationships carry forward.",
+    "A new class is available. Your office, cash, prestige and professional relationships carry forward.",
   );
   return s;
 }
@@ -1685,6 +1748,46 @@ export function restore(raw: string | null): State | null {
     )
       return null;
     initializeGameplay(s);
+    if (
+      s.growth &&
+      (!s.growth.clients ||
+        typeof s.growth.clients !== "object" ||
+        !Array.isArray(s.growth.records) ||
+        !Array.isArray(s.growth.milestones) ||
+        !Number.isFinite(s.growth.peak) ||
+        !Object.values(s.growth.clients).every(
+          (c) =>
+            c &&
+            Number.isFinite(c.ability) &&
+            Number.isFinite(c.recognition) &&
+            Number.isFinite(c.anchor) &&
+            Array.isArray(c.skills) &&
+            c.skills.length === 3 &&
+            c.skills.every(Number.isFinite),
+        ) ||
+        !s.growth.records.every(
+          (r) =>
+            r &&
+            s.players.some((p) => p.id === r.player) &&
+            ["Skill", "Media", "Recovery", "Mentor"].includes(r.kind) &&
+            ["Active", "Complete"].includes(r.status) &&
+            [0, 1, 2].includes(r.skill) &&
+            [0, 1, 2].includes(r.provider) &&
+            Number.isFinite(r.cost) &&
+            r.cost >= 0 &&
+            Number.isInteger(r.due) &&
+            Number.isInteger(r.week) &&
+            r.due > r.week &&
+            Number.isFinite(r.missed) &&
+            r.before &&
+            Number.isFinite(r.before.ability),
+        ))
+    )
+      return null;
+    initializeGrowth(s);
+    if (!validOffseason(s)) return null;
+    initializeOffseason(s);
+    ensureCareerReviews(s);
     return s;
   } catch {
     return null;

@@ -6,6 +6,96 @@ beforeEach(() => {
   localStorage.clear();
   localStorage.setItem(SAVE_KEY, JSON.stringify(startAgency(42)));
 });
+it("carries a renewed client's negotiated school agreement through payout and the new season", () => {
+  let s = decideAgency(startAgency(42), { type: 'pitch', id: '2027-5', promise: 'Security', fee: 15 });
+  s.players[5]!.ability = 78;
+  s.players[5]!.delivered = true;
+  s.players[5]!.trust = 100;
+  while (s.week < 12) s = advanceAgency(s);
+  localStorage.setItem(SAVE_KEY, JSON.stringify(s));
+  render(<AgencyGame />);
+  fireEvent.click(screen.getByRole('button', { name: 'Offseason' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Renew current terms/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Explore another college season' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open transfer market & play semifinals →' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Seek school offers · no cost' }));
+  const offer = screen.getByRole('article', { name: 'Mountain Tech school offer' });
+  fireEvent.click(within(offer).getByRole('button', { name: /^Ask for/ }));
+  expect(screen.queryByRole('button', { name: /^Ask for/ })).not.toBeInTheDocument();
+  expect(screen.getAllByText('Counter used · choose from the remaining offers.')).toHaveLength(3);
+  // The seeded counter can lose; sign a surviving offer through the actual UI.
+  const available = screen.getAllByRole('button', { name: /^Sign .* agreement$/ }).find(button => !button.hasAttribute('disabled'))!;
+  fireEvent.click(available);
+  expect(screen.getByRole('button', { name: 'Choose the draft path' })).toBeDisabled();
+  expect(screen.getByText(/Pays this offseason \(2027\)/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Enter final commitments & championship →' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Close school offers & run Pro Days →' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Enter draft weekend →' }));
+  expect(screen.getByText(/will play at .* under the signed .* school agreement/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Offseason' }));
+  expect(screen.getByText('PAYMENT RECEIVED')).toBeInTheDocument();
+  expect(screen.getByText('Paid during the 2027 offseason, before the 2028 season.')).toBeInTheDocument();
+  const paid = JSON.parse(localStorage.getItem(SAVE_KEY)!);
+  const agreement = paid.offseason.agreements[0];
+  fireEvent.click(screen.getByRole('button', { name: 'Resolve undrafted offers →' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Resolve roster decisions →' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Start next agency year →' }));
+  const next = JSON.parse(localStorage.getItem(SAVE_KEY)!);
+  expect(next.players[5]).toMatchObject({ school: agreement.school, season: 2028, owner: 'you', fee: 15 });
+  expect(next.offseason.agreements[0].status).toBe('Paid');
+});
+it("keeps live money and prestige visible through development, navigation, and dialogs", () => {
+  const s = decideAgency(startAgency(42), {
+    type: "pitch",
+    id: "2027-0",
+    fee: 15,
+    promise: "Development",
+  });
+  localStorage.setItem(SAVE_KEY, JSON.stringify(s));
+  render(<AgencyGame />);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Development" }),
+  );
+  const goals = within(
+    screen.getByRole("region", { name: "Money and prestige" }),
+  );
+  expect(goals.getByText("$98,000")).toBeInTheDocument();
+  expect(
+    goals.getByRole("progressbar", { name: "Prestige goal" }),
+  ).toHaveAttribute("value", "10");
+  fireEvent.change(screen.getByLabelText("Development specialist"), {
+    target: { value: "1" },
+  });
+  expect(
+    screen.getByRole("button", { name: "Book development · $4,500" }),
+  ).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Development specialist"), {
+    target: { value: "0" },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Book development · $1,500" }),
+  );
+  expect(goals.getByText("$96,500")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Advance to Week 1 →" }));
+  fireEvent.click(screen.getByRole("button", { name: "Advance to Week 2 →" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Development" }),
+  );
+  expect(screen.getByText(/training added/)).toBeInTheDocument();
+  expect(
+    JSON.parse(localStorage.getItem(SAVE_KEY)!).growth.records[0].status,
+  ).toBe("Complete");
+  fireEvent.click(
+    screen.getByRole("button", { name: "View agency goals and unlocks" }),
+  );
+  const dialog = within(
+    screen.getByRole("dialog", { name: "Agency goals and unlocks" }),
+  );
+  expect(
+    dialog.getByRole("region", { name: "Money and prestige" }),
+  ).toHaveTextContent("$93,500");
+  expect(dialog.getByText(/Locked · 18 prestige/)).toBeInTheDocument();
+});
 it("lets a player finish a rival negotiation in the pitch dialog and persists the result", () => {
   render(<AgencyGame />);
   fireEvent.click(
@@ -171,8 +261,12 @@ it("shows football context and persists the return decision from the existing cl
   s.week = 12;
   s.players[0]!.eligibility = 2;
   s.players[0]!.schoolYear = 4;
+  s.players[0]!.delivered = true;
+  s.players[0]!.trust = 95;
   localStorage.setItem(SAVE_KEY, JSON.stringify(s));
   render(<AgencyGame />);
+  fireEvent.click(screen.getByRole('button', {name:'Offseason'}));
+  fireEvent.click(screen.getByRole('button', {name:/Renew current terms/}));
   fireEvent.click(screen.getByRole("button", { name: "Clients" }));
   expect(screen.getByText("D-I FCS · Founders Conference")).toBeInTheDocument();
   expect(screen.getByText(/Year 4 · 2 seasons/)).toBeInTheDocument();

@@ -155,8 +155,8 @@ export function ClientAmbitions({ s, p }: { s: State; p: Athlete }) {
           />
           <p>
             {goal.completed !== undefined
-              ? `Achieved in Week ${goal.completed}. Trust +8 and agency reputation +2 earned.`
-              : `${Math.round(ambitionProgress(s, p, goal) * 100)}% complete. Reward: +8 trust and +2 agency reputation. Achieve it during recruiting for a prospect referral, when someone is available.`}
+              ? `Achieved in Week ${goal.completed}. Trust +8 and agency prestige +2 earned.`
+              : `${Math.round(ambitionProgress(s, p, goal) * 100)}% complete. Reward: +8 trust and +2 agency prestige. Achieve it during recruiting for a prospect referral, when someone is available.`}
           </p>
           {goal.kind === "Stage" && goal.completed === undefined && (
             <p className="as-fine">

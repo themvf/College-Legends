@@ -239,7 +239,7 @@ export function updateAmbitions(s: State) {
     a.completed = s.week;
     p.trust = limit(p.trust + 8);
     s.reputation = limit(s.reputation + 2);
-    a.memory = `${s.year}, Week ${s.week}: ${p.name} achieved “${ambitionLabel(a)}”. Trust +8; agency reputation +2.`;
+    a.memory = `${s.year}, Week ${s.week}: ${p.name} achieved “${ambitionLabel(a)}”. Trust +8; agency prestige +2.`;
     s.news.unshift(a.memory);
     const referral =
       s.week <= 6 &&

@@ -1,6 +1,6 @@
 # College Football Agent Sim — Design Intentions
 
-Date: September 7, 2026
+Date: September 8, 2026
 
 Status: New product direction and design intent. This document describes what we intend to build, not features already implemented. It supersedes the school-management premise for this new direction. Existing prototypes remain reference material; reuse code only when it supports this game.
 
@@ -34,6 +34,8 @@ Keep the calendar, client performances, rankings, and competition visible from t
 8. Collect agency income, retain relationships, and finance the next recruiting class.
 
 Money, time, client trust, and reputation connect these steps. None should operate as an isolated minigame.
+
+The current priority is discovering overlooked talent, competing to sign clients, and investing in their development. Money funds the agency and measures financial progress; prestige unlocks services and opportunities. Both remain visible as ongoing goals. Separate ability, opportunity and fame so specialist training, school fit and commercial support have different purposes. See [Agency progression and player development](AGENCY_PROGRESSION_AND_DEVELOPMENT.md) for the September 8 direction, first implementation scope and provisional victory targets. The earlier pitch-production and client-journey documents are historical proposals, not the current core-loop specification.
 
 ## Clients are people, not interchangeable investments
 
